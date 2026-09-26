@@ -113,6 +113,22 @@ describe("POST /telegram/webhook", () => {
     expect((await post(startUpdate)).statusCode).toBe(500);
   });
 
+  it("acknowledges an update handed to the AI engine at once", async () => {
+    const { logLines, post } = await setup({ type: "ACCEPTED", input: "TEXT" });
+
+    const response = await post(startUpdate);
+
+    expect(response.statusCode).toBe(200);
+    const entries = logLines.map((line): unknown => JSON.parse(line));
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        telegram_update_id: 100,
+        outcome: "ACCEPTED",
+        input: "TEXT",
+      }),
+    );
+  });
+
   it("does not ask Telegram to retry a permanent failure", async () => {
     const { post } = await setup({
       type: "FAILED",
@@ -168,6 +184,7 @@ describe("webhook workflow", () => {
     const sendMessage = vi.fn<TelegramClient["sendMessage"]>(() =>
       Promise.resolve(ok(undefined)),
     );
+    const notExpected = () => Promise.reject(new Error("not expected"));
     const app = await buildApp({
       logLevel: "silent",
       telegramWebhook: {
@@ -176,7 +193,12 @@ describe("webhook workflow", () => {
           allowedUserId: telegramUserIdSchema.parse(42),
           processedUpdates: createProcessedUpdates(100),
           sendMessage,
-          downloadImage: () => Promise.reject(new Error("not expected")),
+          sendTyping: notExpected,
+          downloadImage: notExpected,
+          ai: {
+            analyzeScreenshots: notExpected,
+            replyToConversation: notExpected,
+          },
           schedule: () => () => undefined,
         }),
       },

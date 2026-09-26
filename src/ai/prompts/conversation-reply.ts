@@ -1,0 +1,26 @@
+import { layer } from "./layer.ts";
+
+/** The next message in a conversation that has already started. */
+export const CONVERSATION_REPLY_TASK = layer("conversation-reply", 1, [
+  "Task: next message in a conversation that has already started.",
+  "",
+  "Work out who wrote what: in Instagram screenshots Alex's messages are on the right and the prospect's on the left. Then decide, in this order:",
+  "1. last_prospect_message: the prospect's most recent message, copied as written, or null if the prospect has not written yet;",
+  "2. stage: where the relationship stands;",
+  "3. intent: what the prospect is communicating with their latest message;",
+  "4. interest: judged from concrete signals, such as asking about prices, examples, timing or a call, or describing a problem unprompted. Polite thanks alone are not interest;",
+  "5. next_goal: the one thing Alex's next message should achieve;",
+  "6. rationale: one short sentence explaining the choice of the next goal.",
+  "",
+  "Stages are not a rigid sequence: if the prospect asks for the price in their first reply, handle that situation instead of forcing the earlier stages.",
+  "",
+  "Then write three replies that serve the next goal:",
+  "- best: the reply you recommend;",
+  "- alternative: a different approach to the same goal;",
+  "- direct: the shortest and most straightforward version.",
+  "",
+  "Special cases:",
+  '- If the most recent message is Alex\'s, the prospect has not answered yet: write follow-ups that add something new and relevant, never "hai visto il mio messaggio?".',
+  "- If the prospect is not interested, the goal is CLOSE_GRACEFULLY: a short, kind closing that leaves the door open without insisting.",
+  "- If the prospect asked not to be contacted, set replies to null and explain in the note that Alex should not write again.",
+]);

@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { classifyText } from "../inputs/classify.ts";
-import type { DownloadImage } from "../inputs/images.ts";
+import type { AiEngine, AiError, Generation } from "../ai/engine.ts";
+import type { ConversationReply, ScreenshotsAnalysis } from "../ai/outputs.ts";
+import type { PromptMode } from "../ai/prompts/modes.ts";
+import type { DownloadedImage, DownloadImage } from "../inputs/images.ts";
 import type { Logger } from "../shared/logger.ts";
-import { err, ok } from "../shared/result.ts";
+import { err, ok, type Result } from "../shared/result.ts";
 import type { TelegramClient } from "./client.ts";
 import {
   telegramChatIdSchema,
@@ -12,14 +14,22 @@ import {
 } from "./ids.ts";
 import type { Schedule } from "./media-group.ts";
 import { createProcessedUpdates } from "./processed-updates.ts";
-import { imageProblemReply, replyTo } from "./replies.ts";
+import { imageProblemReply, replyTo, type InstantInput } from "./replies.ts";
+import {
+  aiProblemReply,
+  conversationMessages,
+  escapeHtml,
+  screenshotsMessages,
+} from "./suggestions.ts";
 import type { ChatType, IncomingUpdate, MessageContent } from "./update.ts";
 import { createUpdateHandler } from "./webhook-handler.ts";
 
 const ALEX = telegramUserIdSchema.parse(42);
 const STRANGER = telegramUserIdSchema.parse(666);
+const CHAT = telegramChatIdSchema.parse(42);
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const SCREENSHOT = { fileId: "screenshot", fileSize: 310_000 };
+const CONVERSATION = "Mario: Ciao! Quanto costa un sito come il tuo?";
 
 const NETWORK_ERROR = {
   type: "NETWORK_ERROR",
@@ -33,6 +43,70 @@ const BLOCKED_BY_USER = {
   status: 403,
   description: "Forbidden: bot was blocked by the user",
 } as const;
+
+const OVERLOADED: AiError = { type: "UNAVAILABLE", status: 529 };
+
+const PROFILE: ScreenshotsAnalysis = {
+  kind: "PROFILE",
+  prospect: {
+    username: "mariofit",
+    displayName: "Mario",
+    businessType: "personal trainer",
+  },
+  facts: ["La bio invita a scrivere START in DM."],
+  hypotheses: [],
+  suggestions: [{ style: "BEST", text: "Ciao Mario, quanti START ricevi?" }],
+  note: null,
+};
+
+const REPLY: ConversationReply = {
+  facts: [],
+  hypotheses: [],
+  analysis: {
+    lastProspectMessage: "Quanto costa un sito come il tuo?",
+    stage: "ENGAGED",
+    intent: "PRICE_REQUEST",
+    interest: "MEDIUM",
+    nextGoal: "UNDERSTAND_PROCESS",
+    rationale: "Chiede il prezzo senza contesto.",
+  },
+  suggestions: [
+    { style: "BEST", text: "Dipende: vendi online o raccogli contatti?" },
+  ],
+  note: null,
+};
+
+const generation = <T>(
+  mode: PromptMode,
+  result: Result<T, AiError>,
+): Generation<T> => ({
+  result,
+  report: {
+    mode,
+    prompt: "test-prompt@1",
+    model: "claude-opus-5",
+    durationMs: 1_500,
+    inputTokens: 2_400,
+    outputTokens: 350,
+    cacheReadTokens: 1_800,
+    stopReason: "end_turn",
+  },
+});
+
+/** How the report of every generation above is logged. */
+const GENERATION_FIELDS = {
+  prompt: "test-prompt@1",
+  model: "claude-opus-5",
+  duration_ms: 1_500,
+  input_tokens: 2_400,
+  output_tokens: 350,
+  cache_read_tokens: 1_800,
+  stop_reason: "end_turn",
+};
+
+/** The calls of sendMessage delivering these HTML messages. */
+const htmlCalls = (messages: readonly string[]) =>
+  messages.map((text) => [CHAT, text, "HTML"]);
 
 type MessageOptions = Readonly<{
   updateId?: number;
@@ -61,13 +135,14 @@ const messageWith = (
 const textMessage = (text: string, options?: MessageOptions): IncomingUpdate =>
   messageWith({ type: "TEXT", text }, options);
 
-const screenshotMessage = (): IncomingUpdate =>
-  messageWith({
-    type: "IMAGE",
-    image: SCREENSHOT,
-    caption: null,
-    mediaGroupId: null,
-  });
+const screenshotMessage = (
+  caption: string | null = null,
+  options?: MessageOptions,
+): IncomingUpdate =>
+  messageWith(
+    { type: "IMAGE", image: SCREENSHOT, caption, mediaGroupId: null },
+    options,
+  );
 
 const albumPhoto = (
   updateId: number,
@@ -112,21 +187,56 @@ const setup = (...results: readonly SendResult[]) => {
   for (const result of results) {
     sendMessage.mockResolvedValueOnce(result);
   }
-  const downloadImage = vi.fn<DownloadImage>(() =>
-    Promise.resolve(ok(Uint8Array.from(PNG))),
+  const sendTyping = vi.fn<TelegramClient["sendTyping"]>(() =>
+    Promise.resolve(ok(undefined)),
   );
+
+  // The downloaded bytes, to check that they are wiped after the analysis.
+  const downloads: Uint8Array[] = [];
+  const downloadImage = vi.fn<DownloadImage>(() => {
+    const bytes = Uint8Array.from(PNG);
+    downloads.push(bytes);
+    return Promise.resolve(ok(bytes));
+  });
+
+  // Copies of the images the AI engine received, before they are wiped.
+  const analyzed: DownloadedImage[][] = [];
+  const analyzeScreenshots = vi.fn<AiEngine["analyzeScreenshots"]>((images) => {
+    analyzed.push(
+      images.map((image) => ({ ...image, bytes: image.bytes.slice() })),
+    );
+    return Promise.resolve(generation("SCREENSHOTS", ok(PROFILE)));
+  });
+  const replyToConversation = vi.fn<AiEngine["replyToConversation"]>(() =>
+    Promise.resolve(generation("CONVERSATION_REPLY", ok(REPLY))),
+  );
+
   const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const { schedule, runPending } = manualSchedule();
   const handler = createUpdateHandler({
     allowedUserId: ALEX,
     processedUpdates: createProcessedUpdates(100),
     sendMessage,
+    sendTyping,
     downloadImage,
+    ai: { analyzeScreenshots, replyToConversation },
     schedule,
   });
   const handleUpdate = (update: IncomingUpdate) =>
     handler(update, log satisfies Logger);
-  return { handleUpdate, sendMessage, downloadImage, log, runPending };
+
+  return {
+    handleUpdate,
+    sendMessage,
+    sendTyping,
+    downloadImage,
+    downloads,
+    analyzeScreenshots,
+    analyzed,
+    replyToConversation,
+    log,
+    runPending,
+  };
 };
 
 describe("createUpdateHandler", () => {
@@ -137,54 +247,26 @@ describe("createUpdateHandler", () => {
 
     expect(outcome).toStrictEqual({ type: "REPLIED", input: "COMMAND" });
     expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
-      telegramChatIdSchema.parse(42),
-      replyTo(classifyText("/start")),
+      CHAT,
+      replyTo({ type: "COMMAND", command: "start" }),
     );
   });
 
-  it.each([
-    ["@mariofit", "INSTAGRAM_PROFILE"],
-    ["https://www.instagram.com/mariofit/", "INSTAGRAM_PROFILE"],
-    ["https://mariofit.it", "LINK"],
-    ["Ciao, ci sentiamo domani", "TEXT"],
-    ["/unknown", "UNKNOWN_COMMAND"],
-  ])("answers %j as %s", async (text, input) => {
+  it.each<[string, InstantInput]>([
+    ["@mariofit", { type: "INSTAGRAM_PROFILE", username: "mariofit" }],
+    [
+      "https://www.instagram.com/mariofit/",
+      { type: "INSTAGRAM_PROFILE", username: "mariofit" },
+    ],
+    ["https://mariofit.it", { type: "LINK", url: "https://mariofit.it" }],
+    ["/unknown", { type: "UNKNOWN_COMMAND" }],
+  ])("answers %j at once", async (text, input) => {
     const { handleUpdate, sendMessage } = setup();
 
     const outcome = await handleUpdate(textMessage(text));
 
-    expect(outcome).toStrictEqual({ type: "REPLIED", input });
-    expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
-      telegramChatIdSchema.parse(42),
-      replyTo(classifyText(text)),
-    );
-  });
-
-  it("downloads a screenshot before acknowledging it", async () => {
-    const { handleUpdate, sendMessage, downloadImage } = setup();
-
-    const outcome = await handleUpdate(screenshotMessage());
-
-    expect(outcome).toStrictEqual({ type: "REPLIED", input: "SCREENSHOTS" });
-    expect(downloadImage).toHaveBeenCalledExactlyOnceWith(SCREENSHOT);
-    expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
-      telegramChatIdSchema.parse(42),
-      replyTo({ type: "SCREENSHOTS", images: [SCREENSHOT], caption: null }),
-    );
-  });
-
-  it("explains why a screenshot could not be processed", async () => {
-    const { handleUpdate, sendMessage, downloadImage, log } = setup();
-    downloadImage.mockResolvedValueOnce(err({ type: "IMAGE_TOO_LARGE" }));
-
-    const outcome = await handleUpdate(screenshotMessage());
-
-    expect(outcome).toStrictEqual({ type: "REPLIED", input: "SCREENSHOTS" });
-    expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
-      telegramChatIdSchema.parse(42),
-      imageProblemReply({ type: "IMAGE_TOO_LARGE" }),
-    );
-    expect(log.warn).toHaveBeenCalledOnce();
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: input.type });
+    expect(sendMessage).toHaveBeenCalledExactlyOnceWith(CHAT, replyTo(input));
   });
 
   it("tells which messages it cannot read yet", async () => {
@@ -194,7 +276,7 @@ describe("createUpdateHandler", () => {
 
     expect(outcome).toStrictEqual({ type: "REPLIED", input: "UNSUPPORTED" });
     expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
-      telegramChatIdSchema.parse(42),
+      CHAT,
       replyTo({ type: "UNSUPPORTED" }),
     );
   });
@@ -212,18 +294,16 @@ describe("createUpdateHandler", () => {
   });
 
   it("ignores other users", async () => {
-    const { handleUpdate, sendMessage, downloadImage } = setup();
+    const {
+      handleUpdate,
+      sendMessage,
+      sendTyping,
+      downloadImage,
+      analyzeScreenshots,
+    } = setup();
 
     const outcome = await handleUpdate(
-      messageWith(
-        {
-          type: "IMAGE",
-          image: SCREENSHOT,
-          caption: null,
-          mediaGroupId: null,
-        },
-        { senderId: STRANGER },
-      ),
+      screenshotMessage(null, { senderId: STRANGER }),
     );
 
     expect(outcome).toStrictEqual({
@@ -231,20 +311,25 @@ describe("createUpdateHandler", () => {
       reason: "UNAUTHORIZED_SENDER",
     });
     expect(downloadImage).not.toHaveBeenCalled();
+    expect(analyzeScreenshots).not.toHaveBeenCalled();
+    expect(sendTyping).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it.each<ChatType>(["group", "supergroup", "channel"])(
     "ignores the allowed user in a %s",
     async (chatType) => {
-      const { handleUpdate, sendMessage } = setup();
+      const { handleUpdate, sendMessage, replyToConversation } = setup();
 
-      const outcome = await handleUpdate(textMessage("/start", { chatType }));
+      const outcome = await handleUpdate(
+        textMessage(CONVERSATION, { chatType }),
+      );
 
       expect(outcome).toStrictEqual({
         type: "IGNORED",
         reason: "NOT_PRIVATE_CHAT",
       });
+      expect(replyToConversation).not.toHaveBeenCalled();
       expect(sendMessage).not.toHaveBeenCalled();
     },
   );
@@ -291,10 +376,233 @@ describe("createUpdateHandler", () => {
   });
 });
 
-describe("albums", () => {
-  it("answers the photos of an album together, once", async () => {
-    const { handleUpdate, sendMessage, downloadImage, log, runPending } =
+describe("suggestions", () => {
+  it("suggests first messages from profile screenshots", async () => {
+    const {
+      handleUpdate,
+      sendMessage,
+      downloadImage,
+      analyzeScreenshots,
+      analyzed,
+      log,
+    } = setup();
+
+    const outcome = await handleUpdate(screenshotMessage("profilo di Mario"));
+
+    expect(outcome).toStrictEqual({ type: "ACCEPTED", input: "SCREENSHOTS" });
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+    expect(downloadImage).toHaveBeenCalledExactlyOnceWith(SCREENSHOT);
+    expect(analyzed).toStrictEqual([[{ format: "image/png", bytes: PNG }]]);
+    expect(analyzeScreenshots.mock.calls[0]?.[1]).toBe("profilo di Mario");
+    expect(sendMessage.mock.calls).toStrictEqual(
+      htmlCalls(screenshotsMessages(PROFILE)),
+    );
+    expect(log.info).toHaveBeenCalledWith(
+      { ai_mode: "SCREENSHOTS", ...GENERATION_FIELDS },
+      "ai generation completed",
+    );
+  });
+
+  it("wipes the screenshots once analyzed", async () => {
+    const { handleUpdate, sendMessage, downloads } = setup();
+
+    await handleUpdate(screenshotMessage());
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    expect(downloads).toStrictEqual([new Uint8Array(PNG.length)]);
+  });
+
+  it("suggests replies to a pasted conversation", async () => {
+    const { handleUpdate, sendMessage, replyToConversation, log } = setup();
+
+    const outcome = await handleUpdate(textMessage(CONVERSATION));
+
+    expect(outcome).toStrictEqual({ type: "ACCEPTED", input: "TEXT" });
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+    expect(replyToConversation).toHaveBeenCalledExactlyOnceWith(CONVERSATION);
+    expect(sendMessage.mock.calls).toStrictEqual(
+      htmlCalls(conversationMessages(REPLY)),
+    );
+    expect(log.info).toHaveBeenCalledWith(
+      { ai_mode: "CONVERSATION_REPLY", ...GENERATION_FIELDS },
+      "ai generation completed",
+    );
+  });
+
+  it("shows that it is typing until the answer is ready", async () => {
+    const {
+      handleUpdate,
+      sendMessage,
+      sendTyping,
+      replyToConversation,
+      runPending,
+    } = setup();
+    const answer = Promise.withResolvers<Generation<ConversationReply>>();
+    replyToConversation.mockReturnValueOnce(answer.promise);
+
+    await handleUpdate(textMessage(CONVERSATION));
+    expect(sendTyping).toHaveBeenCalledExactlyOnceWith(CHAT);
+
+    // Telegram hides the indicator after a few seconds: it is shown again.
+    runPending();
+    expect(sendTyping).toHaveBeenCalledTimes(2);
+
+    answer.resolve(generation("CONVERSATION_REPLY", ok(REPLY)));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+    runPending();
+    expect(sendTyping).toHaveBeenCalledTimes(2);
+  });
+
+  it("explains a generation that failed", async () => {
+    const { handleUpdate, sendMessage, replyToConversation, log } = setup();
+    replyToConversation.mockResolvedValueOnce(
+      generation("CONVERSATION_REPLY", err(OVERLOADED)),
+    );
+
+    await handleUpdate(textMessage(CONVERSATION));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+
+    expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
+      CHAT,
+      escapeHtml(aiProblemReply(OVERLOADED)),
+      "HTML",
+    );
+    expect(log.warn).toHaveBeenCalledWith(
+      {
+        ai_mode: "CONVERSATION_REPLY",
+        ...GENERATION_FIELDS,
+        ai_error: OVERLOADED,
+      },
+      "ai generation failed",
+    );
+  });
+
+  it("explains why screenshots could not be processed", async () => {
+    const {
+      handleUpdate,
+      sendMessage,
+      downloadImage,
+      analyzeScreenshots,
+      log,
+    } = setup();
+    downloadImage.mockResolvedValueOnce(err({ type: "IMAGE_TOO_LARGE" }));
+
+    const outcome = await handleUpdate(screenshotMessage());
+
+    expect(outcome).toStrictEqual({ type: "ACCEPTED", input: "SCREENSHOTS" });
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+    expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
+      CHAT,
+      escapeHtml(imageProblemReply({ type: "IMAGE_TOO_LARGE" })),
+      "HTML",
+    );
+    expect(analyzeScreenshots).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledWith(
+      { image_problem: { type: "IMAGE_TOO_LARGE" } },
+      "screenshots not processed",
+    );
+  });
+
+  it("stops at the first message it cannot deliver", async () => {
+    const { handleUpdate, sendMessage, log } = setup(err(BLOCKED_BY_USER));
+
+    await handleUpdate(textMessage(CONVERSATION));
+    await vi.waitFor(() => {
+      expect(log.error).toHaveBeenCalledWith(
+        {
+          message_index: 0,
+          messages: 2,
+          error_type: "API_ERROR",
+          telegram_error: BLOCKED_BY_USER,
+        },
+        "reply not delivered",
+      );
+    });
+
+    expect(sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it("logs a crash and stops typing", async () => {
+    const { handleUpdate, sendTyping, replyToConversation, log, runPending } =
       setup();
+    const crash = new Error("unexpected");
+    replyToConversation.mockRejectedValueOnce(crash);
+
+    const outcome = await handleUpdate(textMessage(CONVERSATION));
+
+    expect(outcome).toStrictEqual({ type: "ACCEPTED", input: "TEXT" });
+    await vi.waitFor(() => {
+      expect(log.error).toHaveBeenCalledWith(
+        { err: crash },
+        "background processing crashed",
+      );
+    });
+    runPending();
+    expect(sendTyping).toHaveBeenCalledOnce();
+  });
+
+  it("analyzes a redelivered conversation only once", async () => {
+    const { handleUpdate, sendMessage, replyToConversation } = setup();
+
+    const first = await handleUpdate(textMessage(CONVERSATION));
+    const redelivery = await handleUpdate(textMessage(CONVERSATION));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    expect([first, redelivery]).toStrictEqual([
+      { type: "ACCEPTED", input: "TEXT" },
+      { type: "IGNORED", reason: "DUPLICATE" },
+    ]);
+    expect(replyToConversation).toHaveBeenCalledOnce();
+  });
+
+  it("keeps screenshots, conversations and suggestions out of the logs", async () => {
+    const { handleUpdate, sendMessage, log } = setup();
+
+    await handleUpdate(textMessage(CONVERSATION));
+    await handleUpdate(
+      screenshotMessage("profilo di Mario", { updateId: 101 }),
+    );
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(4);
+    });
+
+    const logs = JSON.stringify([
+      log.info.mock.calls,
+      log.warn.mock.calls,
+      log.error.mock.calls,
+    ]);
+    expect(log.info).toHaveBeenCalledTimes(2);
+    for (const content of ["Quanto costa", "vendi online", "START", "Mario"]) {
+      expect(logs).not.toContain(content);
+    }
+  });
+});
+
+describe("albums", () => {
+  it("analyzes the photos of an album together, once", async () => {
+    const {
+      handleUpdate,
+      sendMessage,
+      downloadImage,
+      analyzeScreenshots,
+      analyzed,
+      log,
+      runPending,
+    } = setup();
 
     const outcomes = [
       await handleUpdate(albumPhoto(101, "first", "profilo di Mario")),
@@ -307,66 +615,44 @@ describe("albums", () => {
       { type: "COLLECTED" },
       { type: "COLLECTED" },
     ]);
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(analyzeScreenshots).not.toHaveBeenCalled();
 
     runPending();
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledOnce();
+      expect(sendMessage).toHaveBeenCalledTimes(2);
     });
 
-    const images = ["first", "second", "third"].map((fileId) => ({
-      fileId,
-      fileSize: null,
-    }));
-    expect(downloadImage).toHaveBeenCalledTimes(3);
-    expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
-      telegramChatIdSchema.parse(42),
-      replyTo({ type: "SCREENSHOTS", images, caption: "profilo di Mario" }),
+    expect(downloadImage.mock.calls).toStrictEqual(
+      ["first", "second", "third"].map((fileId) => [
+        { fileId, fileSize: null },
+      ]),
+    );
+    const png = { format: "image/png", bytes: PNG };
+    expect(analyzed).toStrictEqual([[png, png, png]]);
+    expect(analyzeScreenshots.mock.calls[0]?.[1]).toBe("profilo di Mario");
+    expect(sendMessage.mock.calls).toStrictEqual(
+      htmlCalls(screenshotsMessages(PROFILE)),
     );
     expect(log.info).toHaveBeenCalledWith(
-      { input: "SCREENSHOTS", images: 3, outcome: "REPLIED" },
-      "telegram album handled",
+      { input: "SCREENSHOTS", images: 3 },
+      "telegram album accepted for processing",
     );
   });
 
   it("ignores a redelivered album photo", async () => {
-    const { handleUpdate, sendMessage, runPending } = setup();
+    const { handleUpdate, sendMessage, downloadImage, runPending } = setup();
 
     await handleUpdate(albumPhoto(101, "first"));
     const redelivery = await handleUpdate(albumPhoto(101, "first"));
     runPending();
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledOnce();
+      expect(sendMessage).toHaveBeenCalledTimes(2);
     });
 
     expect(redelivery).toStrictEqual({ type: "IGNORED", reason: "DUPLICATE" });
-    expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
-      telegramChatIdSchema.parse(42),
-      replyTo({
-        type: "SCREENSHOTS",
-        images: [{ fileId: "first", fileSize: null }],
-        caption: null,
-      }),
-    );
-  });
-
-  it("logs an album it could not answer", async () => {
-    const { handleUpdate, log, runPending } = setup(err(BLOCKED_BY_USER));
-
-    await handleUpdate(albumPhoto(101, "first"));
-    runPending();
-
-    await vi.waitFor(() => {
-      expect(log.error).toHaveBeenCalledWith(
-        {
-          input: "SCREENSHOTS",
-          images: 1,
-          outcome: "FAILED",
-          error_type: "API_ERROR",
-          telegram_error: BLOCKED_BY_USER,
-        },
-        "telegram album failed",
-      );
+    expect(downloadImage).toHaveBeenCalledExactlyOnceWith({
+      fileId: "first",
+      fileSize: null,
     });
   });
 });
