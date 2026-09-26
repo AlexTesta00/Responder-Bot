@@ -14,6 +14,8 @@
     "build": "npm run clean && tsc --project tsconfig.build.json",
     "clean": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "lint": "eslint . --max-warnings=0 && prettier --check .",
     "format": "prettier --write ."
   },
@@ -24,6 +26,10 @@
     "eslint": "^10.11.0",
     "prettier": "^3.9.9",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.70.1"
+    "typescript-eslint": "^8.70.1",
+    "vitest": "^5.0.2"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
   }
 }
