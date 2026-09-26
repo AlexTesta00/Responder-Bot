@@ -386,7 +386,8 @@ export const createUpdateHandler = ({
   });
 
   return async (update, log) => {
-    if (update.type === "UNSUPPORTED") {
+    // Button taps are answered in a later version.
+    if (update.type === "UNSUPPORTED" || update.type === "CALLBACK") {
       return ignored("UNSUPPORTED_UPDATE");
     }
 

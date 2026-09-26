@@ -1,7 +1,9 @@
 import { z } from "zod";
 
+import type { ButtonPress } from "../copilot/buttons.ts";
 import type { ImageRef } from "../inputs/images.ts";
 import { err, ok, type Result } from "../shared/result.ts";
+import { decodeButton } from "./button-data.ts";
 import {
   telegramChatIdSchema,
   telegramUserIdSchema,
@@ -42,10 +44,40 @@ const messageSchema = z.object({
     .optional(),
 });
 
+const entitySchema = z.object({
+  type: z.string(),
+  offset: z.number().int().nonnegative(),
+  length: z.number().int().positive(),
+});
+
+// A tap on a button. Its own schema: the message it carries was sent by
+// the bot, so its sender is the bot and the one who tapped is `from`.
+const callbackQuerySchema = z.object({
+  id: z.string().min(1),
+  from: z.object({ id: telegramUserIdSchema }),
+  // Missing for buttons of inline messages; a deleted or too old message
+  // arrives without text, with date 0.
+  message: z
+    .object({
+      message_id: z.number().int().positive(),
+      date: z.number().int().nonnegative(),
+      chat: chatSchema,
+      text: z.string().optional(),
+      entities: z.array(entitySchema).optional(),
+    })
+    .optional(),
+  data: z.string().optional(),
+});
+
 const updateSchema = z.object({
   update_id: z.number().int().nonnegative(),
   message: messageSchema.optional(),
+  callback_query: callbackQuerySchema.optional(),
 });
+
+type ParsedCallbackMessage = NonNullable<
+  z.infer<typeof callbackQuerySchema>["message"]
+>;
 
 type ParsedMessage = z.infer<typeof messageSchema>;
 
@@ -76,9 +108,32 @@ export type IncomingMessage = Readonly<{
   content: MessageContent;
 }>;
 
+/** The message of the bot whose button was tapped. */
+export type TappedBotMessage = Readonly<{
+  chatId: TelegramChatId;
+  chatType: ChatType;
+  messageId: number;
+  /** The suggestions it shows, in order; empty when it cannot be read. */
+  suggestions: readonly string[];
+}>;
+
+export type IncomingCallback = Readonly<{
+  queryId: string;
+  /** Who tapped the button. */
+  senderId: TelegramUserId;
+  /** Null for a button that is not under a message of a chat. */
+  message: TappedBotMessage | null;
+  /** Null when the button's data is unknown, such as an older version. */
+  press: ButtonPress | null;
+}>;
+
 export type IncomingUpdate =
   | Readonly<{ type: "MESSAGE"; updateId: number; message: IncomingMessage }>
+  | Readonly<{ type: "CALLBACK"; updateId: number; callback: IncomingCallback }>
   | Readonly<{ type: "UNSUPPORTED"; updateId: number }>;
+
+/** Suggestions show in <pre> blocks, and nothing else does. */
+const MAX_SUGGESTIONS = 3;
 
 export type UpdateParseError = Readonly<{
   type: "INVALID_UPDATE";
@@ -132,6 +187,25 @@ const contentOf = (message: ParsedMessage): MessageContent => {
   };
 };
 
+/**
+ * The texts of the <pre> blocks, in order. Entity offsets count UTF-16 code
+ * units, as JavaScript strings do.
+ */
+const suggestionsOf = ({ text, entities = [] }: ParsedCallbackMessage) =>
+  text === undefined
+    ? []
+    : entities
+        .filter(
+          (entity) =>
+            entity.type === "pre" &&
+            entity.offset + entity.length <= text.length,
+        )
+        .toSorted((a, b) => a.offset - b.offset)
+        .slice(0, MAX_SUGGESTIONS)
+        .map((entity) =>
+          text.slice(entity.offset, entity.offset + entity.length),
+        );
+
 /** Translates a Telegram update payload into the bot's own types. */
 export const parseUpdate = (
   payload: unknown,
@@ -145,7 +219,28 @@ export const parseUpdate = (
     });
   }
 
-  const { update_id: updateId, message } = parsed.data;
+  const { update_id: updateId, message, callback_query: query } = parsed.data;
+
+  if (query !== undefined) {
+    return ok({
+      type: "CALLBACK",
+      updateId,
+      callback: {
+        queryId: query.id,
+        senderId: query.from.id,
+        message:
+          query.message === undefined
+            ? null
+            : {
+                chatId: query.message.chat.id,
+                chatType: query.message.chat.type,
+                messageId: query.message.message_id,
+                suggestions: suggestionsOf(query.message),
+              },
+        press: decodeButton(query.data),
+      },
+    });
+  }
 
   if (message?.from === undefined) {
     return ok({ type: "UNSUPPORTED", updateId });
