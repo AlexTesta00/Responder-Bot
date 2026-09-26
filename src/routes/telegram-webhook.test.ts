@@ -177,6 +177,7 @@ describe("webhook workflow", () => {
           processedUpdates: createProcessedUpdates(100),
           sendMessage,
           downloadImage: () => Promise.reject(new Error("not expected")),
+          schedule: () => () => undefined,
         }),
       },
     });

@@ -16,6 +16,7 @@ import {
 } from "./config/env.ts";
 import { createTelegramClient } from "./telegram/client.ts";
 import { createImageDownloader } from "./telegram/files.ts";
+import { scheduleWithTimers } from "./telegram/media-group.ts";
 import { createProcessedUpdates } from "./telegram/processed-updates.ts";
 import { createUpdateHandler } from "./telegram/webhook-handler.ts";
 
@@ -57,6 +58,7 @@ const start = async (env: Env): Promise<void> => {
         processedUpdates: createProcessedUpdates(PROCESSED_UPDATES_CAPACITY),
         sendMessage: telegram.sendMessage,
         downloadImage: createImageDownloader(telegram, MAX_IMAGE_BYTES),
+        schedule: scheduleWithTimers,
       }),
     },
   });

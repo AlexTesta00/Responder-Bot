@@ -10,6 +10,7 @@ import {
   telegramUserIdSchema,
   type TelegramUserId,
 } from "./ids.ts";
+import type { Schedule } from "./media-group.ts";
 import { createProcessedUpdates } from "./processed-updates.ts";
 import { imageProblemReply, replyTo } from "./replies.ts";
 import type { ChatType, IncomingUpdate, MessageContent } from "./update.ts";
@@ -34,16 +35,21 @@ const BLOCKED_BY_USER = {
 } as const;
 
 type MessageOptions = Readonly<{
+  updateId?: number;
   senderId?: TelegramUserId;
   chatType?: ChatType;
 }>;
 
 const messageWith = (
   content: MessageContent,
-  { senderId = ALEX, chatType = "private" }: MessageOptions = {},
+  {
+    updateId = 100,
+    senderId = ALEX,
+    chatType = "private",
+  }: MessageOptions = {},
 ): IncomingUpdate => ({
   type: "MESSAGE",
-  updateId: 100,
+  updateId,
   message: {
     chatId: telegramChatIdSchema.parse(senderId),
     chatType,
@@ -63,6 +69,39 @@ const screenshotMessage = (): IncomingUpdate =>
     mediaGroupId: null,
   });
 
+const albumPhoto = (
+  updateId: number,
+  fileId: string,
+  caption: string | null = null,
+): IncomingUpdate =>
+  messageWith(
+    {
+      type: "IMAGE",
+      image: { fileId, fileSize: null },
+      caption,
+      mediaGroupId: "album-1",
+    },
+    { updateId },
+  );
+
+/** A schedule whose callbacks run only when the test says so. */
+const manualSchedule = () => {
+  const callbacks = new Set<() => void>();
+  const schedule: Schedule = (callback) => {
+    callbacks.add(callback);
+    return () => {
+      callbacks.delete(callback);
+    };
+  };
+  const runPending = (): void => {
+    for (const callback of [...callbacks]) {
+      callbacks.delete(callback);
+      callback();
+    }
+  };
+  return { schedule, runPending };
+};
+
 type SendResult = Awaited<ReturnType<TelegramClient["sendMessage"]>>;
 
 /** sendMessage returns `results` on consecutive calls, then succeeds. */
@@ -77,15 +116,17 @@ const setup = (...results: readonly SendResult[]) => {
     Promise.resolve(ok(Uint8Array.from(PNG))),
   );
   const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  const { schedule, runPending } = manualSchedule();
   const handler = createUpdateHandler({
     allowedUserId: ALEX,
     processedUpdates: createProcessedUpdates(100),
     sendMessage,
     downloadImage,
+    schedule,
   });
   const handleUpdate = (update: IncomingUpdate) =>
     handler(update, log satisfies Logger);
-  return { handleUpdate, sendMessage, downloadImage, log };
+  return { handleUpdate, sendMessage, downloadImage, log, runPending };
 };
 
 describe("createUpdateHandler", () => {
@@ -247,5 +288,85 @@ describe("createUpdateHandler", () => {
     });
     expect(redelivery).toStrictEqual({ type: "IGNORED", reason: "DUPLICATE" });
     expect(sendMessage).toHaveBeenCalledOnce();
+  });
+});
+
+describe("albums", () => {
+  it("answers the photos of an album together, once", async () => {
+    const { handleUpdate, sendMessage, downloadImage, log, runPending } =
+      setup();
+
+    const outcomes = [
+      await handleUpdate(albumPhoto(101, "first", "profilo di Mario")),
+      await handleUpdate(albumPhoto(102, "second")),
+      await handleUpdate(albumPhoto(103, "third")),
+    ];
+
+    expect(outcomes).toStrictEqual([
+      { type: "COLLECTED" },
+      { type: "COLLECTED" },
+      { type: "COLLECTED" },
+    ]);
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    runPending();
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+
+    const images = ["first", "second", "third"].map((fileId) => ({
+      fileId,
+      fileSize: null,
+    }));
+    expect(downloadImage).toHaveBeenCalledTimes(3);
+    expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
+      telegramChatIdSchema.parse(42),
+      replyTo({ type: "SCREENSHOTS", images, caption: "profilo di Mario" }),
+    );
+    expect(log.info).toHaveBeenCalledWith(
+      { input: "SCREENSHOTS", images: 3, outcome: "REPLIED" },
+      "telegram album handled",
+    );
+  });
+
+  it("ignores a redelivered album photo", async () => {
+    const { handleUpdate, sendMessage, runPending } = setup();
+
+    await handleUpdate(albumPhoto(101, "first"));
+    const redelivery = await handleUpdate(albumPhoto(101, "first"));
+    runPending();
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+
+    expect(redelivery).toStrictEqual({ type: "IGNORED", reason: "DUPLICATE" });
+    expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
+      telegramChatIdSchema.parse(42),
+      replyTo({
+        type: "SCREENSHOTS",
+        images: [{ fileId: "first", fileSize: null }],
+        caption: null,
+      }),
+    );
+  });
+
+  it("logs an album it could not answer", async () => {
+    const { handleUpdate, log, runPending } = setup(err(BLOCKED_BY_USER));
+
+    await handleUpdate(albumPhoto(101, "first"));
+    runPending();
+
+    await vi.waitFor(() => {
+      expect(log.error).toHaveBeenCalledWith(
+        {
+          input: "SCREENSHOTS",
+          images: 1,
+          outcome: "FAILED",
+          error_type: "API_ERROR",
+          telegram_error: BLOCKED_BY_USER,
+        },
+        "telegram album failed",
+      );
+    });
   });
 });

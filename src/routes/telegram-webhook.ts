@@ -37,6 +37,9 @@ const logOutcome = (
     case "REPLIED":
       log.info({ ...fields, input: outcome.input }, "telegram update handled");
       return;
+    case "COLLECTED":
+      log.info(fields, "telegram update collected into an album");
+      return;
     case "IGNORED":
       if (
         outcome.reason === "UNAUTHORIZED_SENDER" &&
