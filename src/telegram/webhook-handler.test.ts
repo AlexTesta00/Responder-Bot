@@ -141,7 +141,7 @@ const messageWith = (
 });
 
 const textMessage = (text: string, options?: MessageOptions): IncomingUpdate =>
-  messageWith({ type: "TEXT", text }, options);
+  messageWith({ type: "TEXT", text, replyTo: null }, options);
 
 const screenshotMessage = (
   caption: string | null = null,
@@ -189,9 +189,12 @@ type SendResult = Awaited<ReturnType<TelegramClient["sendMessage"]>>;
 
 /** sendMessage returns `results` on consecutive calls, then succeeds. */
 const setup = (...results: readonly SendResult[]) => {
-  const sendMessage = vi.fn<TelegramClient["sendMessage"]>(() =>
-    Promise.resolve(ok(undefined)),
-  );
+  // Each message the bot sends gets the next id, as on Telegram.
+  let lastMessageId = 1_000;
+  const sendMessage = vi.fn<TelegramClient["sendMessage"]>(() => {
+    lastMessageId += 1;
+    return Promise.resolve(ok({ messageId: lastMessageId }));
+  });
   for (const result of results) {
     sendMessage.mockResolvedValueOnce(result);
   }

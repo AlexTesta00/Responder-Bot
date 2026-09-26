@@ -238,9 +238,9 @@ describe("createScreenshotsAnalyst", () => {
 
   it("keeps answering when the memory cannot be read", async () => {
     const broken: ProspectStore = {
+      ...createInMemoryProspectStore(),
       load: () => Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1")),
       save: () => Promise.reject(new Error("not expected")),
-      stageHistory: () => Promise.resolve([]),
     };
     const { ai, analyze, log } = setup({ prospects: broken });
 
@@ -261,9 +261,8 @@ describe("createScreenshotsAnalyst", () => {
 
   it("says so when the memory cannot be saved", async () => {
     const readOnly: ProspectStore = {
-      load: () => Promise.resolve(null),
+      ...createInMemoryProspectStore(),
       save: () => Promise.reject(new Error("ER_LOCK_DEADLOCK")),
-      stageHistory: () => Promise.resolve([]),
     };
     const { analyze, log } = setup({ prospects: readOnly });
 

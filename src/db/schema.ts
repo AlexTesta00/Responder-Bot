@@ -43,6 +43,13 @@ export interface ProspectStageChangesTable {
   changed_at: Date;
 }
 
+export interface TelegramMessagesTable {
+  chat_id: number;
+  message_id: number;
+  prospect_id: string;
+  created_at: Date;
+}
+
 export interface GenerationRunsTable {
   id: string;
   prospect_id: string | null;
@@ -63,5 +70,6 @@ export interface Database {
   prospects: ProspectsTable;
   prospect_messages: ProspectMessagesTable;
   prospect_stage_changes: ProspectStageChangesTable;
+  telegram_messages: TelegramMessagesTable;
   generation_runs: GenerationRunsTable;
 }

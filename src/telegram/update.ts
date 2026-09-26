@@ -37,6 +37,9 @@ const messageSchema = z.object({
   // Telegram sends each photo in several sizes.
   photo: z.array(photoSizeSchema).optional(),
   document: documentSchema.optional(),
+  reply_to_message: z
+    .object({ message_id: z.number().int().nonnegative() })
+    .optional(),
 });
 
 const updateSchema = z.object({
@@ -51,7 +54,12 @@ type PhotoSize = z.infer<typeof photoSizeSchema>;
 export type ChatType = z.infer<typeof chatSchema>["type"];
 
 export type MessageContent =
-  | Readonly<{ type: "TEXT"; text: string }>
+  | Readonly<{
+      type: "TEXT";
+      text: string;
+      /** The message Alex replied to, when it is a reply. */
+      replyTo: number | null;
+    }>
   | Readonly<{
       type: "IMAGE";
       image: ImageRef;
@@ -104,7 +112,11 @@ const imageOf = (message: ParsedMessage): ImageRef | null => {
 
 const contentOf = (message: ParsedMessage): MessageContent => {
   if (message.text !== undefined) {
-    return { type: "TEXT", text: message.text };
+    return {
+      type: "TEXT",
+      text: message.text,
+      replyTo: message.reply_to_message?.message_id ?? null,
+    };
   }
 
   const image = imageOf(message);

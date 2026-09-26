@@ -75,7 +75,7 @@ describe("POST /telegram/webhook", () => {
         chatId: telegramChatIdSchema.parse(42),
         chatType: "private",
         senderId: telegramUserIdSchema.parse(42),
-        content: { type: "TEXT", text: "/start" },
+        content: { type: "TEXT", text: "/start", replyTo: null },
       },
     });
   });
@@ -182,7 +182,7 @@ describe("POST /telegram/webhook", () => {
 describe("webhook workflow", () => {
   it("answers a redelivered update only once", async () => {
     const sendMessage = vi.fn<TelegramClient["sendMessage"]>(() =>
-      Promise.resolve(ok(undefined)),
+      Promise.resolve(ok({ messageId: 1 })),
     );
     const notExpected = () => Promise.reject(new Error("not expected"));
     const app = await buildApp({

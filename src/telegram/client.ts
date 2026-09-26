@@ -71,13 +71,16 @@ export type TelegramFile = Readonly<{
   fileSize: number | null;
 }>;
 
+/** A message the bot sent, to recognize the replies to it. */
+export type SentMessage = Readonly<{ messageId: number }>;
+
 export type TelegramClient = Readonly<{
   /** Sends plain text, or HTML with Telegram's formatting tags when asked. */
   sendMessage: (
     chatId: TelegramChatId,
     text: string,
     parseMode?: "HTML",
-  ) => Promise<Result<void, TelegramError>>;
+  ) => Promise<Result<SentMessage, TelegramError>>;
   /** Shows "typing…" in the chat for a few seconds, or until a message arrives. */
   sendTyping: (chatId: TelegramChatId) => Promise<Result<void, TelegramError>>;
   setWebhook: (
@@ -107,6 +110,10 @@ const apiResponseSchema = z.discriminatedUnion("ok", [
     description: z.string(),
   }),
 ]);
+
+const sentMessageSchema = z
+  .object({ message_id: z.number().int() })
+  .transform((message): SentMessage => ({ messageId: message.message_id }));
 
 const webhookInfoSchema = z
   .object({
@@ -276,15 +283,13 @@ export const createTelegramClient = ({
   ): Result<void, TelegramError> => (result.ok ? ok(undefined) : result);
 
   return {
-    sendMessage: async (chatId, text, parseMode) =>
-      withoutValue(
-        await call(
-          "sendMessage",
-          parseMode === undefined
-            ? { chat_id: chatId, text }
-            : { chat_id: chatId, text, parse_mode: parseMode },
-          z.unknown(),
-        ),
+    sendMessage: (chatId, text, parseMode) =>
+      call(
+        "sendMessage",
+        parseMode === undefined
+          ? { chat_id: chatId, text }
+          : { chat_id: chatId, text, parse_mode: parseMode },
+        sentMessageSchema,
       ),
     sendTyping: async (chatId) =>
       withoutValue(

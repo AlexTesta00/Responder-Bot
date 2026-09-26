@@ -200,6 +200,21 @@ export const describeProspectStore = (name: string, open: OpenStore): void => {
       expect(await store.stageHistory("nobody")).toStrictEqual([]);
     });
 
+    it("remembers which prospect each message of the bot is about", async () => {
+      const store = await open(dependencies());
+      const mario = await store.save({ profile: MARIO, newMessages: [] });
+      const giulia = await store.save({ profile: GIULIA, newMessages: [] });
+
+      await store.linkMessages(mario.prospect.id, 42, [1_001, 1_002]);
+      await store.linkMessages(giulia.prospect.id, 42, [1_003]);
+      await store.linkMessages(giulia.prospect.id, 42, []);
+
+      expect(await store.prospectOfMessage(42, 1_002)).toBe("mariofit");
+      expect(await store.prospectOfMessage(42, 1_003)).toBe("giulia.bakery");
+      expect(await store.prospectOfMessage(42, 1_004)).toBeNull();
+      expect(await store.prospectOfMessage(7, 1_001)).toBeNull();
+    });
+
     it("keeps emojis and accents", async () => {
       const store = await save({
         profile: { ...GIULIA, displayName: "Giulia 🎂 Pasticcerìa" },

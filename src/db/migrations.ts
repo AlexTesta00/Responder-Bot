@@ -110,6 +110,22 @@ export const MIGRATIONS: Readonly<Record<string, Migration>> = {
       `.execute(db);
     },
   },
+  "0004_telegram_messages": {
+    up: async (db) => {
+      await sql`
+        CREATE TABLE telegram_messages (
+          chat_id BIGINT NOT NULL,
+          message_id BIGINT NOT NULL,
+          prospect_id CHAR(36) CHARACTER SET ascii NOT NULL,
+          created_at DATETIME(3) NOT NULL,
+          PRIMARY KEY (chat_id, message_id),
+          KEY telegram_messages_prospect_id (prospect_id),
+          CONSTRAINT telegram_messages_prospect_fk FOREIGN KEY (prospect_id)
+            REFERENCES prospects (id) ON DELETE CASCADE
+        ) ${TABLE_OPTIONS}
+      `.execute(db);
+    },
+  },
 };
 
 export type MigrationFailure = Readonly<{

@@ -28,6 +28,7 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
         "0001_prospect_memory",
         "0002_objections_and_commitments",
         "0003_stage_changes",
+        "0004_telegram_messages",
       ]),
     );
     expect(await migrateToLatest(db)).toStrictEqual(ok([]));
@@ -38,6 +39,7 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
       "prospect_messages",
       "prospect_stage_changes",
       "prospects",
+      "telegram_messages",
     ]);
   });
 
@@ -92,7 +94,11 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
     `.execute(db);
 
     expect(await migrateToLatest(db)).toStrictEqual(
-      ok(["0002_objections_and_commitments", "0003_stage_changes"]),
+      ok([
+        "0002_objections_and_commitments",
+        "0003_stage_changes",
+        "0004_telegram_messages",
+      ]),
     );
     expect(
       await db

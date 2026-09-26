@@ -54,7 +54,7 @@ describe("createTelegramClient", () => {
 
     const result = await client.sendMessage(CHAT_ID, "Ciao!");
 
-    expect(result).toStrictEqual({ ok: true, value: undefined });
+    expect(result).toStrictEqual({ ok: true, value: { messageId: 1 } });
     expect(requests).toStrictEqual([
       {
         url: `https://api.telegram.org/bot${TOKEN}/sendMessage`,

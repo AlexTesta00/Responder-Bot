@@ -260,4 +260,34 @@ export const createMysqlProspectStore = (
         .orderBy("prospect_stage_changes.id")
         .execute(),
     ),
+  linkMessages: async (prospectId, chatId, messageIds) => {
+    if (messageIds.length === 0) {
+      return;
+    }
+    const time = now();
+    await db
+      .insertInto("telegram_messages")
+      .values(
+        messageIds.map((messageId) => ({
+          chat_id: chatId,
+          message_id: messageId,
+          prospect_id: prospectId,
+          created_at: time,
+        })),
+      )
+      .execute();
+  },
+  prospectOfMessage: async (chatId, messageId) => {
+    const row = await db
+      .selectFrom("telegram_messages")
+      .innerJoin("prospects", "prospects.id", "telegram_messages.prospect_id")
+      .select("prospects.username")
+      .where("telegram_messages.chat_id", "=", chatId)
+      .where("telegram_messages.message_id", "=", messageId)
+      .executeTakeFirst();
+    return z
+      .string()
+      .nullable()
+      .parse(row?.username ?? null);
+  },
 });

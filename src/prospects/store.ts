@@ -22,6 +22,17 @@ export type ProspectStore = Readonly<{
   save: (update: MemoryUpdate) => Promise<ProspectMemory>;
   /** Every change of stage recorded by `save`, oldest first. */
   stageHistory: (username: string) => Promise<readonly StageChange[]>;
+  /** Remembers that these messages the bot sent are about the prospect. */
+  linkMessages: (
+    prospectId: string,
+    chatId: number,
+    messageIds: readonly number[],
+  ) => Promise<void>;
+  /** The username of the prospect a message of the bot is about, or null. */
+  prospectOfMessage: (
+    chatId: number,
+    messageId: number,
+  ) => Promise<string | null>;
 }>;
 
 /** Time and identifiers, injected so tests can predict them. */
@@ -37,6 +48,10 @@ export const createInMemoryProspectStore = ({
 }: StoreDependencies = {}): ProspectStore => {
   const memories = new Map<string, ProspectMemory>();
   const histories = new Map<string, readonly StageChange[]>();
+  // Chat and message id of each message of the bot, to its prospect's id.
+  const links = new Map<string, string>();
+  const linkKey = (chatId: number, messageId: number): string =>
+    `${String(chatId)}:${String(messageId)}`;
 
   return {
     load: (username) => Promise.resolve(memories.get(username) ?? null),
@@ -66,5 +81,18 @@ export const createInMemoryProspectStore = ({
       return Promise.resolve(memory);
     },
     stageHistory: (username) => Promise.resolve(histories.get(username) ?? []),
+    linkMessages: (prospectId, chatId, messageIds) => {
+      for (const messageId of messageIds) {
+        links.set(linkKey(chatId, messageId), prospectId);
+      }
+      return Promise.resolve();
+    },
+    prospectOfMessage: (chatId, messageId) => {
+      const prospectId = links.get(linkKey(chatId, messageId));
+      const memory = [...memories.values()].find(
+        ({ prospect }) => prospect.id === prospectId,
+      );
+      return Promise.resolve(memory?.prospect.username ?? null);
+    },
   };
 };

@@ -9,7 +9,12 @@ export type TextInput =
   | Readonly<{ type: "UNKNOWN_COMMAND" }>
   | Readonly<{ type: "INSTAGRAM_PROFILE"; username: string }>
   | Readonly<{ type: "LINK"; url: string }>
-  | Readonly<{ type: "TEXT"; text: string }>;
+  | Readonly<{
+      type: "TEXT";
+      text: string;
+      /** The prospect named on the first line, as in "@name". */
+      username: string | null;
+    }>;
 
 /** Everything the bot can receive. */
 export type Input =
@@ -43,6 +48,15 @@ export const classifyText = (text: string): TextInput => {
       : { type: "UNKNOWN_COMMAND" };
   }
 
+  // A conversation pasted under the prospect's @username.
+  const [firstLine = "", ...rest] = trimmed.split("\n");
+  const named =
+    rest.length === 0 ? null : usernameFromMention(firstLine.trim());
+  const pasted = rest.join("\n").trim();
+  if (named !== null && pasted !== "") {
+    return { type: "TEXT", text: pasted, username: named };
+  }
+
   const username = usernameFromMention(trimmed) ?? usernameFromLinks(trimmed);
   if (username !== null) {
     return { type: "INSTAGRAM_PROFILE", username };
@@ -50,5 +64,5 @@ export const classifyText = (text: string): TextInput => {
 
   return isWebLink(trimmed)
     ? { type: "LINK", url: trimmed }
-    : { type: "TEXT", text: trimmed };
+    : { type: "TEXT", text: trimmed, username: null };
 };
