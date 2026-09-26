@@ -1,3 +1,4 @@
+import { classifyText } from "../inputs/classify.ts";
 import type { MessageContent } from "./update.ts";
 
 const START_REPLY = [
@@ -17,26 +18,17 @@ const HELP_REPLY = [
 const FALLBACK_REPLY =
   "Per ora capisco solo /start e /help. Scrivi /help per vedere i comandi.";
 
-type Command = "start" | "help";
-
-/** Recognizes "/start", "/help@SomeBot" and commands followed by arguments. */
-const parseCommand = (text: string): Command | undefined => {
-  const name = /^\/([a-z]+)(?:@\w+)?(?:\s|$)/i.exec(text.trim())?.[1];
-  const command = name?.toLowerCase();
-  return command === "start" || command === "help" ? command : undefined;
-};
-
 /** The reply the bot sends to an authorized message. */
 export const replyTo = (content: MessageContent): string => {
-  const command =
-    content.type === "TEXT" ? parseCommand(content.text) : undefined;
+  const input = content.type === "TEXT" ? classifyText(content.text) : null;
+  if (input?.type !== "COMMAND") {
+    return FALLBACK_REPLY;
+  }
 
-  switch (command) {
+  switch (input.command) {
     case "start":
       return START_REPLY;
     case "help":
       return HELP_REPLY;
-    case undefined:
-      return FALLBACK_REPLY;
   }
 };
