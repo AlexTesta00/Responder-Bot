@@ -64,6 +64,40 @@ describe("createTelegramClient", () => {
     ]);
   });
 
+  it("sends HTML when asked", async () => {
+    const { fetchFn, requests } = fakeFetch(() =>
+      jsonResponse(200, { ok: true, result: { message_id: 1 } }),
+    );
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+
+    await client.sendMessage(CHAT_ID, "<b>Ciao</b>", "HTML");
+
+    expect(requests[0]?.body).toStrictEqual({
+      chat_id: 42,
+      text: "<b>Ciao</b>",
+      parse_mode: "HTML",
+    });
+  });
+
+  it("shows that the bot is typing", async () => {
+    const { fetchFn, requests } = fakeFetch(() =>
+      jsonResponse(200, { ok: true, result: true }),
+    );
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+
+    expect(await client.sendTyping(CHAT_ID)).toStrictEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(requests).toStrictEqual([
+      {
+        url: `https://api.telegram.org/bot${TOKEN}/sendChatAction`,
+        method: "POST",
+        body: { chat_id: 42, action: "typing" },
+      },
+    ]);
+  });
+
   it("registers a webhook with its secret and update types", async () => {
     const { fetchFn, requests } = fakeFetch(() =>
       jsonResponse(200, { ok: true, result: true }),

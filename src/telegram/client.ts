@@ -8,7 +8,12 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_DOWNLOAD_TIMEOUT_MS = 30_000;
 
 export type TelegramMethod =
-  "sendMessage" | "setWebhook" | "getWebhookInfo" | "getFile" | "downloadFile";
+  | "sendMessage"
+  | "sendChatAction"
+  | "setWebhook"
+  | "getWebhookInfo"
+  | "getFile"
+  | "downloadFile";
 
 export type TelegramError =
   | Readonly<{
@@ -67,10 +72,14 @@ export type TelegramFile = Readonly<{
 }>;
 
 export type TelegramClient = Readonly<{
+  /** Sends plain text, or HTML with Telegram's formatting tags when asked. */
   sendMessage: (
     chatId: TelegramChatId,
     text: string,
+    parseMode?: "HTML",
   ) => Promise<Result<void, TelegramError>>;
+  /** Shows "typing…" in the chat for a few seconds, or until a message arrives. */
+  sendTyping: (chatId: TelegramChatId) => Promise<Result<void, TelegramError>>;
   setWebhook: (
     options: SetWebhookOptions,
   ) => Promise<Result<void, TelegramError>>;
@@ -267,9 +276,23 @@ export const createTelegramClient = ({
   ): Result<void, TelegramError> => (result.ok ? ok(undefined) : result);
 
   return {
-    sendMessage: async (chatId, text) =>
+    sendMessage: async (chatId, text, parseMode) =>
       withoutValue(
-        await call("sendMessage", { chat_id: chatId, text }, z.unknown()),
+        await call(
+          "sendMessage",
+          parseMode === undefined
+            ? { chat_id: chatId, text }
+            : { chat_id: chatId, text, parse_mode: parseMode },
+          z.unknown(),
+        ),
+      ),
+    sendTyping: async (chatId) =>
+      withoutValue(
+        await call(
+          "sendChatAction",
+          { chat_id: chatId, action: "typing" },
+          z.literal(true),
+        ),
       ),
     setWebhook: async (options) =>
       withoutValue(
