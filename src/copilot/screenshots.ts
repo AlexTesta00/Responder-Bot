@@ -92,9 +92,9 @@ const observationOf = (analysis: ProspectAnalysis): Observation => ({
         }
       : null,
   summary: analysis.summary,
-  // Screenshots do not report objections and promises yet: kept as they are.
-  objections: null,
-  commitments: null,
+  // A profile says nothing about objections and promises: they are kept.
+  objections: analysis.kind === "CONVERSATION" ? analysis.objections : null,
+  commitments: analysis.kind === "CONVERSATION" ? analysis.commitments : null,
   messages: analysis.kind === "CONVERSATION" ? analysis.messages : [],
 });
 

@@ -64,8 +64,12 @@ const PROFILE: ScreenshotsAnalysis = {
 };
 
 const REPLY: ConversationReply = {
+  messages: [{ author: "PROSPECT", text: "Quanto costa un sito come il tuo?" }],
   facts: [],
   hypotheses: [],
+  objections: [],
+  commitments: [],
+  summary: "Ha chiesto il prezzo di un sito.",
   analysis: {
     lastProspectMessage: "Quanto costa un sito come il tuo?",
     stage: "ENGAGED",
@@ -444,7 +448,10 @@ describe("suggestions", () => {
     await vi.waitFor(() => {
       expect(sendMessage).toHaveBeenCalledTimes(2);
     });
-    expect(replyToConversation).toHaveBeenCalledExactlyOnceWith(CONVERSATION);
+    expect(replyToConversation).toHaveBeenCalledExactlyOnceWith(
+      CONVERSATION,
+      null,
+    );
     expect(sendMessage.mock.calls).toStrictEqual(
       htmlCalls(conversationMessages(REPLY)),
     );

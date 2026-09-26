@@ -5,6 +5,7 @@ import {
   CONVERSATION_STAGES,
   INTEREST_LEVELS,
   NEXT_GOALS,
+  type Commitment,
   type ConversationIntent,
   type ConversationMessage,
   type ConversationStage,
@@ -32,10 +33,11 @@ const conversationOutput = z.object({
   rationale: z.string(),
 });
 
-const messageOutput = z.object({
-  author: z.enum(["ALEX", "PROSPECT"]),
-  text: z.string(),
-});
+const authorOutput = z.enum(["ALEX", "PROSPECT"]);
+
+const messageOutput = z.object({ author: authorOutput, text: z.string() });
+
+const commitmentOutput = z.object({ by: authorOutput, text: z.string() });
 
 const firstMessagesOutput = z.object({
   best: z.string(),
@@ -68,6 +70,8 @@ export const screenshotsOutputSchema = z.object({
   observed_facts: z.array(z.string()),
   hypotheses: z.array(z.string()),
   conversation: conversationOutput.nullable(),
+  objections: z.array(z.string()),
+  commitments: z.array(commitmentOutput),
   summary: z.string().nullable(),
   first_messages: firstMessagesOutput.nullable(),
   replies: repliesOutput.nullable(),
@@ -78,9 +82,13 @@ export type ScreenshotsOutput = z.infer<typeof screenshotsOutputSchema>;
 
 /** Output for a conversation pasted as text. */
 export const conversationReplyOutputSchema = z.object({
+  messages: z.array(messageOutput),
   observed_facts: z.array(z.string()),
   hypotheses: z.array(z.string()),
   conversation: conversationOutput,
+  objections: z.array(z.string()),
+  commitments: z.array(commitmentOutput),
+  summary: z.string().nullable(),
   replies: repliesOutput.nullable(),
   note: z.string().nullable(),
 });
@@ -137,6 +145,10 @@ export type ScreenshotsAnalysis =
       facts: readonly string[];
       hypotheses: readonly string[];
       analysis: ConversationAnalysis;
+      /** Objections still open, as the analysis sees them now. */
+      objections: readonly string[];
+      /** Promises still to keep, as the analysis sees them now. */
+      commitments: readonly Commitment[];
       summary: string | null;
       /** Empty when no message should be sent, for example DO_NOT_CONTACT. */
       suggestions: readonly Suggestion[];
@@ -145,9 +157,14 @@ export type ScreenshotsAnalysis =
   | Readonly<{ kind: "UNRELATED"; note: string | null }>;
 
 export type ConversationReply = Readonly<{
+  /** The pasted text, split into messages, oldest first. */
+  messages: readonly ConversationMessage[];
   facts: readonly string[];
   hypotheses: readonly string[];
   analysis: ConversationAnalysis;
+  objections: readonly string[];
+  commitments: readonly Commitment[];
+  summary: string | null;
   suggestions: readonly Suggestion[];
   note: string | null;
 }>;
@@ -190,6 +207,16 @@ const toMessages = (
   (messages ?? [])
     .map((message) => ({ author: message.author, text: message.text.trim() }))
     .filter((message) => message.text !== "");
+
+const toNotes = (notes: readonly string[]): readonly string[] =>
+  notes.map((note) => note.trim()).filter((note) => note !== "");
+
+const toCommitments = (
+  commitments: ScreenshotsOutput["commitments"],
+): readonly Commitment[] =>
+  commitments
+    .map((commitment) => ({ by: commitment.by, text: commitment.text.trim() }))
+    .filter((commitment) => commitment.text !== "");
 
 const toSummary = (summary: string | null): string | null => {
   const text = summary?.trim() ?? "";
@@ -270,6 +297,8 @@ export const toScreenshotsAnalysis = (
             facts: output.observed_facts,
             hypotheses: output.hypotheses,
             analysis: toAnalysis(output.conversation),
+            objections: toNotes(output.objections),
+            commitments: toCommitments(output.commitments),
             summary: toSummary(output.summary),
             suggestions: suggestions.value,
             note: output.note,
@@ -287,9 +316,13 @@ export const toConversationReply = (
   const suggestions = replySuggestions(output.replies);
   return suggestions.ok
     ? ok({
+        messages: toMessages(output.messages),
         facts: output.observed_facts,
         hypotheses: output.hypotheses,
         analysis: toAnalysis(output.conversation),
+        objections: toNotes(output.objections),
+        commitments: toCommitments(output.commitments),
+        summary: toSummary(output.summary),
         suggestions: suggestions.value,
         note: output.note,
       })

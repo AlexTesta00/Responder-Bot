@@ -16,6 +16,7 @@ import {
 import { SYSTEM_POLICY } from "./prompts/system.ts";
 
 const API_KEY = "sk-ant-test-key-value";
+const TODAY = new Date("2026-09-30T08:00:00Z");
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 const profileOutput: ScreenshotsOutput = {
@@ -29,6 +30,8 @@ const profileOutput: ScreenshotsOutput = {
   observed_facts: ["La bio invita a scrivere START in DM."],
   hypotheses: [],
   conversation: null,
+  objections: [],
+  commitments: [],
   summary: "Personal trainer, invita a scrivere START in DM.",
   first_messages: {
     best: "Ciao Mario, quanti START ti arrivano a settimana?",
@@ -96,6 +99,7 @@ const setup = (respond: () => Promise<Response> = () => message()) => {
     model: "claude-opus-5",
     fastModel: "claude-haiku-4-5",
     now: () => times.shift() ?? 0,
+    today: () => TODAY,
   });
   return { engine, requests };
 };
@@ -137,7 +141,7 @@ describe("createClaudeEngine", () => {
             },
             {
               type: "text",
-              text: screenshotsRequest("palestra a Riccione", null),
+              text: screenshotsRequest("palestra a Riccione", null, TODAY),
             },
           ],
         },
@@ -164,8 +168,8 @@ describe("createClaudeEngine", () => {
         hypotheses: [],
         conversation: null,
         summary: "Primo messaggio inviato, nessuna risposta.",
-        objections: [],
-        commitments: [],
+        objections: ["Teme che un sito costi troppo."],
+        commitments: [{ by: "ALEX", text: "Mandargli un esempio." }],
         createdAt: new Date("2026-09-20T10:00:00Z"),
         updatedAt: new Date("2026-09-20T10:00:00Z"),
       },
@@ -184,7 +188,7 @@ describe("createClaudeEngine", () => {
           role: "user",
           content: [
             { type: "image" },
-            { type: "text", text: screenshotsRequest(null, memory) },
+            { type: "text", text: screenshotsRequest(null, memory, TODAY) },
           ],
         },
       ],
@@ -220,6 +224,7 @@ describe("createClaudeEngine", () => {
     const { engine, requests } = setup(() =>
       message({
         text: JSON.stringify({
+          messages: [{ author: "PROSPECT", text: "Quanto costa?" }],
           observed_facts: [],
           hypotheses: [],
           conversation: {
@@ -230,6 +235,9 @@ describe("createClaudeEngine", () => {
             next_goal: "UNDERSTAND_PROCESS",
             rationale: "Chiede il prezzo senza contesto.",
           },
+          objections: [],
+          commitments: [],
+          summary: "Ha chiesto il prezzo di un sito.",
           replies: {
             best: "Dipende: cosa ti servirebbe?",
             alternative: "Te lo dico volentieri: come lavori oggi?",
@@ -240,7 +248,7 @@ describe("createClaudeEngine", () => {
       }),
     );
 
-    const generation = await engine.replyToConversation("Quanto costa?");
+    const generation = await engine.replyToConversation("Quanto costa?", null);
 
     expect(generation.result).toMatchObject({
       ok: true,
@@ -251,7 +259,10 @@ describe("createClaudeEngine", () => {
         {
           role: "user",
           content: [
-            { type: "text", text: conversationRequest("Quanto costa?") },
+            {
+              type: "text",
+              text: conversationRequest("Quanto costa?", null, TODAY),
+            },
           ],
         },
       ],
@@ -356,7 +367,7 @@ describe("createClaudeEngine", () => {
   ])("maps HTTP %i to %j", async (status, type, error) => {
     const { engine } = setup(() => apiError(status, type));
 
-    const generation = await engine.replyToConversation("ciao");
+    const generation = await engine.replyToConversation("ciao", null);
 
     expect(generation.result).toStrictEqual({ ok: false, error });
     expect(generation.report).toMatchObject({ model: null, durationMs: 2_500 });
@@ -367,7 +378,7 @@ describe("createClaudeEngine", () => {
       Promise.reject(new TypeError(`fetch failed with key ${API_KEY}`)),
     );
 
-    const generation = await engine.replyToConversation("ciao");
+    const generation = await engine.replyToConversation("ciao", null);
 
     expect(generation.result).toStrictEqual({
       ok: false,

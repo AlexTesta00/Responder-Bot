@@ -110,6 +110,8 @@ describe("screenshotsMessages", () => {
         facts: [],
         hypotheses: [],
         summary: null,
+        objections: [],
+        commitments: [],
         analysis,
         suggestions: [
           { style: "BEST", text: "Dipende: cosa ti serve?" },
@@ -142,6 +144,8 @@ describe("screenshotsMessages", () => {
         facts: [],
         hypotheses: [],
         summary: null,
+        objections: [],
+        commitments: [],
         analysis: { ...analysis, intent: "DO_NOT_CONTACT" },
         suggestions: [],
         note: "Ha chiesto di non essere contattato.",
@@ -188,9 +192,13 @@ describe("memoryLine", () => {
 describe("conversationMessages", () => {
   it("presents the analysis of a pasted conversation and the replies", () => {
     const [summary, suggestions] = conversationMessages({
+      messages: [],
       facts: [],
       hypotheses: [],
       analysis,
+      objections: [],
+      commitments: [],
+      summary: null,
       suggestions: [{ style: "BEST", text: "Dipende: cosa ti serve?" }],
       note: null,
     });

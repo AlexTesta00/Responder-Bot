@@ -55,6 +55,8 @@ const conversation = (username: string | null): ScreenshotsAnalysis => ({
     nextGoal: "UNDERSTAND_PROCESS",
     rationale: "Chiede il prezzo senza contesto.",
   },
+  objections: ["Il prezzo di un sito gli sembra alto."],
+  commitments: [],
   summary: "Ha risposto chiedendo il prezzo di un sito.",
   suggestions: [{ style: "BEST", text: "Dipende: cosa ti serve?" }],
   note: null,

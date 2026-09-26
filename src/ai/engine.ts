@@ -51,5 +51,9 @@ export type AiEngine = Readonly<{
     /** What the bot remembers about the prospect in the screenshots. */
     memory: ProspectMemory | null,
   ) => Promise<Generation<ScreenshotsAnalysis>>;
-  replyToConversation: (text: string) => Promise<Generation<ConversationReply>>;
+  replyToConversation: (
+    text: string,
+    /** What the bot remembers about the prospect, when Alex said who it is. */
+    memory: ProspectMemory | null,
+  ) => Promise<Generation<ConversationReply>>;
 }>;

@@ -217,7 +217,7 @@ export const createUpdateHandler = ({
     log: Logger,
   ): Promise<void> => {
     const generation = await whileTyping(chatId, () =>
-      replyToConversation(text),
+      replyToConversation(text, null),
     );
     logGeneration(generation, log);
     await deliverResult(chatId, generation.result, conversationMessages, log);
