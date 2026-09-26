@@ -1,7 +1,9 @@
 // The buttons under an answer: a copy button for each suggestion, the best
 // one first and alone, then at most two per row so that the labels fit on a
 // phone.
-import type { Suggestion } from "../ai/outputs.ts";
+import type { Suggestion, SuggestionKind } from "../ai/outputs.ts";
+import type { ButtonPress } from "../copilot/buttons.ts";
+import { encodeButton } from "./button-data.ts";
 import type { InlineButton, InlineKeyboard } from "./client.ts";
 
 /** Telegram copies at most 256 characters with a copy button. */
@@ -23,6 +25,34 @@ const copyButton = (suggestion: Suggestion): InlineButton => ({
   text: suggestion.text,
   primary: suggestion.style === "BEST",
 });
+
+const callback = (label: string, press: ButtonPress): InlineButton => ({
+  type: "CALLBACK",
+  label,
+  data: encodeButton(press),
+});
+
+/** Shows what the bot remembers about the prospect. */
+export const analyzeButton = (kind: SuggestionKind): InlineButton =>
+  callback("🔍 Analizza", { action: "ANALYZE", kind });
+
+/**
+ * The buttons that write suggestions again, under suggestions of `kind`,
+ * then 🔍. Under follow-ups there is no other follow-up: the next one needs
+ * a screenshot of the chat, which the transition rules count exactly.
+ */
+export const actionRows = (kind: SuggestionKind): InlineKeyboard => {
+  const more = callback("🔄 Altre 3", { action: "MORE", kind });
+  const natural = callback("🙂 Più naturale", { action: "NATURAL", kind });
+  const direct = callback("🎯 Più diretto", { action: "DIRECT", kind });
+  const followUp = callback("💬 Follow-up", { action: "FOLLOW_UP", kind });
+  return kind === "FOLLOW_UPS"
+    ? [
+        [more, natural],
+        [direct, analyzeButton(kind)],
+      ]
+    : [[more, natural], [direct, followUp], [analyzeButton(kind)]];
+};
 
 /** Copy buttons for the suggestions short enough to be copied. */
 export const copyRows = (

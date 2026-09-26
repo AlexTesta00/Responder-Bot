@@ -43,6 +43,7 @@ export type TappedMessage = Readonly<{
 export type ButtonAnswer =
   | Readonly<{
       type: "SUGGESTED";
+      action: SuggestionAction;
       generation: Generation<NewSuggestions>;
       /** The kind of the new suggestions. */
       kind: SuggestionKind;
@@ -180,6 +181,7 @@ export const createButtonActions = ({
     await steps.record(runs, log);
     return {
       type: "SUGGESTED",
+      action,
       generation,
       kind: written,
       username,

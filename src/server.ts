@@ -21,6 +21,7 @@ import {
   type Env,
   type NodeEnv,
 } from "./config/env.ts";
+import { createButtonActions } from "./copilot/buttons.ts";
 import { createConversationAnalyst } from "./copilot/conversation.ts";
 import { createScreenshotsAnalyst } from "./copilot/screenshots.ts";
 import { createDatabase } from "./db/connection.ts";
@@ -33,6 +34,7 @@ import { createInMemoryProspectStore } from "./prospects/store.ts";
 import { errorFields } from "./shared/errors.ts";
 import { createTelegramClient } from "./telegram/client.ts";
 import { createImageDownloader } from "./telegram/files.ts";
+import { createInFlight } from "./telegram/in-flight.ts";
 import { scheduleWithTimers } from "./telegram/media-group.ts";
 import { createProcessedUpdates } from "./telegram/processed-updates.ts";
 import { createUpdateHandler } from "./telegram/webhook-handler.ts";
@@ -125,6 +127,9 @@ const start = async (env: Env): Promise<void> => {
           prospects,
           generations,
         }),
+        pressButton: createButtonActions({ ai, prospects, generations }),
+        answerCallbackQuery: telegram.answerCallbackQuery,
+        inFlight: createInFlight(),
         linkMessages: prospects.linkMessages,
         spending,
         monthlyLimitMicroUsd: monthlyLimitOf(env),

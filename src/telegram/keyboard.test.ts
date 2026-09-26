@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Suggestion } from "../ai/outputs.ts";
-import { copyRows, inPairs, isCopyable } from "./keyboard.ts";
+import { actionRows, copyRows, inPairs, isCopyable } from "./keyboard.ts";
 
 const labels = (suggestions: readonly Suggestion[]) =>
   copyRows(suggestions).map((row) => row.map((button) => button.label));
@@ -56,5 +56,33 @@ describe("copyRows", () => {
 
   it("has no rows without suggestions", () => {
     expect(copyRows([])).toStrictEqual([]);
+  });
+});
+
+describe("actionRows", () => {
+  const labelsOf = (kind: "FIRST_MESSAGES" | "REPLIES" | "FOLLOW_UPS") =>
+    actionRows(kind).map((row) => row.map((button) => button.label));
+
+  it("offers the buttons that write again, two per row, then 🔍", () => {
+    expect(labelsOf("REPLIES")).toStrictEqual([
+      ["🔄 Altre 3", "🙂 Più naturale"],
+      ["🎯 Più diretto", "💬 Follow-up"],
+      ["🔍 Analizza"],
+    ]);
+  });
+
+  it("offers no follow-up under follow-ups", () => {
+    expect(labelsOf("FOLLOW_UPS")).toStrictEqual([
+      ["🔄 Altre 3", "🙂 Più naturale"],
+      ["🎯 Più diretto", "🔍 Analizza"],
+    ]);
+  });
+
+  it("tells each button the kind it sits under", () => {
+    expect(actionRows("FIRST_MESSAGES").flat()).toContainEqual({
+      type: "CALLBACK",
+      label: "💬 Follow-up",
+      data: "1:fu:F",
+    });
   });
 });

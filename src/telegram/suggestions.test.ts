@@ -5,14 +5,19 @@ import type {
   ConversationReply,
   ScreenshotsAnalysis,
 } from "../ai/outputs.ts";
+import type { MemoryOutcome } from "../copilot/memory.ts";
+import type { Pause } from "../conversations/transition.ts";
 import {
   aiProblemReply,
   conversationAnswer,
   escapeHtml,
   memoryLine,
+  newSuggestionsAnswer,
+  pauseAnswer,
   pauseMessage,
   plainMessage,
   screenshotsAnswer,
+  type Presented,
 } from "./suggestions.ts";
 import { telegramLength } from "./message-length.ts";
 
@@ -75,6 +80,27 @@ const reply: ConversationReply = {
   note: null,
 };
 
+/** Answers about no prospect the bot remembers: copy buttons only. */
+const unlinkedScreenshots = (
+  analysis: ScreenshotsAnalysis,
+  memory: MemoryOutcome | null,
+  pause: Pause | null,
+) =>
+  screenshotsAnswer(analysis, { memory, pause, linked: false, footer: null });
+
+const unlinkedConversation = (
+  reply: ConversationReply,
+  username: string | null,
+  memory: MemoryOutcome | null,
+  pause: Pause | null,
+) =>
+  conversationAnswer(reply, username, {
+    memory,
+    pause,
+    linked: false,
+    footer: null,
+  });
+
 describe("escapeHtml", () => {
   it("escapes the characters Telegram HTML reserves", () => {
     expect(escapeHtml("<b>Tom & Jerry</b>")).toBe(
@@ -92,7 +118,7 @@ describe("escapeHtml", () => {
 
 describe("screenshotsAnswer", () => {
   it("opens a profile on the first messages, with the analysis folded below", () => {
-    const { html, keyboard } = screenshotsAnswer(
+    const { html, keyboard } = unlinkedScreenshots(
       profile,
       { type: "CREATED" },
       null,
@@ -150,7 +176,7 @@ describe("screenshotsAnswer", () => {
   });
 
   it("escapes what the prospect and the model wrote, but copies it as written", () => {
-    const { html, keyboard } = screenshotsAnswer(
+    const { html, keyboard } = unlinkedScreenshots(
       {
         ...profile,
         prospect: { ...prospect, businessType: "bar & <bistrot>" },
@@ -172,7 +198,7 @@ describe("screenshotsAnswer", () => {
   });
 
   it("presents a conversation with the message it answers and its analysis", () => {
-    const { html, keyboard } = screenshotsAnswer(
+    const { html, keyboard } = unlinkedScreenshots(
       conversation,
       { type: "UPDATED", knownMessages: 3 },
       null,
@@ -206,7 +232,7 @@ describe("screenshotsAnswer", () => {
   });
 
   it("names the conversation when the username is not visible", () => {
-    const { html } = screenshotsAnswer(
+    const { html } = unlinkedScreenshots(
       {
         ...conversation,
         prospect: { username: null, displayName: null, businessType: null },
@@ -222,7 +248,7 @@ describe("screenshotsAnswer", () => {
   });
 
   it("shortens the quoted message of the prospect", () => {
-    const { html } = screenshotsAnswer(
+    const { html } = unlinkedScreenshots(
       {
         ...conversation,
         analysis: { ...analysis, lastProspectMessage: "a".repeat(200) },
@@ -235,7 +261,7 @@ describe("screenshotsAnswer", () => {
   });
 
   it("says so when no message should be sent, with the reason in sight", () => {
-    const { html, keyboard } = screenshotsAnswer(
+    const { html, keyboard } = unlinkedScreenshots(
       {
         ...conversation,
         analysis: { ...analysis, intent: "DO_NOT_CONTACT" },
@@ -254,7 +280,7 @@ describe("screenshotsAnswer", () => {
   });
 
   it("shows why it suggests nothing, in place of the suggestions", () => {
-    const { html, keyboard } = screenshotsAnswer(
+    const { html, keyboard } = unlinkedScreenshots(
       profile,
       null,
       "FOLLOW_UP_LIMIT",
@@ -266,7 +292,7 @@ describe("screenshotsAnswer", () => {
   });
 
   it("shows the open objections and promises of a conversation", () => {
-    const { html } = screenshotsAnswer(
+    const { html } = unlinkedScreenshots(
       {
         ...conversation,
         objections: ["Il prezzo <alto>"],
@@ -286,7 +312,7 @@ describe("screenshotsAnswer", () => {
   });
 
   it("shows at most five facts", () => {
-    const { html } = screenshotsAnswer(
+    const { html } = unlinkedScreenshots(
       { ...profile, facts: ["1", "2", "3", "4", "5", "6"], hypotheses: [] },
       null,
       null,
@@ -298,7 +324,7 @@ describe("screenshotsAnswer", () => {
 
   it("keeps suggestions too long to copy, without their button", () => {
     const long = "x".repeat(257);
-    const { html, keyboard } = screenshotsAnswer(
+    const { html, keyboard } = unlinkedScreenshots(
       {
         ...profile,
         suggestions: [
@@ -332,7 +358,7 @@ describe("screenshotsAnswer", () => {
         (_, index) => `${text} ${String(index)} ${"<".repeat(300)}`,
       );
     const suggestion = "&".repeat(1_000);
-    const { html } = screenshotsAnswer(
+    const { html } = unlinkedScreenshots(
       {
         ...conversation,
         facts: many("fatto"),
@@ -357,7 +383,7 @@ describe("screenshotsAnswer", () => {
 
   it("explains screenshots that are neither profiles nor conversations", () => {
     expect(
-      screenshotsAnswer(
+      unlinkedScreenshots(
         { kind: "UNRELATED", note: "È un tramonto." },
         null,
         null,
@@ -371,7 +397,7 @@ describe("screenshotsAnswer", () => {
 
 describe("conversationAnswer", () => {
   it("names the prospect Alex pointed to", () => {
-    const { html, keyboard } = conversationAnswer(
+    const { html, keyboard } = unlinkedConversation(
       reply,
       "mariofit",
       { type: "UPDATED", knownMessages: 2 },
@@ -387,7 +413,7 @@ describe("conversationAnswer", () => {
   });
 
   it("shows first that it does not know whose conversation it is", () => {
-    const { html } = conversationAnswer(
+    const { html } = unlinkedConversation(
       reply,
       null,
       { type: "NOT_SAVED", reason: "NO_PROSPECT" },
@@ -434,5 +460,195 @@ describe("aiProblemReply", () => {
     [{ type: "REJECTED", status: 401 } as const, "API key"],
   ])("explains %j", (error, expected) => {
     expect(aiProblemReply(error)).toContain(expected);
+  });
+});
+
+describe("buttons under an answer", () => {
+  const labels = (presented: Presented) =>
+    presented.keyboard?.map((row) => row.map((button) => button.label)) ?? null;
+
+  it("adds the buttons that write again when the prospect is known", () => {
+    expect(
+      labels(
+        screenshotsAnswer(profile, {
+          memory: { type: "CREATED" },
+          pause: null,
+          linked: true,
+          footer: null,
+        }),
+      ),
+    ).toStrictEqual([
+      ["📋 Copia BEST"],
+      ["📋 CURIOSITY", "📋 NATURAL"],
+      ["🔄 Altre 3", "🙂 Più naturale"],
+      ["🎯 Più diretto", "💬 Follow-up"],
+      ["🔍 Analizza"],
+    ]);
+  });
+
+  it("tells the buttons which kind of suggestions they sit under", () => {
+    const { keyboard } = screenshotsAnswer(conversation, {
+      memory: null,
+      pause: null,
+      linked: true,
+      footer: null,
+    });
+
+    expect(keyboard?.[2]?.[0]).toStrictEqual({
+      type: "CALLBACK",
+      label: "🔄 Altre 3",
+      data: "1:more:R",
+    });
+  });
+
+  it("offers only what the bot remembers when there is nothing to copy", () => {
+    const paused = screenshotsAnswer(conversation, {
+      memory: null,
+      pause: "CLOSED",
+      linked: true,
+      footer: null,
+    });
+    const empty = screenshotsAnswer(
+      { ...conversation, suggestions: [] },
+      { memory: null, pause: null, linked: true, footer: null },
+    );
+
+    expect(labels(paused)).toStrictEqual([["🔍 Analizza"]]);
+    expect(labels(empty)).toStrictEqual([["🔍 Analizza"]]);
+    expect(
+      labels(unlinkedScreenshots(conversation, null, "CLOSED")),
+    ).toBeNull();
+  });
+
+  it("ends with the footer", () => {
+    const { html } = conversationAnswer(reply, "mariofit", {
+      memory: null,
+      pause: null,
+      linked: true,
+      footer: "💳 Questa analisi ~0,02 $",
+    });
+
+    expect(html).toMatch(/<\/blockquote>\n\n💳 Questa analisi ~0,02 \$$/);
+  });
+
+  it("explains a pause with the button of what the bot remembers", () => {
+    expect(pauseAnswer("FOLLOW_UP_LIMIT", "REPLIES")).toStrictEqual({
+      html: pauseMessage("FOLLOW_UP_LIMIT"),
+      keyboard: [[{ type: "CALLBACK", label: "🔍 Analizza", data: "1:an:R" }]],
+    });
+  });
+});
+
+describe("newSuggestionsAnswer", () => {
+  const NEW = {
+    suggestions: [
+      { style: "BEST", text: "Ti mando un esempio?" },
+      { style: "ALTERNATIVE", text: "Come lavori oggi?" },
+      { style: "DIRECT", text: "Ti preparo un preventivo?" },
+    ],
+    note: "Punta sull'esempio promesso.",
+  } as const;
+
+  const view = {
+    action: "MORE",
+    kind: "REPLIES",
+    username: "mariofit",
+    upgraded: false,
+    previousLost: false,
+  } as const;
+
+  it("presents the new suggestions with the same buttons", () => {
+    const { html, keyboard } = newSuggestionsAnswer(NEW, view, "💳 ~0,02 $");
+
+    expect(html).toBe(
+      [
+        "🔄 <b>@mariofit</b> · altre 3 risposte",
+        "",
+        "🔥 <b>BEST</b>",
+        "<pre>Ti mando un esempio?</pre>",
+        "",
+        "👀 <b>ALTERNATIVE</b>",
+        "<pre>Come lavori oggi?</pre>",
+        "",
+        "🎯 <b>DIRECT</b>",
+        "<pre>Ti preparo un preventivo?</pre>",
+        "",
+        "📝 Punta sull'esempio promesso.",
+        "",
+        "💳 ~0,02 $",
+      ].join("\n"),
+    );
+    expect(
+      keyboard?.map((row) => row.map((button) => button.label)),
+    ).toStrictEqual([
+      ["📋 Copia BEST"],
+      ["📋 ALTERNATIVE", "📋 DIRECT"],
+      ["🔄 Altre 3", "🙂 Più naturale"],
+      ["🎯 Più diretto", "💬 Follow-up"],
+      ["🔍 Analizza"],
+    ]);
+  });
+
+  it.each([
+    [
+      { action: "NATURAL", kind: "FIRST_MESSAGES" },
+      "🙂",
+      "primi messaggi più naturali",
+    ],
+    [{ action: "DIRECT", kind: "FOLLOW_UPS" }, "🎯", "follow-up più diretti"],
+    [{ action: "FOLLOW_UP", kind: "FOLLOW_UPS" }, "💬", "follow-up"],
+  ] as const)("names what was asked: %j", (asked, icon, title) => {
+    const { html } = newSuggestionsAnswer(NEW, { ...view, ...asked }, null);
+
+    expect(html.split("\n")[0]).toBe(`${icon} <b>@mariofit</b> · ${title}`);
+  });
+
+  it("offers no other follow-up under follow-ups", () => {
+    const { keyboard } = newSuggestionsAnswer(
+      NEW,
+      { ...view, action: "FOLLOW_UP", kind: "FOLLOW_UPS" },
+      null,
+    );
+
+    expect(
+      keyboard?.slice(2).map((row) => row.map((button) => button.label)),
+    ).toStrictEqual([
+      ["🔄 Altre 3", "🙂 Più naturale"],
+      ["🎯 Più diretto", "🔍 Analizza"],
+    ]);
+  });
+
+  it("explains replies written instead of first messages, and lost texts", () => {
+    const { html } = newSuggestionsAnswer(
+      NEW,
+      { ...view, upgraded: true, previousLost: true },
+      null,
+    );
+
+    expect(html.split("\n").slice(1, 3)).toStrictEqual([
+      "ℹ️ La conversazione è già iniziata: ti propongo risposte invece di primi messaggi.",
+      "ℹ️ Non riesco più a leggere i messaggi di prima: li ho scritti partendo da ciò che ricordo.",
+    ]);
+  });
+
+  it("says why nothing was written", () => {
+    const { html, keyboard } = newSuggestionsAnswer(
+      { suggestions: [], note: "Ha chiesto di non scrivergli." },
+      view,
+      null,
+    );
+
+    expect(html).toBe(
+      [
+        "🔄 <b>@mariofit</b> · altre 3 risposte",
+        "",
+        "🚫 Nessun messaggio suggerito.",
+        "",
+        "📝 Ha chiesto di non scrivergli.",
+      ].join("\n"),
+    );
+    expect(keyboard).toStrictEqual([
+      [{ type: "CALLBACK", label: "🔍 Analizza", data: "1:an:R" }],
+    ]);
   });
 });

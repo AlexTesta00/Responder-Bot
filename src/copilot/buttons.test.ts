@@ -156,6 +156,7 @@ describe("createButtonActions", () => {
     );
     expect(answer).toStrictEqual({
       type: "SUGGESTED",
+      action: "NATURAL",
       generation: generated(ok(NEW)),
       kind: "REPLIES",
       username: "mariofit",

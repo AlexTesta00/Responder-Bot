@@ -1,17 +1,19 @@
-import type { AiError } from "../ai/engine.ts";
+import type { AiError, SuggestionAction } from "../ai/engine.ts";
 import type {
   ConversationAnalysis,
   ConversationReply,
+  NewSuggestions,
   ProspectSnapshot,
   ScreenshotsAnalysis,
   Suggestion,
+  SuggestionKind,
   SuggestionStyle,
 } from "../ai/outputs.ts";
 import type { MemoryOutcome } from "../copilot/memory.ts";
 import type { Commitment } from "../conversations/domain.ts";
 import { MAX_FOLLOW_UPS, type Pause } from "../conversations/transition.ts";
 import type { InlineKeyboard } from "./client.ts";
-import { copyRows, isCopyable } from "./keyboard.ts";
+import { actionRows, analyzeButton, copyRows, isCopyable } from "./keyboard.ts";
 import { fitsInMessage } from "./message-length.ts";
 
 /** Makes text safe to embed in a Telegram HTML message. */
@@ -58,7 +60,7 @@ const TOO_LONG_TO_COPY =
 
 const NOTHING_SUGGESTED = "🚫 Nessun messaggio suggerito.";
 
-const section = (title: string, items: readonly string[]): string[] =>
+export const section = (title: string, items: readonly string[]): string[] =>
   items.length === 0
     ? []
     : [
@@ -116,7 +118,7 @@ export const pauseMessage = (pause: Pause): string => {
   }
 };
 
-const commitmentLine = (commitment: Commitment): string =>
+export const commitmentLine = (commitment: Commitment): string =>
   `${commitment.by === "ALEX" ? "Tu" : "Prospect"}: ${commitment.text}`;
 
 /** The first line, which also shows in the notification. */
@@ -153,8 +155,20 @@ const LEFT_OUT_FIRST = [
 
 type Optional = (typeof LEFT_OUT_FIRST)[number];
 
+/** What frames an answer, beyond what the model wrote. */
+export type AnswerContext = Readonly<{
+  memory: MemoryOutcome | null;
+  /** Why no message should be suggested now. */
+  pause: Pause | null;
+  /** Whether the answer is about a prospect the bot remembers: buttons need one. */
+  linked: boolean;
+  footer: Footer;
+}>;
+
 type Answer = Readonly<{
   heading: string;
+  kind: SuggestionKind;
+  linked: boolean;
   /** Memory that could not be used or kept: Alex must see it. */
   warning: string | null;
   lastProspectMessage: string | null;
@@ -173,15 +187,27 @@ type Answer = Readonly<{
 
 const answerOf = (
   heading: string,
-  memory: MemoryOutcome | null,
-  pause: Pause | null,
-  details: Omit<Answer, "heading" | "warning" | "memoryNote" | "pause">,
+  kind: SuggestionKind,
+  { memory, pause, linked, footer }: AnswerContext,
+  details: Omit<
+    Answer,
+    | "heading"
+    | "kind"
+    | "linked"
+    | "warning"
+    | "memoryNote"
+    | "pause"
+    | "footer"
+  >,
 ): Answer => ({
   heading,
+  kind,
+  linked,
   warning: memory?.type === "NOT_SAVED" ? memoryLine(memory) : null,
   memoryNote:
     memory === null || memory.type === "NOT_SAVED" ? null : memoryLine(memory),
   pause,
+  footer,
   ...details,
 });
 
@@ -254,13 +280,39 @@ const fitted = (answer: Answer): string => {
   return versions.find(fitsInMessage) ?? shortest;
 };
 
-const presented = (answer: Answer): Presented => {
-  const rows = answer.pause === null ? copyRows(answer.suggestions) : [];
-  return {
-    html: fitted(answer),
-    keyboard: rows.length === 0 ? null : rows,
-  };
+/**
+ * Copy buttons for the suggestions and, for a prospect the bot remembers,
+ * the buttons that write them again and 🔍. Without suggestions, only 🔍.
+ */
+const suggestionRows = (
+  suggestions: readonly Suggestion[],
+  kind: SuggestionKind,
+  linked: boolean,
+): InlineKeyboard => {
+  if (suggestions.length === 0) {
+    return linked ? [[analyzeButton(kind)]] : [];
+  }
+  return [...copyRows(suggestions), ...(linked ? actionRows(kind) : [])];
 };
+
+const withRows = (html: string, rows: InlineKeyboard): Presented => ({
+  html,
+  keyboard: rows.length === 0 ? null : rows,
+});
+
+const presented = (answer: Answer): Presented =>
+  withRows(
+    fitted(answer),
+    suggestionRows(
+      answer.pause === null ? answer.suggestions : [],
+      answer.kind,
+      answer.linked,
+    ),
+  );
+
+/** Why Alex should not write now, with 🔍 when the prospect is known. */
+export const pauseAnswer = (pause: Pause, kind: SuggestionKind): Presented =>
+  withRows(pauseMessage(pause), [[analyzeButton(kind)]]);
 
 const profileHeading = (
   icon: string,
@@ -271,17 +323,15 @@ const profileHeading = (
 /** The message presenting the analysis of screenshots. */
 export const screenshotsAnswer = (
   analysis: ScreenshotsAnalysis,
-  memory: MemoryOutcome | null,
-  pause: Pause | null,
-  footer: Footer = null,
+  context: AnswerContext,
 ): Presented => {
   switch (analysis.kind) {
     case "PROFILE":
       return presented(
         answerOf(
           profileHeading("👤", "Profilo", analysis.prospect),
-          memory,
-          pause,
+          "FIRST_MESSAGES",
+          context,
           {
             lastProspectMessage: null,
             suggestions: analysis.suggestions,
@@ -291,7 +341,6 @@ export const screenshotsAnswer = (
             facts: analysis.facts,
             hypotheses: analysis.hypotheses,
             note: analysis.note,
-            footer,
           },
         ),
       );
@@ -299,8 +348,8 @@ export const screenshotsAnswer = (
       return presented(
         answerOf(
           profileHeading("💬", "Conversazione", analysis.prospect),
-          memory,
-          pause,
+          "REPLIES",
+          context,
           {
             lastProspectMessage: analysis.analysis.lastProspectMessage,
             suggestions: analysis.suggestions,
@@ -310,7 +359,6 @@ export const screenshotsAnswer = (
             facts: analysis.facts,
             hypotheses: analysis.hypotheses,
             note: analysis.note,
-            footer,
           },
         ),
       );
@@ -321,7 +369,7 @@ export const screenshotsAnswer = (
           ...(analysis.note === null
             ? []
             : ["", `📝 ${escapeHtml(analysis.note)}`]),
-          ...footerLines(footer),
+          ...footerLines(context.footer),
         ].join("\n"),
         keyboard: null,
       };
@@ -333,23 +381,102 @@ export const conversationAnswer = (
   reply: ConversationReply,
   /** The prospect Alex named, when known. */
   username: string | null,
-  memory: MemoryOutcome | null,
-  pause: Pause | null,
-  footer: Footer = null,
+  context: AnswerContext,
 ): Presented =>
   presented(
-    answerOf(heading("💬", "Conversazione", username, null), memory, pause, {
-      lastProspectMessage: reply.analysis.lastProspectMessage,
-      suggestions: reply.suggestions,
-      analysis: reply.analysis,
-      objections: reply.objections,
-      commitments: reply.commitments,
-      facts: reply.facts,
-      hypotheses: reply.hypotheses,
-      note: reply.note,
-      footer,
-    }),
+    answerOf(
+      heading("💬", "Conversazione", username, null),
+      "REPLIES",
+      context,
+      {
+        lastProspectMessage: reply.analysis.lastProspectMessage,
+        suggestions: reply.suggestions,
+        analysis: reply.analysis,
+        objections: reply.objections,
+        commitments: reply.commitments,
+        facts: reply.facts,
+        hypotheses: reply.hypotheses,
+        note: reply.note,
+      },
+    ),
   );
+
+/** How the new suggestions of a button came about. */
+export type NewSuggestionsView = Readonly<{
+  action: SuggestionAction;
+  /** The kind of the new suggestions. */
+  kind: SuggestionKind;
+  username: string;
+  /** First messages were asked, and replies written instead. */
+  upgraded: boolean;
+  /** The suggestions to rewrite could not be read back. */
+  previousLost: boolean;
+}>;
+
+const ACTION_ICONS: Readonly<Record<SuggestionAction, string>> = {
+  MORE: "🔄",
+  NATURAL: "🙂",
+  DIRECT: "🎯",
+  FOLLOW_UP: "💬",
+};
+
+const RESULT_TITLES: Readonly<
+  Record<SuggestionAction, Readonly<Record<SuggestionKind, string>>>
+> = {
+  MORE: {
+    FIRST_MESSAGES: "altri 3 primi messaggi",
+    REPLIES: "altre 3 risposte",
+    FOLLOW_UPS: "altri 3 follow-up",
+  },
+  NATURAL: {
+    FIRST_MESSAGES: "primi messaggi più naturali",
+    REPLIES: "risposte più naturali",
+    FOLLOW_UPS: "follow-up più naturali",
+  },
+  DIRECT: {
+    FIRST_MESSAGES: "primi messaggi più diretti",
+    REPLIES: "risposte più dirette",
+    FOLLOW_UPS: "follow-up più diretti",
+  },
+  FOLLOW_UP: {
+    FIRST_MESSAGES: "follow-up",
+    REPLIES: "follow-up",
+    FOLLOW_UPS: "follow-up",
+  },
+};
+
+const UPGRADED =
+  "ℹ️ La conversazione è già iniziata: ti propongo risposte invece di primi messaggi.";
+
+const PREVIOUS_LOST =
+  "ℹ️ Non riesco più a leggere i messaggi di prima: li ho scritti partendo da ciò che ricordo.";
+
+/** The new suggestions a button asked for, with the same buttons. */
+export const newSuggestionsAnswer = (
+  { suggestions, note }: NewSuggestions,
+  view: NewSuggestionsView,
+  footer: Footer,
+): Presented => {
+  const nothingSuggested = suggestions.length === 0;
+  const compose = (withNote: boolean): string =>
+    [
+      `${ACTION_ICONS[view.action]} <b>@${escapeHtml(view.username)}</b> · ${RESULT_TITLES[view.action][view.kind]}`,
+      ...(view.upgraded ? [UPGRADED] : []),
+      ...(view.previousLost ? [PREVIOUS_LOST] : []),
+      ...(nothingSuggested
+        ? ["", NOTHING_SUGGESTED]
+        : suggestions.flatMap(suggestionLines)),
+      ...((withNote || nothingSuggested) && note !== null
+        ? ["", `📝 ${escapeHtml(note)}`]
+        : []),
+      ...footerLines(footer),
+    ].join("\n");
+  const full = compose(true);
+  return withRows(
+    fitsInMessage(full) ? full : compose(false),
+    suggestionRows(suggestions, view.kind, true),
+  );
+};
 
 /** Plain-text explanation of a generation that failed. */
 export const aiProblemReply = (error: AiError): string => {
