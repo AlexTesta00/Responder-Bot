@@ -1,15 +1,20 @@
 import type { Input } from "../inputs/classify.ts";
 import type { ImageDownloadError } from "../inputs/images.ts";
 
+/** Inputs answered at once; screenshots and texts go to the AI engine. */
+export type InstantInput = Exclude<
+  Input,
+  Readonly<{ type: "SCREENSHOTS" | "TEXT" }>
+>;
+
 const START = [
   "Ciao! 👋 Sono il tuo copilota per l'outreach su Instagram.",
   "",
-  "Puoi mandarmi:",
-  "• il link o lo @username di un profilo Instagram",
-  "• uno o più screenshot di un profilo o di una conversazione",
-  "• il testo di un messaggio",
+  "Mandami:",
+  "• screenshot del profilo di un prospect, e ti propongo tre primi messaggi;",
+  "• screenshot di una conversazione, o il testo dei suoi messaggi, e ti dico a che punto è e ti propongo tre risposte.",
   "",
-  "Per ora riconosco cosa mi mandi; analisi e suggerimenti di risposta arriveranno presto.",
+  "Tu scegli, correggi se vuoi e invii: io non scrivo mai a nessuno.",
   "",
   "Scrivi /help per vedere i comandi.",
 ].join("\n");
@@ -19,16 +24,11 @@ const HELP = [
   "/start – presentazione del bot",
   "/help – questo elenco",
   "",
-  "Oltre ai comandi puoi mandarmi link e @username di profili Instagram, screenshot (anche più di uno insieme) e testo.",
+  "Oltre ai comandi puoi mandarmi screenshot di profili e conversazioni (anche più di uno insieme), il testo di una conversazione e link o @username di profili Instagram.",
 ].join("\n");
 
-const screenshotsReceived = (count: number): string =>
-  count === 1
-    ? "📸 Screenshot ricevuto. L'ho scaricato e subito eliminato: l'analisi del contenuto arriverà con il motore AI."
-    : `📸 ${String(count)} screenshot ricevuti insieme. Li ho scaricati e subito eliminati: l'analisi del contenuto arriverà con il motore AI.`;
-
-/** The reply to an input the bot has understood. */
-export const replyTo = (input: Input): string => {
+/** The reply to an input the bot answers without the AI engine. */
+export const replyTo = (input: InstantInput): string => {
   switch (input.type) {
     case "COMMAND":
       return input.command === "start" ? START : HELP;
@@ -38,16 +38,12 @@ export const replyTo = (input: Input): string => {
       return [
         `👤 Profilo @${input.username} riconosciuto.`,
         "",
-        "Dal solo link non vedo bio e contenuti: mandami 1-3 screenshot del profilo, con bio e post, e li userò per l'analisi.",
+        "Dal solo link non vedo bio e contenuti: mandami 1-3 screenshot del profilo, con bio e post, e ti propongo i primi messaggi.",
       ].join("\n");
     case "LINK":
-      return "🔗 Link ricevuto. Per un profilo Instagram mandami il link del profilo (instagram.com/nome) o lo @username.";
-    case "TEXT":
-      return "📝 Testo ricevuto. Quando arriverà l'analisi lo userò come contesto della conversazione.";
-    case "SCREENSHOTS":
-      return screenshotsReceived(input.images.length);
+      return "🔗 Link ricevuto. Per un profilo Instagram mandami il link del profilo (instagram.com/nome) o lo @username, e poi gli screenshot.";
     case "UNSUPPORTED":
-      return "Per ora gestisco link e @username Instagram, screenshot e testo: questo tipo di messaggio non lo so ancora leggere.";
+      return "Per ora gestisco screenshot, testo e link o @username Instagram: questo tipo di messaggio non lo so ancora leggere.";
   }
 };
 

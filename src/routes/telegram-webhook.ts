@@ -37,6 +37,12 @@ const logOutcome = (
     case "REPLIED":
       log.info({ ...fields, input: outcome.input }, "telegram update handled");
       return;
+    case "ACCEPTED":
+      log.info(
+        { ...fields, input: outcome.input },
+        "telegram update accepted for processing",
+      );
+      return;
     case "COLLECTED":
       log.info(fields, "telegram update collected into an album");
       return;

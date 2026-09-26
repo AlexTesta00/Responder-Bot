@@ -5,8 +5,10 @@
 // No top-level await here or in any module this file imports: Hostinger's
 // LiteSpeed loads the entry file with require(), which cannot load ES modules
 // that use it (ERR_REQUIRE_ASYNC_MODULE).
+import Anthropic from "@anthropic-ai/sdk";
 import type { FastifyInstance, LogLevel } from "fastify";
 
+import { createClaudeEngine } from "./ai/claude.ts";
 import { buildApp } from "./app.ts";
 import {
   describeEnvError,
@@ -25,6 +27,12 @@ const PROCESSED_UPDATES_CAPACITY = 1_000;
 
 /** Screenshots stay far below this; Telegram serves bots files up to 20 MB. */
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+/** Per attempt: an analysis of a few screenshots takes well under this. */
+const ANTHROPIC_TIMEOUT_MS = 120_000;
+
+/** Retries of rate limits, overloads and network failures, with backoff. */
+const ANTHROPIC_MAX_RETRIES = 2;
 
 /** Verbose while developing, quiet in tests, informative in production. */
 const LOG_LEVEL_BY_ENV = {
@@ -48,6 +56,11 @@ const closeOnSignal =
 
 const start = async (env: Env): Promise<void> => {
   const telegram = createTelegramClient({ token: env.TELEGRAM_BOT_TOKEN });
+  const claude = new Anthropic({
+    apiKey: env.ANTHROPIC_API_KEY,
+    timeout: ANTHROPIC_TIMEOUT_MS,
+    maxRetries: ANTHROPIC_MAX_RETRIES,
+  });
 
   const app = await buildApp({
     logLevel: LOG_LEVEL_BY_ENV[env.NODE_ENV],
@@ -57,7 +70,9 @@ const start = async (env: Env): Promise<void> => {
         allowedUserId: env.TELEGRAM_ALLOWED_USER_ID,
         processedUpdates: createProcessedUpdates(PROCESSED_UPDATES_CAPACITY),
         sendMessage: telegram.sendMessage,
+        sendTyping: telegram.sendTyping,
         downloadImage: createImageDownloader(telegram, MAX_IMAGE_BYTES),
+        ai: createClaudeEngine({ client: claude, model: env.ANTHROPIC_MODEL }),
         schedule: scheduleWithTimers,
       }),
     },

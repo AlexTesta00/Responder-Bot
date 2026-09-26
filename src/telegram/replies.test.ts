@@ -1,16 +1,23 @@
 import { describe, expect, it } from "vitest";
 
 import { classifyText } from "../inputs/classify.ts";
-import { imageProblemReply, replyTo } from "./replies.ts";
+import { imageProblemReply, replyTo, type InstantInput } from "./replies.ts";
 
-const replyToText = (text: string): string => replyTo(classifyText(text));
+/** The reply to a text the bot answers at once. */
+const replyToText = (text: string): string => {
+  const input = classifyText(text);
+  if (input.type === "TEXT") {
+    expect.unreachable(`${text} goes to the AI engine`);
+  }
+  return replyTo(input satisfies InstantInput);
+};
 
 describe("replyTo", () => {
-  it("introduces the bot and what it accepts on /start", () => {
+  it("introduces the bot and what it suggests on /start", () => {
     const reply = replyToText("/start");
 
     expect(reply).toContain("copilota per l'outreach");
-    expect(reply).toContain("screenshot");
+    expect(reply).toContain("primi messaggi");
     expect(reply).toContain("/help");
   });
 
@@ -32,25 +39,8 @@ describe("replyTo", () => {
     expect(reply).toContain("screenshot");
   });
 
-  it.each([
-    ["a link", "https://mariofit.it", "Link ricevuto"],
-    ["a text", "Ciao, ci sentiamo domani", "Testo ricevuto"],
-  ])("acknowledges %s", (_description, text, expected) => {
-    expect(replyToText(text)).toContain(expected);
-  });
-
-  it.each([
-    [1, "Screenshot ricevuto"],
-    [3, "3 screenshot ricevuti"],
-  ])("acknowledges %i screenshots", (count, expected) => {
-    const images = Array.from({ length: count }, (_, index) => ({
-      fileId: String(index),
-      fileSize: null,
-    }));
-
-    expect(replyTo({ type: "SCREENSHOTS", images, caption: null })).toContain(
-      expected,
-    );
+  it("acknowledges a link and asks for the profile", () => {
+    expect(replyToText("https://mariofit.it")).toContain("Link ricevuto");
   });
 
   it("lists what the bot can read for unsupported messages", () => {
