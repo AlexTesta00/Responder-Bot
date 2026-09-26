@@ -1,33 +1,10 @@
 // What the bot remembers about each prospect, and how a new analysis updates
 // it. Pure functions: storing the result is the job of a ProspectStore.
 import type {
-  ConversationIntent,
-  ConversationStage,
-  InterestLevel,
-  NextGoal,
+  Commitment,
+  ConversationMessage,
+  ConversationState,
 } from "../conversations/domain.ts";
-
-export type MessageAuthor = "ALEX" | "PROSPECT";
-
-/** A message of the Instagram conversation between Alex and a prospect. */
-export type ConversationMessage = Readonly<{
-  author: MessageAuthor;
-  text: string;
-}>;
-
-/** Something Alex or the prospect said they would do, not done yet. */
-export type Commitment = Readonly<{
-  by: MessageAuthor;
-  text: string;
-}>;
-
-/** The latest reading of where the conversation stands. */
-export type ConversationState = Readonly<{
-  stage: ConversationStage;
-  intent: ConversationIntent;
-  interest: InterestLevel;
-  nextGoal: NextGoal;
-}>;
 
 /** Everything remembered about a prospect, except the messages. */
 export type ProspectProfile = Readonly<{

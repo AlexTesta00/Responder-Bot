@@ -8,11 +8,11 @@ import {
   CONVERSATION_STAGES,
   INTEREST_LEVELS,
   NEXT_GOALS,
+  type Commitment,
+  type ConversationMessage,
 } from "../conversations/domain.ts";
 import {
   MAX_STORED_MESSAGES,
-  type Commitment,
-  type ConversationMessage,
   type Prospect,
   type ProspectMemory,
 } from "../prospects/memory.ts";

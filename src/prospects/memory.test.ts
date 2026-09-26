@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import type { ConversationMessage } from "../conversations/domain.ts";
 import {
   messagesToAppend,
   remember,
-  type ConversationMessage,
   type Observation,
   type ProspectMemory,
 } from "./memory.ts";

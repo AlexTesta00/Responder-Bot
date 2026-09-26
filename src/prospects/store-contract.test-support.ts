@@ -2,9 +2,9 @@
 // implementation by its own test file.
 import { describe, expect, it } from "vitest";
 
+import type { ConversationMessage } from "../conversations/domain.ts";
 import {
   MAX_STORED_MESSAGES,
-  type ConversationMessage,
   type MemoryUpdate,
   type ProspectProfile,
 } from "./memory.ts";

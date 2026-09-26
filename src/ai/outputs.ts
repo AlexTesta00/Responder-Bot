@@ -6,12 +6,12 @@ import {
   INTEREST_LEVELS,
   NEXT_GOALS,
   type ConversationIntent,
+  type ConversationMessage,
   type ConversationStage,
   type InterestLevel,
   type NextGoal,
 } from "../conversations/domain.ts";
 import { canonicalUsername } from "../inputs/instagram.ts";
-import type { ConversationMessage } from "../prospects/memory.ts";
 import { err, ok, type Result } from "../shared/result.ts";
 
 // Structured outputs requested from the model. Property order matters: the

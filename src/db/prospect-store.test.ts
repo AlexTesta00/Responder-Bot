@@ -2,7 +2,7 @@ import type { Kysely } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { GenerationReport } from "../ai/engine.ts";
-import type { ConversationMessage } from "../prospects/memory.ts";
+import type { ConversationMessage } from "../conversations/domain.ts";
 import { describeProspectStore } from "../prospects/store-contract.test-support.ts";
 import { createMysqlGenerationLog } from "./generation-log.ts";
 import { createMysqlProspectStore } from "./prospect-store.ts";
