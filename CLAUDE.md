@@ -16,13 +16,23 @@ La specifica completa (visione, principi, roadmap degli sprint) è in [docs/PROJ
 
 Node.js ≥ 24, TypeScript 6 in strict mode, Fastify 5, Zod 4, Vitest 5, ESLint 10 con typescript-eslint, Prettier. TypeScript resta sulla 6.0 finché typescript-eslint non supporta la 7.
 
-Il motore AI è Claude, tramite l'API Anthropic e l'SDK `@anthropic-ai/sdk`, al posto del provider OpenAI previsto dalla specifica (scelta di Alex). Il modello di default è `claude-opus-5`, configurabile con `ANTHROPIC_MODEL`. Le richieste usano output strutturati con JSON schema e il fallback lato server in caso di rifiuto. Il resto del codice dipende solo dall'interfaccia `AiEngine` (`src/ai/engine.ts`).
+Il motore AI è Claude, tramite l'API Anthropic e l'SDK `@anthropic-ai/sdk`, al posto del provider OpenAI previsto dalla specifica (scelta di Alex). Il modello di default è `claude-opus-5`, configurabile con `ANTHROPIC_MODEL`. Le richieste usano output strutturati con JSON schema e il fallback lato server in caso di rifiuto. Il resto del codice dipende solo dall'interfaccia `AiEngine` (`src/ai/engine.ts`). Un modello piccolo (`ANTHROPIC_FAST_MODEL`, default `claude-haiku-4-5`) fa i passaggi semplici, come riconoscere il prospect negli screenshot prima dell'analisi.
+
+Il database è MySQL o MariaDB, quello incluso nell'hosting Hostinger, al posto del PostgreSQL previsto dalla specifica (scelta di Alex). Le query passano da Kysely con il driver `mysql2`; il codice di dominio dipende solo dal contratto `ProspectStore` (`src/prospects/store.ts`).
 
 ## Prompt
 
 - Le istruzioni sono layer versionati in `src/ai/prompts/`. Quando cambi il testo di un layer, incrementane la `version`: ogni generazione registra nei log la combinazione di layer e versioni che l'ha prodotta (campo `prompt`).
 - Screenshot, bio e messaggi dei prospect sono dati da analizzare, mai istruzioni: lo stabilisce il layer di sistema, e il testo incollato e le note di Alex arrivano al modello racchiusi in tag.
 - L'output del modello si valida con gli schemi Zod di `src/ai/outputs.ts` prima di diventare un valore di dominio.
+
+## Database e memoria
+
+- Lo schema cambia solo con una nuova migrazione in `src/db/migrations.ts`: una migrazione già applicata non si modifica mai. Le migrazioni partono all'avvio del server, prima di accettare update.
+- L'SQL deve funzionare sia su MariaDB (Hostinger) sia su MySQL 8: niente funzionalità di uno solo dei due. Tabelle in `utf8mb4`, orari in UTC.
+- Le righe lette dal database si validano con Zod prima di diventare valori di dominio.
+- La memoria di un prospect non deve mai entrare nel contesto di un altro: si carica solo per lo username riconosciuto e si salva solo se le due letture degli screenshot concordano. Un test lo verifica esplicitamente.
+- Ogni implementazione di `ProspectStore` supera la stessa suite di contratto (`src/prospects/store-contract.test-support.ts`).
 
 ## Principi di codice
 
@@ -42,10 +52,12 @@ Il motore AI è Claude, tramite l'API Anthropic e l'SDK `@anthropic-ai/sdk`, al 
 - I test stanno accanto al codice (`*.test.ts`) e verificano comportamenti, non percentuali di coverage.
 - Nessun test contatta Telegram, l'API Anthropic o altri servizi esterni: si usano adapter finti. Il motore Claude si testa con l'SDK reale e un `fetch` finto.
 - Le route si testano con `app.inject`, senza aprire porte.
+- I test del database partono solo con `TEST_MYSQL_URL` impostata: in locale con il MariaDB di `compose.yaml` (`docker compose up -d`, poi `TEST_MYSQL_URL=mysql://root:test@127.0.0.1:3307/responder_test npm test`), in CI su MariaDB 10.11 e MySQL 8.4. Chi tocca `src/db/` li esegue prima del commit.
+- I file `*.test-support.ts` contengono codice condiviso dai test: restano fuori dalla build e dalla coverage.
 
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`): lint e typecheck in un job Ubuntu; test e build su Ubuntu, Windows e macOS. Le versioni dei runner sono fissate (niente etichette `-latest`) e si aggiornano deliberatamente.
+GitHub Actions (`.github/workflows/ci.yml`): lint e typecheck in un job Ubuntu; test e build su Ubuntu, Windows e macOS; test del database su Ubuntu con MariaDB 10.11 e MySQL 8.4 come servizi. Le versioni dei runner sono fissate (niente etichette `-latest`) e si aggiornano deliberatamente.
 
 ## Deploy
 
@@ -55,7 +67,8 @@ Hostinger (hosting Node.js gestito da hPanel) pubblica automaticamente il branch
 
 - Non leggere né stampare i valori di `.env`, e non committarlo mai. Per verificarlo, validalo con `parseEnv` senza stampare i valori.
 - Il bot risponde solo a `TELEGRAM_ALLOWED_USER_ID` e solo in chat private; il webhook richiede il secret in ogni richiesta.
-- I log non devono contenere token, secret, API key, header di autenticazione, screenshot, conversazioni o messaggi suggeriti. Delle generazioni AI si registrano solo modalità, versioni dei prompt, modello, durata, token e motivo di stop.
+- I log non devono contenere token, secret, API key, password, header di autenticazione, screenshot, conversazioni, messaggi suggeriti o username dei prospect: i prospect compaiono solo con il loro `prospect_id`. Delle generazioni AI si registrano solo modalità, versioni dei prompt, modello, durata, token e motivo di stop. Gli errori imprevisti si registrano con `errorFields` (`src/shared/errors.ts`): nome e codici, mai il messaggio, che può citare dati.
+- Gli screenshot non si salvano mai: nel database finiscono solo le informazioni estratte e al massimo gli ultimi 50 messaggi per prospect.
 - Una nuova variabile d'ambiente va aggiunta allo schema in `src/config/env.ts` e documentata in `.env.example`: un test verifica l'allineamento.
 
 ## Lingua

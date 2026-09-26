@@ -9,13 +9,22 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { FastifyInstance, LogLevel } from "fastify";
 
 import { createClaudeEngine } from "./ai/claude.ts";
+import { discardGenerationRuns } from "./ai/runs.ts";
 import { buildApp } from "./app.ts";
 import {
+  databaseConfigOf,
   describeEnvError,
   parseEnv,
   type Env,
   type NodeEnv,
 } from "./config/env.ts";
+import { createScreenshotsAnalyst } from "./copilot/screenshots.ts";
+import { createDatabase } from "./db/connection.ts";
+import { createMysqlGenerationLog } from "./db/generation-log.ts";
+import { migrateToLatest } from "./db/migrations.ts";
+import { createMysqlProspectStore } from "./db/prospect-store.ts";
+import { createInMemoryProspectStore } from "./prospects/store.ts";
+import { errorFields } from "./shared/errors.ts";
 import { createTelegramClient } from "./telegram/client.ts";
 import { createImageDownloader } from "./telegram/files.ts";
 import { scheduleWithTimers } from "./telegram/media-group.ts";
@@ -61,6 +70,14 @@ const start = async (env: Env): Promise<void> => {
     timeout: ANTHROPIC_TIMEOUT_MS,
     maxRetries: ANTHROPIC_MAX_RETRIES,
   });
+  const ai = createClaudeEngine({
+    client: claude,
+    model: env.ANTHROPIC_MODEL,
+    fastModel: env.ANTHROPIC_FAST_MODEL,
+  });
+  const databaseConfig = databaseConfigOf(env);
+  const database =
+    databaseConfig === null ? null : createDatabase(databaseConfig);
 
   const app = await buildApp({
     logLevel: LOG_LEVEL_BY_ENV[env.NODE_ENV],
@@ -72,11 +89,45 @@ const start = async (env: Env): Promise<void> => {
         sendMessage: telegram.sendMessage,
         sendTyping: telegram.sendTyping,
         downloadImage: createImageDownloader(telegram, MAX_IMAGE_BYTES),
-        ai: createClaudeEngine({ client: claude, model: env.ANTHROPIC_MODEL }),
+        analyzeScreenshots: createScreenshotsAnalyst({
+          ai,
+          prospects:
+            database === null
+              ? createInMemoryProspectStore()
+              : createMysqlProspectStore(database),
+          generations:
+            database === null
+              ? discardGenerationRuns
+              : createMysqlGenerationLog(database),
+        }),
+        replyToConversation: ai.replyToConversation,
         schedule: scheduleWithTimers,
       }),
     },
   });
+
+  if (database === null) {
+    app.log.warn(
+      "no database configured: prospect memory lasts until the process stops",
+    );
+  } else {
+    app.addHook("onClose", async () => {
+      await database.destroy();
+    });
+    // The schema must be up to date before the first update arrives.
+    const migrated = await migrateToLatest(database);
+    if (!migrated.ok) {
+      app.log.fatal(
+        {
+          migration: migrated.error.migration,
+          ...errorFields(migrated.error.error),
+        },
+        "database migration failed",
+      );
+      process.exit(1);
+    }
+    app.log.info({ applied_migrations: migrated.value }, "database ready");
+  }
 
   process.once("SIGINT", closeOnSignal(app));
   process.once("SIGTERM", closeOnSignal(app));

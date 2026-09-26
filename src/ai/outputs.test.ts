@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import {
   conversationReplyOutputSchema,
+  prospectIdentityOutputSchema,
   screenshotsOutputSchema,
   toConversationReply,
   toScreenshotsAnalysis,
@@ -33,9 +34,11 @@ const profileOutput: ScreenshotsOutput = {
     display_name: "Mario Rossi",
     business_type: "personal trainer",
   },
+  messages: null,
   observed_facts: ["La bio invita a scrivere START in DM."],
   hypotheses: ["Gestire i DM a mano potrebbe richiedere tempo."],
   conversation: null,
+  summary: " Personal trainer che raccoglie contatti con START in DM. ",
   first_messages: {
     best: "Ciao Mario, ho visto lo START in bio: quanti DM ricevi a settimana?",
     curiosity: "Curiosità: il programma START lo segui tu uno a uno?",
@@ -48,6 +51,10 @@ const profileOutput: ScreenshotsOutput = {
 const conversationOutput: ScreenshotsOutput = {
   ...profileOutput,
   kind: "CONVERSATION",
+  messages: [
+    { author: "ALEX", text: " Ciao Mario! Ho visto lo START in bio " },
+    { author: "PROSPECT", text: "Quanto costa un sito?" },
+  ],
   conversation,
   first_messages: null,
   replies,
@@ -66,6 +73,7 @@ describe("toScreenshotsAnalysis", () => {
         },
         facts: ["La bio invita a scrivere START in DM."],
         hypotheses: ["Gestire i DM a mano potrebbe richiedere tempo."],
+        summary: "Personal trainer che raccoglie contatti con START in DM.",
         suggestions: [
           { style: "BEST", text: profileOutput.first_messages?.best },
           { style: "CURIOSITY", text: profileOutput.first_messages?.curiosity },
@@ -81,6 +89,11 @@ describe("toScreenshotsAnalysis", () => {
       ok: true,
       value: {
         kind: "CONVERSATION",
+        messages: [
+          { author: "ALEX", text: "Ciao Mario! Ho visto lo START in bio" },
+          { author: "PROSPECT", text: "Quanto costa un sito?" },
+        ],
+        summary: "Personal trainer che raccoglie contatti con START in DM.",
         analysis: {
           lastProspectMessage: "Quanto costa un sito?",
           stage: "ENGAGED",
@@ -109,6 +122,45 @@ describe("toScreenshotsAnalysis", () => {
       ok: true,
       value: { suggestions: [], note: "Ha chiesto di non essere contattato." },
     });
+  });
+
+  it("keeps a conversation whose messages were not transcribed", () => {
+    expect(
+      toScreenshotsAnalysis({
+        ...conversationOutput,
+        messages: [{ author: "PROSPECT", text: "  " }],
+        summary: " ",
+      }),
+    ).toMatchObject({ ok: true, value: { messages: [], summary: null } });
+    expect(
+      toScreenshotsAnalysis({ ...conversationOutput, messages: null }),
+    ).toMatchObject({ ok: true, value: { messages: [] } });
+  });
+
+  it("reads usernames in the form the memory stores", () => {
+    expect(
+      toScreenshotsAnalysis({
+        ...profileOutput,
+        prospect: {
+          username: "@Mario.Fit",
+          display_name: null,
+          business_type: null,
+        },
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: { prospect: { username: "mario.fit" } },
+    });
+    expect(
+      toScreenshotsAnalysis({
+        ...profileOutput,
+        prospect: {
+          username: "Mario Rossi",
+          display_name: null,
+          business_type: null,
+        },
+      }),
+    ).toMatchObject({ ok: true, value: { prospect: { username: null } } });
   });
 
   it("reports screenshots that show neither a profile nor a conversation", () => {
@@ -200,12 +252,13 @@ describe("output schemas", () => {
   };
 
   it.each([
+    ["prospect identity", prospectIdentityOutputSchema],
     ["screenshots", screenshotsOutputSchema],
     ["conversation reply", conversationReplyOutputSchema],
   ])("%s schema is valid for strict structured outputs", (_name, schema) => {
     const nodes = objectNodes(betaZodOutputFormat(schema).schema);
 
-    expect(nodes.length).toBeGreaterThan(1);
+    expect(nodes).not.toHaveLength(0);
     for (const node of nodes) {
       const object = strictObject.parse(node);
       expect(object.required.toSorted()).toStrictEqual(

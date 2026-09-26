@@ -3,6 +3,10 @@ import { z } from "zod";
 import { err, ok, type Result } from "../shared/result.ts";
 import { telegramUserIdSchema } from "../telegram/ids.ts";
 
+/** Unset and empty are the same, as in a .env copied from .env.example. */
+const unlessEmpty = (value: unknown): unknown =>
+  value === "" ? undefined : value;
+
 const envShape = {
   NODE_ENV: z
     .enum(["development", "test", "production"])
@@ -32,9 +36,48 @@ const envShape = {
       "Expected an API key from the Claude Developer Platform",
     ),
   ANTHROPIC_MODEL: z.string().trim().min(1).default("claude-opus-5"),
+  ANTHROPIC_FAST_MODEL: z.string().trim().min(1).default("claude-haiku-4-5"),
+  // MySQL or MariaDB, such as the database included in Hostinger's plans.
+  DATABASE_HOST: z.preprocess(unlessEmpty, z.string().trim().min(1).optional()),
+  DATABASE_PORT: z.preprocess(
+    unlessEmpty,
+    z.coerce.number().int().min(1).max(65_535).default(3306),
+  ),
+  DATABASE_NAME: z.preprocess(unlessEmpty, z.string().trim().min(1).optional()),
+  DATABASE_USER: z.preprocess(unlessEmpty, z.string().trim().min(1).optional()),
+  DATABASE_PASSWORD: z.preprocess(unlessEmpty, z.string().min(1).optional()),
 };
 
-const envSchema = z.object(envShape).readonly();
+/** Together they identify the database; the port has a default. */
+const DATABASE_VARIABLES = [
+  "DATABASE_HOST",
+  "DATABASE_NAME",
+  "DATABASE_USER",
+  "DATABASE_PASSWORD",
+] as const;
+
+const envSchema = z
+  .object(envShape)
+  .superRefine((env, context) => {
+    const missing = DATABASE_VARIABLES.filter(
+      (name) => env[name] === undefined,
+    );
+    const production = env.NODE_ENV === "production";
+    // Without a database, development keeps prospect memory in the process.
+    if (!production && missing.length === DATABASE_VARIABLES.length) {
+      return;
+    }
+    for (const name of missing) {
+      context.addIssue({
+        code: "custom",
+        path: [name],
+        message: production
+          ? "Required in production, where prospect memory needs the database"
+          : "Required together with the other DATABASE_ variables",
+      });
+    }
+  })
+  .readonly();
 
 /** Validated runtime configuration: only the declared variables, typed. */
 export type Env = z.infer<typeof envSchema>;
@@ -43,6 +86,31 @@ export type NodeEnv = Env["NODE_ENV"];
 
 /** Every variable the service reads. `.env.example` must document them all. */
 export const ENV_VARIABLES: readonly string[] = Object.keys(envShape);
+
+export type DatabaseConfig = Readonly<{
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  password: string;
+}>;
+
+/** The database to connect to, or null when none is configured. */
+export const databaseConfigOf = (env: Env): DatabaseConfig | null => {
+  const {
+    DATABASE_HOST: host,
+    DATABASE_PORT: port,
+    DATABASE_NAME: database,
+    DATABASE_USER: user,
+    DATABASE_PASSWORD: password,
+  } = env;
+  return host === undefined ||
+    database === undefined ||
+    user === undefined ||
+    password === undefined
+    ? null
+    : { host, port, database, user, password };
+};
 
 export type EnvIssue = Readonly<{
   variable: string;

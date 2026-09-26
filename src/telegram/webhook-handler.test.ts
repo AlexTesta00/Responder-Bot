@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { AiEngine, AiError, Generation } from "../ai/engine.ts";
 import type { ConversationReply, ScreenshotsAnalysis } from "../ai/outputs.ts";
 import type { PromptMode } from "../ai/prompts/modes.ts";
+import { discardGenerationRuns } from "../ai/runs.ts";
+import { createScreenshotsAnalyst } from "../copilot/screenshots.ts";
 import type { DownloadedImage, DownloadImage } from "../inputs/images.ts";
+import { createInMemoryProspectStore } from "../prospects/store.ts";
 import type { Logger } from "../shared/logger.ts";
 import { err, ok, type Result } from "../shared/result.ts";
 import type { TelegramClient } from "./client.ts";
@@ -55,6 +58,7 @@ const PROFILE: ScreenshotsAnalysis = {
   },
   facts: ["La bio invita a scrivere START in DM."],
   hypotheses: [],
+  summary: null,
   suggestions: [{ style: "BEST", text: "Ciao Mario, quanti START ricevi?" }],
   note: null,
 };
@@ -201,6 +205,14 @@ const setup = (...results: readonly SendResult[]) => {
 
   // Copies of the images the AI engine received, before they are wiped.
   const analyzed: DownloadedImage[][] = [];
+  const identifyProspect = vi.fn<AiEngine["identifyProspect"]>(() =>
+    Promise.resolve(
+      generation(
+        "PROSPECT_IDENTITY",
+        ok({ username: "mariofit", displayName: "Mario" }),
+      ),
+    ),
+  );
   const analyzeScreenshots = vi.fn<AiEngine["analyzeScreenshots"]>((images) => {
     analyzed.push(
       images.map((image) => ({ ...image, bytes: image.bytes.slice() })),
@@ -219,7 +231,13 @@ const setup = (...results: readonly SendResult[]) => {
     sendMessage,
     sendTyping,
     downloadImage,
-    ai: { analyzeScreenshots, replyToConversation },
+    // The real use case, with the memory in the process.
+    analyzeScreenshots: createScreenshotsAnalyst({
+      ai: { identifyProspect, analyzeScreenshots, replyToConversation },
+      prospects: createInMemoryProspectStore(),
+      generations: discardGenerationRuns,
+    }),
+    replyToConversation,
     schedule,
   });
   const handleUpdate = (update: IncomingUpdate) =>
@@ -231,6 +249,7 @@ const setup = (...results: readonly SendResult[]) => {
     sendTyping,
     downloadImage,
     downloads,
+    identifyProspect,
     analyzeScreenshots,
     analyzed,
     replyToConversation,
@@ -397,7 +416,7 @@ describe("suggestions", () => {
     expect(analyzed).toStrictEqual([[{ format: "image/png", bytes: PNG }]]);
     expect(analyzeScreenshots.mock.calls[0]?.[1]).toBe("profilo di Mario");
     expect(sendMessage.mock.calls).toStrictEqual(
-      htmlCalls(screenshotsMessages(PROFILE)),
+      htmlCalls(screenshotsMessages(PROFILE, { type: "CREATED" })),
     );
     expect(log.info).toHaveBeenCalledWith(
       { ai_mode: "SCREENSHOTS", ...GENERATION_FIELDS },
@@ -585,10 +604,65 @@ describe("suggestions", () => {
       log.warn.mock.calls,
       log.error.mock.calls,
     ]);
-    expect(log.info).toHaveBeenCalledTimes(2);
+    expect(
+      log.info.mock.calls.map(([, message]: unknown[]) => message).toSorted(),
+    ).toStrictEqual([
+      "ai generation completed",
+      "ai generation completed",
+      "ai generation completed",
+      "prospect memory saved",
+    ]);
     for (const content of ["Quanto costa", "vendi online", "START", "Mario"]) {
       expect(logs).not.toContain(content);
     }
+  });
+});
+
+describe("prospect memory", () => {
+  it("remembers the prospect from one analysis to the next", async () => {
+    const { handleUpdate, sendMessage, analyzeScreenshots } = setup();
+
+    await handleUpdate(screenshotMessage());
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+    await handleUpdate(screenshotMessage(null, { updateId: 101 }));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(4);
+    });
+
+    const [first, second] = analyzeScreenshots.mock.calls;
+    expect(first?.[2]).toBeNull();
+    expect(second?.[2]?.prospect).toMatchObject({
+      username: "mariofit",
+      displayName: "Mario",
+      facts: PROFILE.facts,
+    });
+    expect(sendMessage.mock.calls[2]?.[1]).toContain("🧠 Già in memoria");
+  });
+
+  it("says so when the screenshots do not show a username", async () => {
+    const { handleUpdate, sendMessage, identifyProspect, analyzeScreenshots } =
+      setup();
+    identifyProspect.mockResolvedValue(
+      generation(
+        "PROSPECT_IDENTITY",
+        ok({ username: null, displayName: null }),
+      ),
+    );
+    analyzeScreenshots.mockResolvedValue(
+      generation(
+        "SCREENSHOTS",
+        ok({ ...PROFILE, prospect: { ...PROFILE.prospect, username: null } }),
+      ),
+    );
+
+    await handleUpdate(screenshotMessage());
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    expect(sendMessage.mock.calls[0]?.[1]).toContain("Non vedo lo username");
   });
 });
 
@@ -631,7 +705,7 @@ describe("albums", () => {
     expect(analyzed).toStrictEqual([[png, png, png]]);
     expect(analyzeScreenshots.mock.calls[0]?.[1]).toBe("profilo di Mario");
     expect(sendMessage.mock.calls).toStrictEqual(
-      htmlCalls(screenshotsMessages(PROFILE)),
+      htmlCalls(screenshotsMessages(PROFILE, { type: "CREATED" })),
     );
     expect(log.info).toHaveBeenCalledWith(
       { input: "SCREENSHOTS", images: 3 },

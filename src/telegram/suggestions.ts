@@ -1,4 +1,5 @@
 import type { AiError } from "../ai/engine.ts";
+import type { MemoryOutcome } from "../copilot/screenshots.ts";
 import type {
   ConversationAnalysis,
   ConversationReply,
@@ -50,6 +51,37 @@ const heading = (
 const noteLines = (note: string | null): string[] =>
   note === null ? [] : ["", `📝 ${escapeHtml(note)}`];
 
+/** Tells Alex whether the prospect's history was used and kept. */
+export const memoryLine = (memory: MemoryOutcome): string => {
+  switch (memory.type) {
+    case "CREATED":
+      return "🧠 Nuovo prospect: l'ho salvato in memoria.";
+    case "UPDATED": {
+      const { knownMessages } = memory;
+      if (knownMessages === 0) {
+        return "🧠 Già in memoria: ho tenuto conto dell'analisi precedente.";
+      }
+      const messages =
+        knownMessages === 1
+          ? "1 messaggio precedente"
+          : `${String(knownMessages)} messaggi precedenti`;
+      return `🧠 Già in memoria: ho tenuto conto di ${messages}.`;
+    }
+    case "NOT_SAVED":
+      switch (memory.reason) {
+        case "NO_USERNAME":
+          return "⚠️ Non vedo lo username: questa analisi non è in memoria. La prossima volta includi uno screenshot in cui si legge.";
+        case "OTHER_PERSON":
+          return "⚠️ Non sono sicuro di chi sia: non ho aggiornato la memoria.";
+        case "UNAVAILABLE":
+          return "⚠️ Memoria non disponibile: analisi fatta senza lo storico e non salvata.";
+      }
+  }
+};
+
+const memoryLines = (memory: MemoryOutcome | null): string[] =>
+  memory === null ? [] : [memoryLine(memory)];
+
 const analysisLines = (analysis: ConversationAnalysis): string[] => [
   ...(analysis.lastProspectMessage === null
     ? []
@@ -79,12 +111,14 @@ const suggestionsMessage = (
 /** HTML messages presenting the analysis of screenshots, in sending order. */
 export const screenshotsMessages = (
   analysis: ScreenshotsAnalysis,
+  memory: MemoryOutcome | null,
 ): readonly string[] => {
   switch (analysis.kind) {
     case "PROFILE":
       return [
         [
           heading("👤", "Profilo", analysis.prospect),
+          ...memoryLines(memory),
           ...section("Cosa ho visto", analysis.facts),
           ...section("Ipotesi da verificare", analysis.hypotheses),
           ...noteLines(analysis.note),
@@ -95,6 +129,7 @@ export const screenshotsMessages = (
       return [
         [
           heading("💬", "Conversazione", analysis.prospect),
+          ...memoryLines(memory),
           ...analysisLines(analysis.analysis),
           ...section("Cosa ho visto", analysis.facts),
           ...section("Ipotesi da verificare", analysis.hypotheses),

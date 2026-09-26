@@ -1,8 +1,10 @@
 import type { DownloadedImage } from "../inputs/images.ts";
+import type { ProspectMemory } from "../prospects/memory.ts";
 import type { Result } from "../shared/result.ts";
 import type {
   ConversationReply,
   InvalidOutput,
+  ProspectIdentity,
   ScreenshotsAnalysis,
 } from "./outputs.ts";
 import type { PromptMode } from "./prompts/modes.ts";
@@ -39,9 +41,15 @@ export type Generation<T> = Readonly<{
 
 /** The intelligence of the bot, independent of the provider behind it. */
 export type AiEngine = Readonly<{
+  /** A quick, inexpensive look to know whose screenshots they are. */
+  identifyProspect: (
+    images: readonly DownloadedImage[],
+  ) => Promise<Generation<ProspectIdentity>>;
   analyzeScreenshots: (
     images: readonly DownloadedImage[],
     note: string | null,
+    /** What the bot remembers about the prospect in the screenshots. */
+    memory: ProspectMemory | null,
   ) => Promise<Generation<ScreenshotsAnalysis>>;
   replyToConversation: (text: string) => Promise<Generation<ConversationReply>>;
 }>;

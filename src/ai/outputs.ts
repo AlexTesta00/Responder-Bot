@@ -10,6 +10,8 @@ import {
   type InterestLevel,
   type NextGoal,
 } from "../conversations/domain.ts";
+import { canonicalUsername } from "../inputs/instagram.ts";
+import type { ConversationMessage } from "../prospects/memory.ts";
 import { err, ok, type Result } from "../shared/result.ts";
 
 // Structured outputs requested from the model. Property order matters: the
@@ -30,6 +32,11 @@ const conversationOutput = z.object({
   rationale: z.string(),
 });
 
+const messageOutput = z.object({
+  author: z.enum(["ALEX", "PROSPECT"]),
+  text: z.string(),
+});
+
 const firstMessagesOutput = z.object({
   best: z.string(),
   curiosity: z.string(),
@@ -42,13 +49,26 @@ const repliesOutput = z.object({
   direct: z.string(),
 });
 
+/** Output of the quick look that recognizes the prospect first. */
+export const prospectIdentityOutputSchema = z.object({
+  username: z.string().nullable(),
+  display_name: z.string().nullable(),
+});
+
+export type ProspectIdentityOutput = z.infer<
+  typeof prospectIdentityOutputSchema
+>;
+
 /** Output for a batch of screenshots, whatever they show. */
 export const screenshotsOutputSchema = z.object({
   kind: z.enum(["PROFILE", "CONVERSATION", "UNRELATED"]),
   prospect: prospectOutput.nullable(),
+  // The transcription comes first: the analysis relies on it.
+  messages: z.array(messageOutput).nullable(),
   observed_facts: z.array(z.string()),
   hypotheses: z.array(z.string()),
   conversation: conversationOutput.nullable(),
+  summary: z.string().nullable(),
   first_messages: firstMessagesOutput.nullable(),
   replies: repliesOutput.nullable(),
   note: z.string().nullable(),
@@ -76,6 +96,13 @@ export type SuggestionStyle =
 
 export type Suggestion = Readonly<{ style: SuggestionStyle; text: string }>;
 
+/** Who the screenshots are about, as far as they show it. */
+export type ProspectIdentity = Readonly<{
+  /** Canonical username, or null when none is visible. */
+  username: string | null;
+  displayName: string | null;
+}>;
+
 export type ProspectSnapshot = Readonly<{
   username: string | null;
   displayName: string | null;
@@ -97,15 +124,20 @@ export type ScreenshotsAnalysis =
       prospect: ProspectSnapshot;
       facts: readonly string[];
       hypotheses: readonly string[];
+      /** What the memory should keep about the prospect. */
+      summary: string | null;
       suggestions: readonly Suggestion[];
       note: string | null;
     }>
   | Readonly<{
       kind: "CONVERSATION";
       prospect: ProspectSnapshot;
+      /** The messages visible in the screenshots, oldest first. */
+      messages: readonly ConversationMessage[];
       facts: readonly string[];
       hypotheses: readonly string[];
       analysis: ConversationAnalysis;
+      summary: string | null;
       /** Empty when no message should be sent, for example DO_NOT_CONTACT. */
       suggestions: readonly Suggestion[];
       note: string | null;
@@ -128,13 +160,41 @@ export type InvalidOutput = Readonly<{
 const invalid = (reason: string): Result<never, InvalidOutput> =>
   err({ type: "INVALID_OUTPUT", reason });
 
+/** A username that cannot exist on Instagram counts as not visible. */
+export const toProspectIdentity = (
+  output: ProspectIdentityOutput,
+): Result<ProspectIdentity, InvalidOutput> => {
+  const displayName = output.display_name?.trim() ?? "";
+  return ok({
+    username:
+      output.username === null ? null : canonicalUsername(output.username),
+    displayName: displayName === "" ? null : displayName,
+  });
+};
+
 const toProspect = (
   prospect: ScreenshotsOutput["prospect"],
-): ProspectSnapshot => ({
-  username: prospect?.username?.replace(/^@/, "") ?? null,
-  displayName: prospect?.display_name ?? null,
-  businessType: prospect?.business_type ?? null,
-});
+): ProspectSnapshot => {
+  const username = prospect?.username ?? null;
+  return {
+    // Compared with the recognized username: both must be canonical.
+    username: username === null ? null : canonicalUsername(username),
+    displayName: prospect?.display_name ?? null,
+    businessType: prospect?.business_type ?? null,
+  };
+};
+
+const toMessages = (
+  messages: ScreenshotsOutput["messages"],
+): readonly ConversationMessage[] =>
+  (messages ?? [])
+    .map((message) => ({ author: message.author, text: message.text.trim() }))
+    .filter((message) => message.text !== "");
+
+const toSummary = (summary: string | null): string | null => {
+  const text = summary?.trim() ?? "";
+  return text === "" ? null : text;
+};
 
 const toAnalysis = (
   conversation: ConversationReplyOutput["conversation"],
@@ -190,6 +250,7 @@ export const toScreenshotsAnalysis = (
             prospect: toProspect(output.prospect),
             facts: output.observed_facts,
             hypotheses: output.hypotheses,
+            summary: toSummary(output.summary),
             suggestions: suggestions.value,
             note: output.note,
           })
@@ -204,9 +265,12 @@ export const toScreenshotsAnalysis = (
         ? ok({
             kind: "CONVERSATION",
             prospect: toProspect(output.prospect),
+            // A missing transcription only costs the memory some messages.
+            messages: toMessages(output.messages),
             facts: output.observed_facts,
             hypotheses: output.hypotheses,
             analysis: toAnalysis(output.conversation),
+            summary: toSummary(output.summary),
             suggestions: suggestions.value,
             note: output.note,
           })
