@@ -4,6 +4,7 @@ import { buildApp } from "../app.ts";
 import { ok } from "../shared/result.ts";
 import type { TelegramClient } from "../telegram/client.ts";
 import { telegramChatIdSchema, telegramUserIdSchema } from "../telegram/ids.ts";
+import { createInFlight } from "../telegram/in-flight.ts";
 import { createProcessedUpdates } from "../telegram/processed-updates.ts";
 import {
   createUpdateHandler,
@@ -163,6 +164,62 @@ describe("POST /telegram/webhook", () => {
     );
   });
 
+  const tapUpdate = {
+    update_id: 300,
+    callback_query: {
+      id: "query-300",
+      from: { id: 666, is_bot: false, first_name: "Someone" },
+      chat_instance: "-1",
+      data: "1:more:R",
+      message: {
+        message_id: 1_001,
+        chat: { id: 42, type: "private" },
+        date: 1_790_400_000,
+        text: "Ciao",
+      },
+    },
+  };
+
+  it("logs a button tap, never its data", async () => {
+    const { logLines, post } = await setup({
+      type: "PRESSED",
+      button: "MORE",
+      kind: "REPLIES",
+    });
+
+    const response = await post(tapUpdate);
+
+    expect(response.statusCode).toBe(200);
+    const entries = logLines.map((line): unknown => JSON.parse(line));
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        telegram_update_id: 300,
+        outcome: "PRESSED",
+        button: "MORE",
+        kind: "REPLIES",
+      }),
+    );
+    expect(logLines.join("\n")).not.toContain("1:more:R");
+  });
+
+  it("logs who tapped a button without being allowed to", async () => {
+    const { logLines, post } = await setup({
+      type: "IGNORED",
+      reason: "UNAUTHORIZED_SENDER",
+    });
+
+    await post(tapUpdate);
+
+    const entries = logLines.map((line): unknown => JSON.parse(line));
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        outcome: "IGNORED",
+        reason: "UNAUTHORIZED_SENDER",
+        sender_id: 666,
+      }),
+    );
+  });
+
   it("keeps the secrets out of the logs", async () => {
     const { logLines, post } = await setup();
 
@@ -197,7 +254,12 @@ describe("webhook workflow", () => {
           downloadImage: notExpected,
           analyzeScreenshots: notExpected,
           replyToConversation: notExpected,
+          pressButton: notExpected,
+          answerCallbackQuery: notExpected,
+          inFlight: createInFlight(),
           linkMessages: notExpected,
+          spending: { spending: notExpected, setCredit: notExpected },
+          monthlyLimitMicroUsd: null,
           schedule: () => () => undefined,
         }),
       },

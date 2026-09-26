@@ -7,16 +7,20 @@ import { err, type Result } from "../shared/result.ts";
 import type { AiEngine, AiError, Generation } from "./engine.ts";
 import {
   conversationReplyOutputSchema,
+  newSuggestionsOutputSchema,
   prospectIdentityOutputSchema,
   screenshotsOutputSchema,
   toConversationReply,
+  toNewSuggestions,
   toProspectIdentity,
   toScreenshotsAnalysis,
   type InvalidOutput,
 } from "./outputs.ts";
+import { costOf, type ModelUsage } from "./pricing.ts";
 import { promptSignature } from "./prompts/layer.ts";
 import {
   conversationRequest,
+  newSuggestionsRequest,
   PROMPT_LAYERS,
   PROSPECT_IDENTITY_REQUEST,
   screenshotsRequest,
@@ -26,15 +30,43 @@ import {
 type ContentBlock = Anthropic.Beta.Messages.BetaContentBlockParam;
 type Message = Anthropic.Beta.Messages.BetaMessage;
 
-// Room for the model's adaptive thinking as well as its answer.
-const MAX_TOKENS = 16_000;
-
-// Recognizing the prospect only returns a username and a name.
-const IDENTITY_MAX_TOKENS = 1_024;
-
 // If the model declines a request, the API re-runs it on the fallback model
 // Anthropic recommends for that kind of refusal.
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
+
+type ModeSettings = Readonly<{
+  /** The main model, or the small and fast one. */
+  tier: "MAIN" | "FAST";
+  maxTokens: number;
+  /** How much the model reasons; null leaves the model's default. */
+  effort: "medium" | "high" | null;
+  /** Whether a refusal is retried on the fallback model. */
+  fallback: boolean;
+}>;
+
+// Only the analyses need the large model, its effort and its fallback, with
+// room for adaptive thinking as well as the answer. Recognizing the prospect
+// only returns a username and a name.
+const ANALYSIS: ModeSettings = {
+  tier: "MAIN",
+  maxTokens: 16_000,
+  effort: "high",
+  fallback: true,
+};
+
+const MODE_SETTINGS = {
+  PROSPECT_IDENTITY: {
+    tier: "FAST",
+    maxTokens: 1_024,
+    effort: null,
+    fallback: false,
+  },
+  SCREENSHOTS: ANALYSIS,
+  CONVERSATION_REPLY: ANALYSIS,
+  // A button asks for text in the same voice, not a new analysis: the main
+  // model with less reasoning, to answer sooner, as Alex chose.
+  NEW_SUGGESTIONS: { ...ANALYSIS, effort: "medium" },
+} satisfies Record<PromptMode, ModeSettings>;
 
 // The schemas as the SDK adapts them for strict structured outputs; the
 // answers are then validated against the original Zod schemas.
@@ -42,6 +74,7 @@ const OUTPUT_SCHEMAS = {
   PROSPECT_IDENTITY: betaZodOutputFormat(prospectIdentityOutputSchema).schema,
   SCREENSHOTS: betaZodOutputFormat(screenshotsOutputSchema).schema,
   CONVERSATION_REPLY: betaZodOutputFormat(conversationReplyOutputSchema).schema,
+  NEW_SUGGESTIONS: betaZodOutputFormat(newSuggestionsOutputSchema).schema,
 } satisfies Record<PromptMode, unknown>;
 
 export type ClaudeEngineOptions = Readonly<{
@@ -106,6 +139,56 @@ const resultOf = <Output, T>(
       });
 };
 
+/**
+ * The tokens each model billed. When the API fell back to another model, the
+ * iterations separate the declined attempt from the one that answered.
+ * Attempts declined before writing anything are not billed.
+ */
+const usageOf = (message: Message, requested: string): ModelUsage[] => {
+  const { usage } = message;
+  const refused = message.stop_reason === "refusal";
+  const sampled = (usage.iterations ?? []).flatMap((iteration) =>
+    iteration.type === "message" || iteration.type === "fallback_message"
+      ? [iteration]
+      : [],
+  );
+  if (sampled.length === 0) {
+    const cacheWrite = usage.cache_creation_input_tokens ?? 0;
+    if (refused && usage.output_tokens === 0) {
+      return [];
+    }
+    return [
+      {
+        model: message.model,
+        inputTokens: usage.input_tokens,
+        outputTokens: usage.output_tokens,
+        cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+        cacheWrite5mTokens:
+          usage.cache_creation?.ephemeral_5m_input_tokens ?? cacheWrite,
+        cacheWrite1hTokens:
+          usage.cache_creation?.ephemeral_1h_input_tokens ?? 0,
+      },
+    ];
+  }
+  // An attempt that wrote nothing was declined before any output: the API
+  // reports it but does not bill it.
+  const billed = sampled.filter(
+    (iteration, index) =>
+      iteration.output_tokens > 0 || (index === sampled.length - 1 && !refused),
+  );
+  return billed.map((iteration) => ({
+    model: iteration.model ?? requested,
+    inputTokens: iteration.input_tokens,
+    outputTokens: iteration.output_tokens,
+    cacheReadTokens: iteration.cache_read_input_tokens,
+    cacheWrite5mTokens:
+      iteration.cache_creation?.ephemeral_5m_input_tokens ??
+      iteration.cache_creation_input_tokens,
+    cacheWrite1hTokens:
+      iteration.cache_creation?.ephemeral_1h_input_tokens ?? 0,
+  }));
+};
+
 const errorOf = (error: unknown): AiError => {
   if (!(error instanceof Anthropic.APIError)) {
     // Not a failure of the API call: let the caller treat it as a bug.
@@ -137,8 +220,7 @@ export const createClaudeEngine = ({
     toDomain: (output: Output) => Result<T, InvalidOutput>,
   ): Promise<Generation<T>> => {
     const layers = PROMPT_LAYERS[mode];
-    // Only the analysis needs the large model, its effort and its fallback.
-    const quick = mode === "PROSPECT_IDENTITY";
+    const settings: ModeSettings = MODE_SETTINGS[mode];
     const format = {
       type: "json_schema",
       schema: OUTPUT_SCHEMAS[mode],
@@ -151,16 +233,19 @@ export const createClaudeEngine = ({
       inputTokens: null,
       outputTokens: null,
       cacheReadTokens: null,
+      cacheWriteTokens: null,
+      costMicroUsd: null,
       stopReason: null,
     };
 
+    const requested = settings.tier === "FAST" ? fastModel : model;
     try {
       const message = await client.beta.messages.create({
-        model: quick ? fastModel : model,
-        max_tokens: quick ? IDENTITY_MAX_TOKENS : MAX_TOKENS,
-        ...(quick
-          ? {}
-          : { betas: [FALLBACK_BETA], fallbacks: "default" as const }),
+        model: requested,
+        max_tokens: settings.maxTokens,
+        ...(settings.fallback
+          ? { betas: [FALLBACK_BETA], fallbacks: "default" as const }
+          : {}),
         system: [
           {
             type: "text",
@@ -169,7 +254,10 @@ export const createClaudeEngine = ({
           },
         ],
         messages: [{ role: "user", content: [...content] }],
-        output_config: quick ? { format } : { effort: "high", format },
+        output_config:
+          settings.effort === null
+            ? { format }
+            : { effort: settings.effort, format },
       });
       return {
         result: resultOf(message, schema, toDomain),
@@ -180,6 +268,8 @@ export const createClaudeEngine = ({
           inputTokens: message.usage.input_tokens,
           outputTokens: message.usage.output_tokens,
           cacheReadTokens: message.usage.cache_read_input_tokens,
+          cacheWriteTokens: message.usage.cache_creation_input_tokens,
+          costMicroUsd: costOf(usageOf(message, requested)),
           stopReason: message.stop_reason,
         },
       };
@@ -219,6 +309,18 @@ export const createClaudeEngine = ({
         [{ type: "text", text: conversationRequest(text, memory, today()) }],
         conversationReplyOutputSchema,
         toConversationReply,
+      ),
+    suggestAgain: (request, memory) =>
+      generate(
+        "NEW_SUGGESTIONS",
+        [
+          {
+            type: "text",
+            text: newSuggestionsRequest(request, memory, today()),
+          },
+        ],
+        newSuggestionsOutputSchema,
+        toNewSuggestions(request.kind),
       ),
   };
 };

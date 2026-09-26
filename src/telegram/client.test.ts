@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createTelegramClient,
+  isKeyboardRejection,
   isRetryable,
   type TelegramError,
 } from "./client.ts";
@@ -70,12 +71,124 @@ describe("createTelegramClient", () => {
     );
     const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
 
-    await client.sendMessage(CHAT_ID, "<b>Ciao</b>", "HTML");
+    await client.sendMessage(CHAT_ID, "<b>Ciao</b>", { parseMode: "HTML" });
 
     expect(requests[0]?.body).toStrictEqual({
       chat_id: 42,
       text: "<b>Ciao</b>",
       parse_mode: "HTML",
+    });
+  });
+
+  it("never sends half of an emoji, which Telegram refuses", async () => {
+    const { fetchFn, requests } = fakeFetch(() =>
+      jsonResponse(200, { ok: true, result: { message_id: 1 } }),
+    );
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+    const half = "😀".slice(0, 1);
+
+    await client.sendMessage(CHAT_ID, `Ciao ${half}`, {
+      keyboard: [
+        [{ type: "COPY", label: "📋", text: `Ok ${half}`, primary: false }],
+      ],
+    });
+
+    expect(requests[0]?.body).toMatchObject({
+      text: "Ciao �",
+      reply_markup: {
+        inline_keyboard: [[{ copy_text: { text: "Ok �" } }]],
+      },
+    });
+  });
+
+  it("sends buttons under a message, in reply to another one", async () => {
+    const { fetchFn, requests } = fakeFetch(() =>
+      jsonResponse(200, { ok: true, result: { message_id: 8 } }),
+    );
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+
+    await client.sendMessage(CHAT_ID, "Proposte", {
+      parseMode: "HTML",
+      replyTo: 7,
+      keyboard: [
+        [
+          {
+            type: "COPY",
+            label: "📋 Copia BEST",
+            text: "Ciao <Mario> & co",
+            primary: true,
+          },
+        ],
+        [
+          { type: "COPY", label: "📋 NATURAL", text: "Ciao!", primary: false },
+          { type: "CALLBACK", label: "🔄 Altre 3", data: "1:more:F" },
+        ],
+      ],
+    });
+
+    expect(requests[0]?.body).toStrictEqual({
+      chat_id: 42,
+      text: "Proposte",
+      parse_mode: "HTML",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "📋 Copia BEST",
+              // Copied as written: the clipboard takes no HTML.
+              copy_text: { text: "Ciao <Mario> & co" },
+              style: "success",
+            },
+          ],
+          [
+            { text: "📋 NATURAL", copy_text: { text: "Ciao!" } },
+            { text: "🔄 Altre 3", callback_data: "1:more:F" },
+          ],
+        ],
+      },
+      reply_parameters: { message_id: 7, allow_sending_without_reply: true },
+    });
+  });
+
+  it.each([
+    [undefined, { callback_query_id: "q1" }],
+    [
+      "⏳ Ci sto già lavorando",
+      { callback_query_id: "q1", text: "⏳ Ci sto già lavorando" },
+    ],
+  ])("answers a button tap with %j", async (text, body) => {
+    const { fetchFn, requests } = fakeFetch(() =>
+      jsonResponse(200, { ok: true, result: true }),
+    );
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+
+    expect(await client.answerCallbackQuery("q1", text)).toStrictEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(requests).toStrictEqual([
+      {
+        url: `https://api.telegram.org/bot${TOKEN}/answerCallbackQuery`,
+        method: "POST",
+        body,
+      },
+    ]);
+  });
+
+  it("reports a button tap answered too late", async () => {
+    const { fetchFn } = fakeFetch(() =>
+      jsonResponse(400, {
+        ok: false,
+        error_code: 400,
+        description:
+          "Bad Request: query is too old and response timeout expired or query ID is invalid",
+      }),
+    );
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+
+    expect(await client.answerCallbackQuery("q1")).toMatchObject({
+      ok: false,
+      error: { type: "API_ERROR", method: "answerCallbackQuery", status: 400 },
     });
   });
 
@@ -140,7 +253,27 @@ describe("createTelegramClient", () => {
         url: "https://example.com/telegram/webhook",
         pendingUpdateCount: 2,
         lastErrorMessage: "Connection refused",
+        allowedUpdates: null,
       },
+    });
+  });
+
+  it("reads which updates the webhook receives", async () => {
+    const { fetchFn } = fakeFetch(() =>
+      jsonResponse(200, {
+        ok: true,
+        result: {
+          url: "https://example.com/telegram/webhook",
+          pending_update_count: 0,
+          allowed_updates: ["message", "callback_query"],
+        },
+      }),
+    );
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+
+    expect(await client.getWebhookInfo()).toMatchObject({
+      ok: true,
+      value: { allowedUpdates: ["message", "callback_query"] },
     });
   });
 
@@ -408,6 +541,41 @@ describe("isRetryable", () => {
     "%s: %s",
     (_description, error, retryable) => {
       expect(isRetryable(error)).toBe(retryable);
+    },
+  );
+});
+
+describe("isKeyboardRejection", () => {
+  const badRequest = (description: string): TelegramError => ({
+    type: "API_ERROR",
+    method: "sendMessage",
+    status: 400,
+    description,
+  });
+
+  it.each([
+    "Bad Request: BUTTON_DATA_INVALID",
+    "Bad Request: can't parse inline keyboard button: Text buttons are unallowed in the inline keyboard",
+    "Bad Request: REPLY_MARKUP_TOO_LONG",
+    'Bad Request: field "copy_text" must be of type Object',
+  ])("recognizes %j", (description) => {
+    expect(isKeyboardRejection(badRequest(description))).toBe(true);
+  });
+
+  it.each([
+    badRequest("Bad Request: can't parse entities: Unclosed start tag"),
+    badRequest("Bad Request: message is too long"),
+    {
+      type: "API_ERROR",
+      method: "sendMessage",
+      status: 500,
+      description: "Internal Server Error: BUTTON_DATA_INVALID",
+    },
+    { type: "NETWORK_ERROR", method: "sendMessage", timedOut: true },
+  ] satisfies readonly TelegramError[])(
+    "does not blame the buttons for %j",
+    (error) => {
+      expect(isKeyboardRejection(error)).toBe(false);
     },
   );
 });

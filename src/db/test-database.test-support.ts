@@ -69,5 +69,6 @@ export const openTestDatabase = async (
 export const emptyTables = async (db: Kysely<Database>): Promise<void> => {
   await db.deleteFrom("prospect_messages").execute();
   await db.deleteFrom("generation_runs").execute();
+  await db.deleteFrom("credit_balances").execute();
   await db.deleteFrom("prospects").execute();
 };

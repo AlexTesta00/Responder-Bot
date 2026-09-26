@@ -22,7 +22,15 @@ export const runOf = <T>(
   outcome: generation.result.ok ? "OK" : generation.result.error.type,
 });
 
-/** Development without a database: the logs already describe each run. */
-export const discardGenerationRuns: GenerationLog = {
-  record: () => Promise.resolve(),
+/**
+ * What the runs cost together, adding up those with an estimate; null when
+ * none has one.
+ */
+export const totalCost = (runs: readonly GenerationRun[]): number | null => {
+  const costs = runs
+    .map((run) => run.report.costMicroUsd)
+    .filter((cost) => cost !== null);
+  return costs.length === 0
+    ? null
+    : costs.reduce((total, cost) => total + cost, 0);
 };

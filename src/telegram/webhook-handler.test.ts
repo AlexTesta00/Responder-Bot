@@ -1,9 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { AiEngine, AiError, Generation } from "../ai/engine.ts";
-import type { ConversationReply, ScreenshotsAnalysis } from "../ai/outputs.ts";
+import type { GenerationLog } from "../ai/runs.ts";
+import type {
+  ConversationReply,
+  NewSuggestions,
+  ScreenshotsAnalysis,
+} from "../ai/outputs.ts";
 import type { PromptMode } from "../ai/prompts/modes.ts";
-import { discardGenerationRuns } from "../ai/runs.ts";
+import { createInMemorySpending, type SpendingLedger } from "../ai/spending.ts";
+import { createButtonActions } from "../copilot/buttons.ts";
 import { createConversationAnalyst } from "../copilot/conversation.ts";
 import { createScreenshotsAnalyst } from "../copilot/screenshots.ts";
 import type { DownloadedImage, DownloadImage } from "../inputs/images.ts";
@@ -17,16 +23,19 @@ import {
   type TelegramUserId,
 } from "./ids.ts";
 import type { Schedule } from "./media-group.ts";
+import { createInFlight } from "./in-flight.ts";
 import { createProcessedUpdates } from "./processed-updates.ts";
 import { imageProblemReply, replyTo, type InstantInput } from "./replies.ts";
 import {
   aiProblemReply,
-  conversationMessages,
+  conversationAnswer,
   escapeHtml,
   pauseMessage,
-  screenshotsMessages,
+  screenshotsAnswer,
+  type Presented,
 } from "./suggestions.ts";
 import type { ChatType, IncomingUpdate, MessageContent } from "./update.ts";
+import { decodeButton } from "./button-data.ts";
 import { createUpdateHandler } from "./webhook-handler.ts";
 
 const ALEX = telegramUserIdSchema.parse(42);
@@ -99,6 +108,8 @@ const generation = <T>(
     inputTokens: 2_400,
     outputTokens: 350,
     cacheReadTokens: 1_800,
+    cacheWriteTokens: 0,
+    costMicroUsd: 21_650,
     stopReason: "end_turn",
   },
 });
@@ -111,12 +122,34 @@ const GENERATION_FIELDS = {
   input_tokens: 2_400,
   output_tokens: 350,
   cache_read_tokens: 1_800,
+  cache_write_tokens: 0,
+  cost_micro_usd: 21_650,
   stop_reason: "end_turn",
 };
 
+const NEW_REPLIES: NewSuggestions = {
+  suggestions: [
+    { style: "BEST", text: "Ti mando un esempio?" },
+    { style: "ALTERNATIVE", text: "Come lavori oggi?" },
+    { style: "DIRECT", text: "Ti preparo un preventivo?" },
+  ],
+  note: null,
+};
+
+/** Under an answer with one generation: 21_650 millionths of a dollar. */
+const ONE_RUN_COST =
+  "💳 Questa analisi ~0,02 $ · mese ~0,02 $, restano ~19,98 $ di 20,00 $";
+
+/** Under the first analysis of screenshots: two generations. */
+const TWO_RUNS_COST =
+  "💳 Questa analisi ~0,04 $ · mese ~0,04 $, restano ~19,96 $ di 20,00 $";
+
 /** The calls of sendMessage delivering these HTML messages. */
-const htmlCalls = (messages: readonly string[]) =>
-  messages.map((text) => [CHAT, text, "HTML"]);
+const answerCall = ({ html, keyboard }: Presented) => [
+  CHAT,
+  html,
+  keyboard === null ? { parseMode: "HTML" } : { parseMode: "HTML", keyboard },
+];
 
 type MessageOptions = Readonly<{
   updateId?: number;
@@ -190,7 +223,13 @@ const manualSchedule = () => {
 type SendResult = Awaited<ReturnType<TelegramClient["sendMessage"]>>;
 
 /** sendMessage returns `results` on consecutive calls, then succeeds. */
-const setup = (...results: readonly SendResult[]) => {
+const setup = (...results: readonly SendResult[]) =>
+  setupWith(createInMemorySpending(), ...results);
+
+const setupWith = (
+  spending: SpendingLedger & GenerationLog,
+  ...results: readonly SendResult[]
+) => {
   // Each message the bot sends gets the next id, as on Telegram.
   let lastMessageId = 1_000;
   const sendMessage = vi.fn<TelegramClient["sendMessage"]>(() => {
@@ -231,14 +270,25 @@ const setup = (...results: readonly SendResult[]) => {
   const replyToConversation = vi.fn<AiEngine["replyToConversation"]>(() =>
     Promise.resolve(generation("CONVERSATION_REPLY", ok(REPLY))),
   );
+  const suggestAgain = vi.fn<AiEngine["suggestAgain"]>(() =>
+    Promise.resolve(generation("NEW_SUGGESTIONS", ok(NEW_REPLIES))),
+  );
+  const answerCallbackQuery = vi.fn<TelegramClient["answerCallbackQuery"]>(() =>
+    Promise.resolve(ok(undefined)),
+  );
 
   const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const { schedule, runPending } = manualSchedule();
   const prospects = createInMemoryProspectStore();
   const copilot = {
-    ai: { identifyProspect, analyzeScreenshots, replyToConversation },
+    ai: {
+      identifyProspect,
+      analyzeScreenshots,
+      replyToConversation,
+      suggestAgain,
+    },
     prospects,
-    generations: discardGenerationRuns,
+    generations: spending,
   };
   const handler = createUpdateHandler({
     allowedUserId: ALEX,
@@ -249,7 +299,12 @@ const setup = (...results: readonly SendResult[]) => {
     // The real use cases, with the memory in the process.
     analyzeScreenshots: createScreenshotsAnalyst(copilot),
     replyToConversation: createConversationAnalyst(copilot),
+    pressButton: createButtonActions(copilot),
+    answerCallbackQuery,
+    inFlight: createInFlight(),
     linkMessages: prospects.linkMessages,
+    spending,
+    monthlyLimitMicroUsd: 20_000_000,
     schedule,
   });
   const handleUpdate = (update: IncomingUpdate) =>
@@ -266,6 +321,8 @@ const setup = (...results: readonly SendResult[]) => {
     analyzeScreenshots,
     analyzed,
     replyToConversation,
+    suggestAgain,
+    answerCallbackQuery,
     log,
     runPending,
   };
@@ -423,14 +480,21 @@ describe("suggestions", () => {
 
     expect(outcome).toStrictEqual({ type: "ACCEPTED", input: "SCREENSHOTS" });
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
     expect(downloadImage).toHaveBeenCalledExactlyOnceWith(SCREENSHOT);
     expect(analyzed).toStrictEqual([[{ format: "image/png", bytes: PNG }]]);
     expect(analyzeScreenshots.mock.calls[0]?.[1]).toBe("profilo di Mario");
-    expect(sendMessage.mock.calls).toStrictEqual(
-      htmlCalls(screenshotsMessages(PROFILE, { type: "CREATED" }, null)),
-    );
+    expect(sendMessage.mock.calls).toStrictEqual([
+      answerCall(
+        screenshotsAnswer(PROFILE, {
+          memory: { type: "CREATED" },
+          pause: null,
+          linked: true,
+          footer: TWO_RUNS_COST,
+        }),
+      ),
+    ]);
     expect(log.info).toHaveBeenCalledWith(
       { ai_mode: "SCREENSHOTS", ...GENERATION_FIELDS },
       "ai generation completed",
@@ -442,7 +506,7 @@ describe("suggestions", () => {
 
     await handleUpdate(screenshotMessage());
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
 
     expect(downloads).toStrictEqual([new Uint8Array(PNG.length)]);
@@ -455,21 +519,22 @@ describe("suggestions", () => {
 
     expect(outcome).toStrictEqual({ type: "ACCEPTED", input: "TEXT" });
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
     expect(replyToConversation).toHaveBeenCalledExactlyOnceWith(
       CONVERSATION,
       null,
     );
-    expect(sendMessage.mock.calls).toStrictEqual(
-      htmlCalls(
-        conversationMessages(
-          REPLY,
-          { type: "NOT_SAVED", reason: "NO_PROSPECT" },
-          null,
-        ),
+    expect(sendMessage.mock.calls).toStrictEqual([
+      answerCall(
+        conversationAnswer(REPLY, null, {
+          memory: { type: "NOT_SAVED", reason: "NO_PROSPECT" },
+          pause: null,
+          linked: false,
+          footer: ONE_RUN_COST,
+        }),
       ),
-    );
+    ]);
     expect(log.info).toHaveBeenCalledWith(
       { ai_mode: "CONVERSATION_REPLY", ...GENERATION_FIELDS },
       "ai generation completed",
@@ -496,7 +561,7 @@ describe("suggestions", () => {
 
     answer.resolve(generation("CONVERSATION_REPLY", ok(REPLY)));
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
     runPending();
     expect(sendTyping).toHaveBeenCalledTimes(2);
@@ -515,8 +580,8 @@ describe("suggestions", () => {
 
     expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
       CHAT,
-      escapeHtml(aiProblemReply(OVERLOADED)),
-      "HTML",
+      `${escapeHtml(aiProblemReply(OVERLOADED))}\n\n${ONE_RUN_COST}`,
+      { parseMode: "HTML" },
     );
     expect(log.warn).toHaveBeenCalledWith(
       {
@@ -547,7 +612,7 @@ describe("suggestions", () => {
     expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
       CHAT,
       escapeHtml(imageProblemReply({ type: "IMAGE_TOO_LARGE" })),
-      "HTML",
+      { parseMode: "HTML" },
     );
     expect(analyzeScreenshots).not.toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalledWith(
@@ -556,23 +621,50 @@ describe("suggestions", () => {
     );
   });
 
-  it("stops at the first message it cannot deliver", async () => {
+  it("logs an answer it cannot deliver", async () => {
     const { handleUpdate, sendMessage, log } = setup(err(BLOCKED_BY_USER));
 
     await handleUpdate(textMessage(CONVERSATION));
     await vi.waitFor(() => {
       expect(log.error).toHaveBeenCalledWith(
-        {
-          message_index: 0,
-          messages: 2,
-          error_type: "API_ERROR",
-          telegram_error: BLOCKED_BY_USER,
-        },
+        { error_type: "API_ERROR", telegram_error: BLOCKED_BY_USER },
         "reply not delivered",
       );
     });
 
     expect(sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it("sends the answer again without buttons when Telegram refuses them", async () => {
+    const refused = {
+      type: "API_ERROR",
+      method: "sendMessage",
+      status: 400,
+      description: "Bad Request: BUTTON_DATA_INVALID",
+    } as const;
+    const { handleUpdate, sendMessage, log } = setup(err(refused));
+
+    await handleUpdate(screenshotMessage());
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    const { html } = screenshotsAnswer(PROFILE, {
+      memory: { type: "CREATED" },
+      pause: null,
+      linked: true,
+      footer: TWO_RUNS_COST,
+    });
+    expect(sendMessage.mock.calls[0]?.[2]).toHaveProperty("keyboard");
+    expect(sendMessage.mock.calls[1]).toStrictEqual([
+      CHAT,
+      html,
+      { parseMode: "HTML" },
+    ]);
+    expect(log.warn).toHaveBeenCalledWith(
+      { telegram_error: refused },
+      "keyboard rejected, answer resent without buttons",
+    );
   });
 
   it("logs a crash and stops typing", async () => {
@@ -600,7 +692,7 @@ describe("suggestions", () => {
     const first = await handleUpdate(textMessage(CONVERSATION));
     const redelivery = await handleUpdate(textMessage(CONVERSATION));
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
 
     expect([first, redelivery]).toStrictEqual([
@@ -618,7 +710,7 @@ describe("suggestions", () => {
       screenshotMessage("profilo di Mario", { updateId: 101 }),
     );
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(4);
+      expect(sendMessage).toHaveBeenCalledTimes(2);
     });
 
     const logs = JSON.stringify([
@@ -646,11 +738,11 @@ describe("prospect memory", () => {
 
     await handleUpdate(screenshotMessage());
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
     await handleUpdate(screenshotMessage(null, { updateId: 101 }));
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(4);
+      expect(sendMessage).toHaveBeenCalledTimes(2);
     });
 
     const [first, second] = analyzeScreenshots.mock.calls;
@@ -660,7 +752,7 @@ describe("prospect memory", () => {
       displayName: "Mario",
       facts: PROFILE.facts,
     });
-    expect(sendMessage.mock.calls[2]?.[1]).toContain("🧠 Già in memoria");
+    expect(sendMessage.mock.calls[1]?.[1]).toContain("🧠 Già in memoria");
   });
 
   it("says so when the screenshots do not show a username", async () => {
@@ -681,7 +773,7 @@ describe("prospect memory", () => {
 
     await handleUpdate(screenshotMessage());
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
 
     expect(sendMessage.mock.calls[0]?.[1]).toContain("Non vedo lo username");
@@ -694,23 +786,23 @@ describe("conversations", () => {
 
     await handleUpdate(screenshotMessage());
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
-    // The analysis arrived as messages 1001 and 1002: Alex replies to one.
+    // The analysis arrived as message 1001: Alex replies to it.
     await handleUpdate(
       messageWith(
-        { type: "TEXT", text: CONVERSATION, replyTo: 1_002 },
+        { type: "TEXT", text: CONVERSATION, replyTo: 1_001 },
         { updateId: 101 },
       ),
     );
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(4);
+      expect(sendMessage).toHaveBeenCalledTimes(2);
     });
 
     expect(replyToConversation.mock.calls[0]?.[1]?.prospect).toMatchObject({
       username: "mariofit",
     });
-    expect(sendMessage.mock.calls[2]?.[1]).toContain("🧠 Già in memoria");
+    expect(sendMessage.mock.calls[1]?.[1]).toContain("🧠 Già in memoria");
   });
 
   it("remembers a conversation pasted under the prospect's @username", async () => {
@@ -721,7 +813,7 @@ describe("conversations", () => {
       textMessage(`@giulia.bakery\n${CONVERSATION}`),
     );
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
 
     expect(outcome).toStrictEqual({ type: "ACCEPTED", input: "TEXT" });
@@ -738,7 +830,7 @@ describe("conversations", () => {
 
     await handleUpdate(textMessage(CONVERSATION));
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
 
     expect(sendMessage.mock.calls[0]?.[1]).toContain("@username");
@@ -762,10 +854,17 @@ describe("conversations", () => {
 
     await handleUpdate(textMessage(`@mariofit\n${CONVERSATION}`));
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
 
-    expect(sendMessage.mock.calls[1]?.[1]).toBe(pauseMessage("DO_NOT_CONTACT"));
+    expect(sendMessage.mock.calls[0]?.[1]).toContain(
+      pauseMessage("DO_NOT_CONTACT"),
+    );
+    // Nothing to copy or rewrite: only what the bot remembers.
+    expect(sendMessage.mock.calls[0]?.[2]).toStrictEqual({
+      parseMode: "HTML",
+      keyboard: [[{ type: "CALLBACK", label: "🔍 Analizza", data: "1:an:R" }]],
+    });
   });
 });
 
@@ -796,7 +895,7 @@ describe("albums", () => {
 
     runPending();
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
 
     expect(downloadImage.mock.calls).toStrictEqual(
@@ -807,9 +906,16 @@ describe("albums", () => {
     const png = { format: "image/png", bytes: PNG };
     expect(analyzed).toStrictEqual([[png, png, png]]);
     expect(analyzeScreenshots.mock.calls[0]?.[1]).toBe("profilo di Mario");
-    expect(sendMessage.mock.calls).toStrictEqual(
-      htmlCalls(screenshotsMessages(PROFILE, { type: "CREATED" }, null)),
-    );
+    expect(sendMessage.mock.calls).toStrictEqual([
+      answerCall(
+        screenshotsAnswer(PROFILE, {
+          memory: { type: "CREATED" },
+          pause: null,
+          linked: true,
+          footer: TWO_RUNS_COST,
+        }),
+      ),
+    ]);
     expect(log.info).toHaveBeenCalledWith(
       { input: "SCREENSHOTS", images: 3 },
       "telegram album accepted for processing",
@@ -823,7 +929,7 @@ describe("albums", () => {
     const redelivery = await handleUpdate(albumPhoto(101, "first"));
     runPending();
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
 
     expect(redelivery).toStrictEqual({ type: "IGNORED", reason: "DUPLICATE" });
@@ -831,5 +937,453 @@ describe("albums", () => {
       fileId: "first",
       fileSize: null,
     });
+  });
+});
+
+describe("costs", () => {
+  it("tells under each answer what it cost and what is left", async () => {
+    const { handleUpdate, sendMessage } = setup();
+
+    await handleUpdate(screenshotMessage());
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+    await handleUpdate(textMessage(CONVERSATION, { updateId: 101 }));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    expect(sendMessage.mock.calls[0]?.[1]).toMatch(
+      /\n💳 Questa analisi ~0,04 \$ · mese ~0,04 \$, restano ~19,96 \$ di 20,00 \$$/,
+    );
+    expect(sendMessage.mock.calls[1]?.[1]).toMatch(
+      /\n💳 Questa analisi ~0,02 \$ · mese ~0,06 \$, restano ~19,94 \$ di 20,00 \$$/,
+    );
+  });
+
+  it("still tells what the answer cost when the month cannot be read", async () => {
+    const memory = createInMemorySpending();
+    const { handleUpdate, sendMessage, log } = setupWith({
+      ...memory,
+      spending: () => Promise.reject(new Error("ECONNREFUSED")),
+    });
+
+    await handleUpdate(textMessage(CONVERSATION));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+
+    expect(sendMessage.mock.calls[0]?.[1]).toMatch(
+      /\n💳 Questa analisi ~0,02 \$$/,
+    );
+    expect(log.warn).toHaveBeenCalledWith(
+      { error_name: "Error", error_code: null, errno: null, sql_state: null },
+      "spending unavailable",
+    );
+  });
+
+  it("sets the credit Alex read on the Console and reports it", async () => {
+    const { handleUpdate, sendMessage } = setup();
+
+    const outcome = await handleUpdate(textMessage("/credito 25,40"));
+
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: "CREDIT" });
+    const [call] = sendMessage.mock.calls;
+    expect(call?.[1]).toContain("✅ Credito impostato a 25,40 $");
+    expect(call?.[1]).toContain("Credito: ~25,40 $");
+    expect(call?.[2]).toStrictEqual({ parseMode: "HTML" });
+  });
+
+  it("counts down the credit with each answer", async () => {
+    const { handleUpdate, sendMessage } = setup();
+
+    await handleUpdate(textMessage("/credito 25"));
+    await handleUpdate(textMessage(CONVERSATION, { updateId: 101 }));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+    await handleUpdate(textMessage("/credito", { updateId: 102 }));
+
+    expect(sendMessage.mock.calls[1]?.[1]).toContain("credito ~24,98 $");
+    expect(sendMessage.mock.calls[2]?.[1]).toContain(
+      "Questo mese: ~0,02 $, restano ~19,98 $ di 20,00 $",
+    );
+  });
+
+  it("explains how to write the credit", async () => {
+    const { handleUpdate, sendMessage } = setup();
+
+    await handleUpdate(textMessage("/credito venti"));
+
+    expect(sendMessage.mock.calls[0]?.[1]).toContain("/credito 25,40");
+  });
+
+  it("says so when the costs cannot be read", async () => {
+    const memory = createInMemorySpending();
+    const { handleUpdate, sendMessage, log } = setupWith({
+      ...memory,
+      setCredit: () => Promise.reject(new Error("ECONNREFUSED")),
+    });
+
+    const outcome = await handleUpdate(textMessage("/credito 25"));
+
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: "CREDIT" });
+    expect(sendMessage.mock.calls[0]?.[1]).toContain(
+      "il database non risponde",
+    );
+    expect(log.error).toHaveBeenCalledWith(
+      { error_name: "Error", error_code: null, errno: null, sql_state: null },
+      "spending unavailable",
+    );
+  });
+});
+
+describe("buttons", () => {
+  const SHOWN = [
+    "Ciao Mario, quanti START ricevi?",
+    "Come gestisci gli START?",
+    "Bel profilo!",
+  ];
+
+  const tapOn = (
+    messageId: number,
+    data: string,
+    {
+      updateId = 300,
+      senderId = ALEX,
+      chatType = "private",
+      suggestions = SHOWN,
+    }: Readonly<{
+      updateId?: number;
+      senderId?: TelegramUserId;
+      chatType?: ChatType;
+      suggestions?: readonly string[];
+    }> = {},
+  ): IncomingUpdate => ({
+    type: "CALLBACK",
+    updateId,
+    callback: {
+      queryId: `query-${String(updateId)}`,
+      senderId,
+      message: { chatId: CHAT, chatType, messageId, suggestions },
+      press: decodeButton(data),
+    },
+  });
+
+  /** A handler whose first answer, message 1001, is about Mario. */
+  const answered = async () => {
+    const context = setup();
+    await context.handleUpdate(screenshotMessage());
+    await vi.waitFor(() => {
+      expect(context.sendMessage).toHaveBeenCalledOnce();
+    });
+    return context;
+  };
+
+  it("puts the buttons under an answer about a known prospect", async () => {
+    const { sendMessage } = await answered();
+
+    const options = sendMessage.mock.calls[0]?.[2];
+    expect(
+      options?.keyboard?.map((row) => row.map((button) => button.label)),
+    ).toStrictEqual([
+      ["📋 Copia BEST"],
+      ["🔄 Altre 3", "🙂 Più naturale"],
+      ["🎯 Più diretto", "💬 Follow-up"],
+      ["🔍 Analizza"],
+    ]);
+  });
+
+  it("acknowledges a tap at once, then answers under the tapped message", async () => {
+    const { handleUpdate, sendMessage, answerCallbackQuery, suggestAgain } =
+      await answered();
+
+    const outcome = await handleUpdate(tapOn(1_001, "1:nat:F"));
+
+    expect(outcome).toStrictEqual({
+      type: "PRESSED",
+      button: "NATURAL",
+      kind: "FIRST_MESSAGES",
+    });
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+    expect(answerCallbackQuery).toHaveBeenCalledExactlyOnceWith(
+      "query-300",
+      "🙂 Le riscrivo più naturali…",
+    );
+    expect(answerCallbackQuery.mock.invocationCallOrder[0]).toBeLessThan(
+      suggestAgain.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(suggestAgain.mock.calls[0]?.[0]).toStrictEqual({
+      action: "NATURAL",
+      kind: "FIRST_MESSAGES",
+      previous: [
+        { style: "BEST", text: SHOWN[0] },
+        { style: "CURIOSITY", text: SHOWN[1] },
+        { style: "NATURAL", text: SHOWN[2] },
+      ],
+    });
+    const [, html, options] = sendMessage.mock.calls[1] ?? [];
+    expect(html).toMatch(
+      /^🙂 <b>@mariofit<\/b> · primi messaggi più naturali\n\n🔥 <b>BEST<\/b>\n<pre>Ti mando un esempio\?<\/pre>/,
+    );
+    expect(html).toMatch(/\n💳 Questa analisi ~0,02 \$ · mese ~0,06 \$/);
+    expect(options).toMatchObject({ parseMode: "HTML", replyTo: 1_001 });
+  });
+
+  it("acknowledges before reading the memory", async () => {
+    const { handleUpdate, prospects, answerCallbackQuery, sendMessage } =
+      await answered();
+    const read = vi.spyOn(prospects, "prospectOfMessage");
+
+    await handleUpdate(tapOn(1_001, "1:more:F"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    expect(answerCallbackQuery.mock.invocationCallOrder[0]).toBeLessThan(
+      read.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("links the new suggestions to the prospect, for more taps", async () => {
+    const { handleUpdate, sendMessage, suggestAgain } = await answered();
+
+    await handleUpdate(tapOn(1_001, "1:more:F"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+    await handleUpdate(tapOn(1_002, "1:dir:F", { updateId: 301 }));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(3);
+    });
+
+    expect(suggestAgain).toHaveBeenCalledTimes(2);
+  });
+
+  it("answers a double tap once", async () => {
+    const { handleUpdate, sendMessage, suggestAgain, answerCallbackQuery } =
+      await answered();
+    const slow = Promise.withResolvers<Generation<NewSuggestions>>();
+    suggestAgain.mockReturnValueOnce(slow.promise);
+
+    const first = await handleUpdate(tapOn(1_001, "1:more:F"));
+    const second = await handleUpdate(
+      tapOn(1_001, "1:more:F", { updateId: 301 }),
+    );
+    slow.resolve(generation("NEW_SUGGESTIONS", ok(NEW_REPLIES)));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    expect(first).toMatchObject({ type: "PRESSED" });
+    expect(second).toStrictEqual({ type: "IGNORED", reason: "BUSY" });
+    expect(suggestAgain).toHaveBeenCalledOnce();
+    expect(answerCallbackQuery).toHaveBeenCalledWith(
+      "query-301",
+      "⏳ Ci sto già lavorando: arriva tra poco.",
+    );
+
+    // Once answered, the same button works again.
+    await handleUpdate(tapOn(1_001, "1:more:F", { updateId: 302 }));
+    await vi.waitFor(() => {
+      expect(suggestAgain).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("keeps answering when the tap cannot be acknowledged", async () => {
+    const { handleUpdate, sendMessage, answerCallbackQuery, log } =
+      await answered();
+    answerCallbackQuery.mockResolvedValueOnce(
+      err({
+        type: "API_ERROR",
+        method: "answerCallbackQuery",
+        status: 400,
+        description: "Bad Request: query is too old",
+      }),
+    );
+
+    await handleUpdate(tapOn(1_001, "1:more:F"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error_type: "API_ERROR" }),
+      "button tap not acknowledged",
+    );
+  });
+
+  it.each<[string, IncomingUpdate]>([
+    ["from a stranger", tapOn(1_001, "1:more:F", { senderId: STRANGER })],
+    ["in a group", tapOn(1_001, "1:more:F", { chatType: "group" })],
+  ])("ignores a tap %s", async (_description, update) => {
+    const { handleUpdate, answerCallbackQuery, suggestAgain } =
+      await answered();
+
+    const outcome = await handleUpdate(update);
+
+    expect(outcome).toMatchObject({ type: "IGNORED" });
+    expect(answerCallbackQuery).not.toHaveBeenCalled();
+    expect(suggestAgain).not.toHaveBeenCalled();
+  });
+
+  it("ignores a button that is not under a message", async () => {
+    const { handleUpdate, answerCallbackQuery } = setup();
+
+    const outcome = await handleUpdate({
+      type: "CALLBACK",
+      updateId: 300,
+      callback: {
+        queryId: "query-300",
+        senderId: ALEX,
+        message: null,
+        press: { action: "MORE", kind: "REPLIES" },
+      },
+    });
+
+    expect(outcome).toStrictEqual({
+      type: "IGNORED",
+      reason: "NO_BUTTON_MESSAGE",
+    });
+    expect(answerCallbackQuery).not.toHaveBeenCalled();
+  });
+
+  it("answers a redelivered tap only once", async () => {
+    const { handleUpdate, sendMessage, suggestAgain } = await answered();
+
+    await handleUpdate(tapOn(1_001, "1:more:F"));
+    const redelivery = await handleUpdate(tapOn(1_001, "1:more:F"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    expect(redelivery).toStrictEqual({ type: "IGNORED", reason: "DUPLICATE" });
+    expect(suggestAgain).toHaveBeenCalledOnce();
+  });
+
+  it("says when a button no longer works", async () => {
+    const { handleUpdate, answerCallbackQuery, suggestAgain } =
+      await answered();
+
+    const outcome = await handleUpdate(tapOn(1_001, "2:more:F"));
+
+    expect(outcome).toStrictEqual({
+      type: "IGNORED",
+      reason: "INVALID_BUTTON",
+    });
+    await vi.waitFor(() => {
+      expect(answerCallbackQuery).toHaveBeenCalledExactlyOnceWith(
+        "query-300",
+        "⌛ Questo bottone non vale più: usa l'ultima risposta o mandami di nuovo lo screenshot.",
+      );
+    });
+    expect(suggestAgain).not.toHaveBeenCalled();
+  });
+
+  it("shows what the bot remembers, without the AI", async () => {
+    const { handleUpdate, sendMessage, suggestAgain, answerCallbackQuery } =
+      await answered();
+
+    await handleUpdate(tapOn(1_001, "1:an:F"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    expect(answerCallbackQuery).toHaveBeenCalledExactlyOnceWith(
+      "query-300",
+      undefined,
+    );
+    expect(suggestAgain).not.toHaveBeenCalled();
+    const [, html, options] = sendMessage.mock.calls[1] ?? [];
+    expect(html).toMatch(/^🔍 <b>@mariofit<\/b> · personal trainer\n/);
+    expect(html).toContain("Solo profilo");
+    expect(options).toStrictEqual({ parseMode: "HTML", replyTo: 1_001 });
+  });
+
+  it("writes nothing for a prospect who asked not to be contacted", async () => {
+    const { handleUpdate, sendMessage, suggestAgain, replyToConversation } =
+      setup();
+    replyToConversation.mockResolvedValue(
+      generation(
+        "CONVERSATION_REPLY",
+        ok({
+          ...REPLY,
+          analysis: {
+            ...REPLY.analysis,
+            stage: "DO_NOT_CONTACT",
+            intent: "DO_NOT_CONTACT",
+          },
+        }),
+      ),
+    );
+    await handleUpdate(textMessage(`@mariofit\n${CONVERSATION}`));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+
+    // A button of an older message about the same prospect.
+    await handleUpdate(tapOn(1_001, "1:more:R", { updateId: 301 }));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    expect(suggestAgain).not.toHaveBeenCalled();
+    expect(sendMessage.mock.calls[1]).toStrictEqual([
+      CHAT,
+      pauseMessage("DO_NOT_CONTACT"),
+      {
+        parseMode: "HTML",
+        keyboard: [
+          [{ type: "CALLBACK", label: "🔍 Analizza", data: "1:an:R" }],
+        ],
+        replyTo: 1_001,
+      },
+    ]);
+  });
+
+  it("does not guess the prospect of a message it did not link", async () => {
+    const { handleUpdate, sendMessage, suggestAgain } = setup();
+
+    await handleUpdate(tapOn(4_242, "1:more:R"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+
+    expect(suggestAgain).not.toHaveBeenCalled();
+    expect(sendMessage.mock.calls[0]?.[1]).toContain(
+      "Non so più di quale prospect parla questo messaggio",
+    );
+  });
+
+  it("keeps suggestions and usernames out of the logs of taps", async () => {
+    const { handleUpdate, sendMessage, log } = await answered();
+
+    await handleUpdate(tapOn(1_001, "1:nat:F"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+    await handleUpdate(tapOn(1_001, "1:an:F", { updateId: 301 }));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(3);
+    });
+
+    const logs = JSON.stringify([
+      log.info.mock.calls,
+      log.warn.mock.calls,
+      log.error.mock.calls,
+    ]);
+    expect(logs).toContain("button handled");
+    for (const content of [
+      "mariofit",
+      "Ti mando",
+      "START",
+      "Bel profilo",
+      "1:nat",
+      "1:an",
+    ]) {
+      expect(logs).not.toContain(content);
+    }
   });
 });

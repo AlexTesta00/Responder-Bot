@@ -31,6 +31,8 @@ const generation = <T>(
     inputTokens: 1_500,
     outputTokens: 200,
     cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costMicroUsd: 12_500,
     stopReason: "end_turn",
   },
 });
@@ -99,6 +101,9 @@ const setup = ({
       Promise.resolve(generation("SCREENSHOTS", ok(analysis))),
     ),
     replyToConversation: vi.fn<AiEngine["replyToConversation"]>(() =>
+      Promise.reject(new Error("not expected")),
+    ),
+    suggestAgain: vi.fn<AiEngine["suggestAgain"]>(() =>
       Promise.reject(new Error("not expected")),
     ),
   };

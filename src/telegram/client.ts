@@ -10,6 +10,7 @@ const DEFAULT_DOWNLOAD_TIMEOUT_MS = 30_000;
 export type TelegramMethod =
   | "sendMessage"
   | "sendChatAction"
+  | "answerCallbackQuery"
   | "setWebhook"
   | "getWebhookInfo"
   | "getFile"
@@ -52,10 +53,22 @@ export const isRetryable = (error: TelegramError): boolean => {
   }
 };
 
+/**
+ * Whether Telegram refused the buttons of a message rather than its text:
+ * the message can then be sent again without them. Telegram does not
+ * document these descriptions, so this reads them loosely.
+ */
+export const isKeyboardRejection = (error: TelegramError): boolean =>
+  error.type === "API_ERROR" &&
+  error.status === 400 &&
+  /button|markup|copy_text/i.test(error.description);
+
 export type WebhookInfo = Readonly<{
   url: string;
   pendingUpdateCount: number;
   lastErrorMessage: string | null;
+  /** The update types the webhook receives; null means Telegram's default. */
+  allowedUpdates: readonly string[] | null;
 }>;
 
 export type SetWebhookOptions = Readonly<{
@@ -74,15 +87,40 @@ export type TelegramFile = Readonly<{
 /** A message the bot sent, to recognize the replies to it. */
 export type SentMessage = Readonly<{ messageId: number }>;
 
+/** A button under a message. */
+export type InlineButton =
+  /** Copies `text` to the clipboard, in the client, without telling the bot. */
+  | Readonly<{ type: "COPY"; label: string; text: string; primary: boolean }>
+  /** Sends `data` (1-64 bytes) back to the bot as a callback query. */
+  | Readonly<{ type: "CALLBACK"; label: string; data: string }>;
+
+/** Rows of buttons, top to bottom. */
+export type InlineKeyboard = readonly (readonly InlineButton[])[];
+
+export type SendOptions = Readonly<{
+  /** HTML with Telegram's formatting tags, instead of plain text. */
+  parseMode?: "HTML";
+  keyboard?: InlineKeyboard;
+  /** The message of the chat this one answers. */
+  replyTo?: number;
+}>;
+
 export type TelegramClient = Readonly<{
-  /** Sends plain text, or HTML with Telegram's formatting tags when asked. */
   sendMessage: (
     chatId: TelegramChatId,
     text: string,
-    parseMode?: "HTML",
+    options?: SendOptions,
   ) => Promise<Result<SentMessage, TelegramError>>;
   /** Shows "typing…" in the chat for a few seconds, or until a message arrives. */
   sendTyping: (chatId: TelegramChatId) => Promise<Result<void, TelegramError>>;
+  /**
+   * Stops the loading indicator of a button, optionally with a short notice
+   * (at most 200 characters) at the top of the chat.
+   */
+  answerCallbackQuery: (
+    queryId: string,
+    text?: string,
+  ) => Promise<Result<void, TelegramError>>;
   setWebhook: (
     options: SetWebhookOptions,
   ) => Promise<Result<void, TelegramError>>;
@@ -120,12 +158,58 @@ const webhookInfoSchema = z
     url: z.string(),
     pending_update_count: z.number().int(),
     last_error_message: z.string().optional(),
+    allowed_updates: z.array(z.string()).optional(),
   })
   .transform((info): WebhookInfo => ({
     url: info.url,
     pendingUpdateCount: info.pending_update_count,
     lastErrorMessage: info.last_error_message ?? null,
+    allowedUpdates: info.allowed_updates ?? null,
   }));
+
+const buttonParams = (button: InlineButton): Record<string, unknown> => {
+  switch (button.type) {
+    case "COPY":
+      return {
+        text: button.label,
+        copy_text: { text: button.text.toWellFormed() },
+        // Green on the clients that support button styles (Bot API 9.4).
+        ...(button.primary ? { style: "success" } : {}),
+      };
+    case "CALLBACK":
+      return { text: button.label, callback_data: button.data };
+  }
+};
+
+/**
+ * The body of sendMessage: options appear only when they are given. Texts
+ * are made well-formed, since Telegram refuses a lone half of an emoji.
+ */
+const messageParams = (
+  chatId: TelegramChatId,
+  text: string,
+  { parseMode, keyboard, replyTo }: SendOptions = {},
+): Record<string, unknown> => ({
+  chat_id: chatId,
+  text: text.toWellFormed(),
+  ...(parseMode === undefined ? {} : { parse_mode: parseMode }),
+  ...(keyboard === undefined
+    ? {}
+    : {
+        reply_markup: {
+          inline_keyboard: keyboard.map((row) => row.map(buttonParams)),
+        },
+      }),
+  ...(replyTo === undefined
+    ? {}
+    : {
+        // Still delivered if Alex deleted the message it answers.
+        reply_parameters: {
+          message_id: replyTo,
+          allow_sending_without_reply: true,
+        },
+      }),
+});
 
 const fileSchema = z
   .object({
@@ -283,12 +367,10 @@ export const createTelegramClient = ({
   ): Result<void, TelegramError> => (result.ok ? ok(undefined) : result);
 
   return {
-    sendMessage: (chatId, text, parseMode) =>
+    sendMessage: (chatId, text, options) =>
       call(
         "sendMessage",
-        parseMode === undefined
-          ? { chat_id: chatId, text }
-          : { chat_id: chatId, text, parse_mode: parseMode },
+        messageParams(chatId, text, options),
         sentMessageSchema,
       ),
     sendTyping: async (chatId) =>
@@ -296,6 +378,16 @@ export const createTelegramClient = ({
         await call(
           "sendChatAction",
           { chat_id: chatId, action: "typing" },
+          z.literal(true),
+        ),
+      ),
+    answerCallbackQuery: async (queryId, text) =>
+      withoutValue(
+        await call(
+          "answerCallbackQuery",
+          text === undefined
+            ? { callback_query_id: queryId }
+            : { callback_query_id: queryId, text },
           z.literal(true),
         ),
       ),

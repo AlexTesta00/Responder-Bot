@@ -1,11 +1,17 @@
 import type { Input } from "../inputs/classify.ts";
 import type { ImageDownloadError } from "../inputs/images.ts";
 
-/** Inputs answered at once; screenshots and texts go to the AI engine. */
+/**
+ * Inputs answered at once, from the input alone: screenshots and texts go
+ * to the AI engine, and the credit needs the costs recorded.
+ */
 export type InstantInput = Exclude<
   Input,
-  Readonly<{ type: "SCREENSHOTS" | "TEXT" }>
+  Readonly<{ type: "SCREENSHOTS" | "TEXT" | "CREDIT" }>
 >;
+
+const BUTTONS =
+  "Sotto ogni risposta trovi i bottoni: 📋 copia, 🔄 altre 3, 🙂 più naturale, 🎯 più diretto, 💬 follow-up (quando il tuo messaggio non ha avuto risposta), 🔍 cosa ricordo del prospect.";
 
 const START = [
   "Ciao! 👋 Sono il tuo copilota per l'outreach su Instagram.",
@@ -16,6 +22,8 @@ const START = [
   "",
   "Tu scegli, correggi se vuoi e invii: io non scrivo mai a nessuno.",
   "",
+  BUTTONS,
+  "",
   "Scrivi /help per vedere i comandi.",
 ].join("\n");
 
@@ -23,8 +31,11 @@ const HELP = [
   "Comandi disponibili:",
   "/start – presentazione del bot",
   "/help – questo elenco",
+  "/credito – quanto hai speso questo mese e il credito che resta; con il saldo della Console, per esempio /credito 25,40, lo aggiorna",
   "",
   "Oltre ai comandi puoi mandarmi screenshot di profili e conversazioni (anche più di uno insieme), il testo di una conversazione e link o @username di profili Instagram.",
+  "",
+  BUTTONS,
 ].join("\n");
 
 /** The reply to an input the bot answers without the AI engine. */

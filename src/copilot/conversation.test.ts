@@ -11,10 +11,8 @@ import {
 } from "../prospects/store.ts";
 import type { Logger } from "../shared/logger.ts";
 import { err, ok } from "../shared/result.ts";
-import {
-  createConversationAnalyst,
-  type ProspectReference,
-} from "./conversation.ts";
+import { createConversationAnalyst } from "./conversation.ts";
+import type { ProspectReference } from "./memory.ts";
 
 const PASTED = "Mario: Quanto costa un sito come il tuo?";
 
@@ -49,6 +47,8 @@ const generated = (
     inputTokens: 900,
     outputTokens: 200,
     cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costMicroUsd: 9_500,
     stopReason: "end_turn",
   },
 });
@@ -80,6 +80,7 @@ const setup = (prospects: ProspectStore = createInMemoryProspectStore()) => {
       identifyProspect: () => Promise.reject(new Error("not expected")),
       analyzeScreenshots: () => Promise.reject(new Error("not expected")),
       replyToConversation,
+      suggestAgain: () => Promise.reject(new Error("not expected")),
     },
     prospects,
     generations: { record },
@@ -134,6 +135,7 @@ describe("createConversationAnalyst", () => {
 
     expect(replyToConversation).toHaveBeenCalledExactlyOnceWith(PASTED, memory);
     expect(answer).toMatchObject({
+      username: "mariofit",
       memory: { type: "UPDATED", knownMessages: 1 },
       prospectId: memory.prospect.id,
       pause: null,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseUpdate } from "./update.ts";
+import { ALLOWED_UPDATES, parseUpdate } from "./update.ts";
 
 // Shaped like real Bot API payloads, including fields the bot ignores.
 const privateMessage = (fields: Record<string, unknown>) => ({
@@ -189,6 +189,137 @@ describe("parseUpdate", () => {
     expect(result).toStrictEqual({
       ok: false,
       error: { type: "INVALID_UPDATE", fields: ["message.chat.type"] },
+    });
+  });
+});
+
+describe("ALLOWED_UPDATES", () => {
+  it("subscribes the webhook to messages and button taps", () => {
+    expect(ALLOWED_UPDATES).toStrictEqual(["message", "callback_query"]);
+  });
+});
+
+describe("parseUpdate, button taps", () => {
+  // The answer as Telegram returns it: the text without tags, with <pre>
+  // blocks as entities whose offsets count UTF-16 code units.
+  const text = [
+    "💬 @mariofit",
+    "",
+    "🔥 BEST",
+    "Ciao 💪 Mario",
+    "",
+    "👀 ALTERNATIVE",
+    "Come lavori?",
+    "",
+    "🎯 DIRECT",
+    "Da 800 €.",
+  ].join("\n");
+  const pre = (block: string) => ({
+    type: "pre",
+    offset: text.indexOf(block),
+    length: block.length,
+  });
+
+  const tap = (fields: Record<string, unknown>) => ({
+    update_id: 200,
+    callback_query: {
+      id: "4382bfdwdsb323b2d9",
+      from: { id: 42, is_bot: false, first_name: "Alex" },
+      chat_instance: "-123456789",
+      data: "1:nat:R",
+      message: {
+        message_id: 1_001,
+        // The bot sent the message: this is not who tapped.
+        from: { id: 777, is_bot: true, first_name: "Bot" },
+        chat: { id: 42, type: "private" },
+        date: 1_790_400_000,
+        text,
+        entities: [
+          { type: "bold", offset: 0, length: 12 },
+          pre("Da 800 €."),
+          pre("Ciao 💪 Mario"),
+          pre("Come lavori?"),
+        ],
+      },
+      ...fields,
+    },
+  });
+
+  it("reads who tapped which button under which message", () => {
+    expect(parseUpdate(tap({}))).toStrictEqual({
+      ok: true,
+      value: {
+        type: "CALLBACK",
+        updateId: 200,
+        callback: {
+          queryId: "4382bfdwdsb323b2d9",
+          senderId: 42,
+          message: {
+            chatId: 42,
+            chatType: "private",
+            messageId: 1_001,
+            suggestions: ["Ciao 💪 Mario", "Come lavori?", "Da 800 €."],
+          },
+          press: { action: "NATURAL", kind: "REPLIES" },
+        },
+      },
+    });
+  });
+
+  it("reads a message that can no longer be accessed", () => {
+    expect(
+      parseUpdate(
+        tap({
+          message: {
+            message_id: 1_001,
+            chat: { id: 42, type: "private" },
+            date: 0,
+          },
+        }),
+      ),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        callback: {
+          message: { messageId: 1_001, suggestions: [] },
+          press: { action: "NATURAL" },
+        },
+      },
+    });
+  });
+
+  it("drops blocks beyond the text", () => {
+    expect(
+      parseUpdate(
+        tap({
+          message: {
+            message_id: 1_001,
+            chat: { id: 42, type: "private" },
+            date: 1_790_400_000,
+            text: "corto",
+            entities: [{ type: "pre", offset: 2, length: 10 }],
+          },
+        }),
+      ),
+    ).toMatchObject({
+      ok: true,
+      value: { callback: { message: { suggestions: [] } } },
+    });
+  });
+
+  it("reads taps without a message or with unknown data", () => {
+    expect(
+      parseUpdate(tap({ message: undefined, data: "2:more:F" })),
+    ).toMatchObject({
+      ok: true,
+      value: { callback: { message: null, press: null } },
+    });
+  });
+
+  it("rejects taps without who tapped", () => {
+    expect(parseUpdate(tap({ from: undefined }))).toMatchObject({
+      ok: false,
+      error: { type: "INVALID_UPDATE" },
     });
   });
 });

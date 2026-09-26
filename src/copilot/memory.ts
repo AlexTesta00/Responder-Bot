@@ -6,6 +6,8 @@ import type { GenerationLog, GenerationRun } from "../ai/runs.ts";
 import {
   activityOf,
   transition,
+  unansweredMessages,
+  type Pause,
   type Transition,
 } from "../conversations/transition.ts";
 import {
@@ -17,6 +19,47 @@ import {
 import type { ProspectStore } from "../prospects/store.ts";
 import { errorFields } from "../shared/errors.ts";
 import type { Logger } from "../shared/logger.ts";
+
+/** How Alex said which prospect a text or a button is about. */
+export type ProspectReference =
+  /** The @username written on the first line. */
+  | Readonly<{ type: "USERNAME"; username: string }>
+  /** A reply to, or a button under, a message the bot sent about them. */
+  | Readonly<{ type: "REPLY"; chatId: number; messageId: number }>;
+
+export type Resolved =
+  | Readonly<{ type: "FOUND"; username: string }>
+  | Readonly<{ type: "UNKNOWN" }>
+  | Readonly<{ type: "UNAVAILABLE" }>;
+
+/**
+ * The prospect a reference leads to. A message of the bot leads to the
+ * prospect it was linked to, never to a guess.
+ */
+export const resolveReference = async (
+  prospects: ProspectStore,
+  reference: ProspectReference | null,
+  log: Logger,
+): Promise<Resolved> => {
+  if (reference === null) {
+    return { type: "UNKNOWN" };
+  }
+  if (reference.type === "USERNAME") {
+    return { type: "FOUND", username: reference.username };
+  }
+  try {
+    const username = await prospects.prospectOfMessage(
+      reference.chatId,
+      reference.messageId,
+    );
+    return username === null
+      ? { type: "UNKNOWN" }
+      : { type: "FOUND", username };
+  } catch (error) {
+    log.error(errorFields(error), "prospect of the reply unavailable");
+    return { type: "UNAVAILABLE" };
+  }
+};
 
 export type NotSavedReason =
   /** No username is visible, so there is no telling who the prospect is. */
@@ -62,6 +105,8 @@ export const logGeneration = <T>(
     input_tokens: report.inputTokens,
     output_tokens: report.outputTokens,
     cache_read_tokens: report.cacheReadTokens,
+    cache_write_tokens: report.cacheWriteTokens,
+    cost_micro_usd: report.costMicroUsd,
     stop_reason: report.stopReason,
   };
   if (result.ok) {
@@ -90,6 +135,25 @@ export const conversationMove = (
     return transition(previous, observation.conversation, activity);
   }
   return previous === null ? null : transition(previous, previous, activity);
+};
+
+/**
+ * Why no message should be suggested now, from the memory alone: the same
+ * transition rules as an analysis that observed nothing new. `assumedSent`
+ * counts a message Alex says was sent and the memory does not show yet, as
+ * when asking for follow-ups: never more permissive than the memory.
+ */
+export const pauseOf = (
+  memory: ProspectMemory,
+  assumedSent: 0 | 1,
+): Pause | null => {
+  const previous = memory.prospect.conversation;
+  return previous === null
+    ? null
+    : transition(previous, previous, {
+        newProspectMessages: 0,
+        unansweredMessages: unansweredMessages(memory.messages) + assumedSent,
+      }).pause;
 };
 
 /** The observation with the state the transition rules decided. */

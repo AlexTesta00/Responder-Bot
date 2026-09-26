@@ -1,12 +1,22 @@
 import type { AiError } from "../ai/engine.ts";
+import type { SuggestionKind } from "../ai/outputs.ts";
+import type { SpendingLedger } from "../ai/spending.ts";
 import type {
-  ProspectReference,
-  ReplyToConversation,
-} from "../copilot/conversation.ts";
+  ButtonAction,
+  ButtonAnswer,
+  ButtonPress,
+  PressButton,
+} from "../copilot/buttons.ts";
+import type { ReplyToConversation } from "../copilot/conversation.ts";
+import type { ProspectReference } from "../copilot/memory.ts";
 import type { AnalyzeScreenshots } from "../copilot/screenshots.ts";
 import type { ProspectStore } from "../prospects/store.ts";
 import { errorFields } from "../shared/errors.ts";
-import { classifyText, type Input } from "../inputs/classify.ts";
+import {
+  classifyText,
+  type CreditRequest,
+  type Input,
+} from "../inputs/classify.ts";
 import {
   withDownloadedImages,
   type DownloadImage,
@@ -15,21 +25,49 @@ import {
 import type { Logger } from "../shared/logger.ts";
 import type { Result } from "../shared/result.ts";
 import {
+  BUSY_NOTICE,
+  EXPIRED_BUTTON_NOTICE,
+  MEMORY_UNAVAILABLE_REPLY,
+  NOT_LINKED_REPLY,
+  pressNotice,
+} from "./button-replies.ts";
+import {
+  isKeyboardRejection,
   isRetryable,
+  type SendOptions,
   type TelegramClient,
   type TelegramError,
 } from "./client.ts";
+import {
+  costLine,
+  creditSetReply,
+  INVALID_CREDIT_REPLY,
+  SPENDING_UNAVAILABLE_REPLY,
+  spendingReport,
+} from "./costs.ts";
 import type { TelegramChatId, TelegramUserId } from "./ids.ts";
+import type { InFlight } from "./in-flight.ts";
 import { createMediaGroupCollector, type Schedule } from "./media-group.ts";
 import type { ProcessedUpdates } from "./processed-updates.ts";
-import { imageProblemReply, replyTo, type InstantInput } from "./replies.ts";
+import { prospectCard } from "./prospect-card.ts";
+import { imageProblemReply, replyTo } from "./replies.ts";
 import {
   aiProblemReply,
-  conversationMessages,
+  conversationAnswer,
   escapeHtml,
-  screenshotsMessages,
+  newSuggestionsAnswer,
+  pauseAnswer,
+  plainMessage,
+  screenshotsAnswer,
+  type Footer,
+  type Presented,
 } from "./suggestions.ts";
-import type { IncomingUpdate, MessageContent } from "./update.ts";
+import type {
+  IncomingCallback,
+  IncomingUpdate,
+  MessageContent,
+  TappedBotMessage,
+} from "./update.ts";
 
 /** How long to wait for more photos of an album before answering. */
 export const ALBUM_QUIET_MS = 2_000;
@@ -41,20 +79,34 @@ const ALBUM_MAX_ITEMS = 10;
 export const TYPING_REFRESH_MS = 4_000;
 
 /** Inputs answered by the AI engine, which takes too long to wait for. */
-export type AiInput = Exclude<Input, InstantInput>;
+export type AiInput = Extract<
+  Input,
+  Readonly<{ type: "SCREENSHOTS" | "TEXT" }>
+>;
+
+/** Inputs answered while Telegram waits, the instant ones and the credit. */
+export type RepliedInput = Exclude<Input, AiInput>;
 
 export type IgnoredReason =
   | "UNSUPPORTED_UPDATE"
   | "NOT_PRIVATE_CHAT"
   | "UNAUTHORIZED_SENDER"
-  | "DUPLICATE";
+  | "DUPLICATE"
+  /** A button that is not under a message of a chat. */
+  | "NO_BUTTON_MESSAGE"
+  /** A button whose data the bot does not know, such as an older one. */
+  | "INVALID_BUTTON"
+  /** A second tap while the first one is still being answered. */
+  | "BUSY";
 
 export type UpdateOutcome =
-  | Readonly<{ type: "REPLIED"; input: InstantInput["type"] }>
+  | Readonly<{ type: "REPLIED"; input: RepliedInput["type"] }>
   /** Handed to the AI engine: the answer follows in the background. */
   | Readonly<{ type: "ACCEPTED"; input: AiInput["type"] }>
   /** An album photo, answered together with the rest of its album. */
   | Readonly<{ type: "COLLECTED" }>
+  /** A button tap: the answer follows in the background. */
+  | Readonly<{ type: "PRESSED"; button: ButtonAction; kind: SuggestionKind }>
   | Readonly<{ type: "IGNORED"; reason: IgnoredReason }>
   | Readonly<{ type: "FAILED"; retryable: boolean; error: TelegramError }>;
 
@@ -73,8 +125,17 @@ export type UpdateHandlerDependencies = Readonly<{
   analyzeScreenshots: AnalyzeScreenshots;
   /** A pasted conversation, with the memory of the prospect Alex named. */
   replyToConversation: ReplyToConversation;
+  /** A button under an answer, answered from the prospect's memory. */
+  pressButton: PressButton;
+  answerCallbackQuery: TelegramClient["answerCallbackQuery"];
+  /** The buttons being answered, to answer a double tap once. */
+  inFlight: InFlight;
   /** Remembers which prospect the messages of the bot are about. */
   linkMessages: ProspectStore["linkMessages"];
+  /** What the analyses cost, and the credit Alex set. */
+  spending: SpendingLedger;
+  /** The monthly spend limit set on the Console, in millionths of a dollar. */
+  monthlyLimitMicroUsd: number | null;
   schedule: Schedule;
 }>;
 
@@ -136,7 +197,12 @@ export const createUpdateHandler = ({
   downloadImage,
   analyzeScreenshots,
   replyToConversation,
+  pressButton,
+  answerCallbackQuery,
+  inFlight,
   linkMessages,
+  spending,
+  monthlyLimitMicroUsd,
   schedule,
 }: UpdateHandlerDependencies): UpdateHandler => {
   // The AI engine answers after Telegram has been acknowledged, so its
@@ -169,61 +235,132 @@ export const createUpdateHandler = ({
   };
 
   /**
-   * Sends HTML messages in order, stopping at the first one that fails,
-   * and returns the ids of those sent.
+   * What an answer cost and what is left, under the answer. Without the
+   * month and the credit, the line still tells what the answer cost.
    */
-  const deliver = async (
-    chatId: TelegramChatId,
-    messages: readonly string[],
+  const costFooter = async (
+    costMicroUsd: number | null,
     log: Logger,
-  ): Promise<readonly number[]> => {
-    const sent: number[] = [];
-    for (const [index, text] of messages.entries()) {
-      const delivery = await sendMessage(chatId, text, "HTML");
-      if (!delivery.ok) {
-        log.error(
-          {
-            message_index: index,
-            messages: messages.length,
-            error_type: delivery.error.type,
-            telegram_error: delivery.error,
-          },
-          "reply not delivered",
-        );
-        break;
-      }
-      sent.push(delivery.value.messageId);
+  ): Promise<Footer> => {
+    const current = await spending.spending().catch((error: unknown) => {
+      log.warn(errorFields(error), "spending unavailable");
+      return null;
+    });
+    return costLine({
+      costMicroUsd,
+      spending: current,
+      monthlyLimitMicroUsd,
+    });
+  };
+
+  /** The reply to /credito: sets the credit if asked, then reports. */
+  const creditReply = async (
+    request: CreditRequest,
+    log: Logger,
+  ): Promise<string> => {
+    if (request.type === "INVALID") {
+      return escapeHtml(INVALID_CREDIT_REPLY);
     }
-    return sent;
+    try {
+      if (request.type === "SET") {
+        await spending.setCredit(request.amountMicroUsd);
+        log.info({}, "credit set");
+      }
+      const report = spendingReport(
+        await spending.spending(),
+        monthlyLimitMicroUsd,
+      );
+      return request.type === "SET"
+        ? `${creditSetReply(request.amountMicroUsd)}\n\n${report}`
+        : report;
+    } catch (error) {
+      log.error(errorFields(error), "spending unavailable");
+      return escapeHtml(SPENDING_UNAVAILABLE_REPLY);
+    }
   };
 
   /**
-   * Delivers an answer about a prospect, then links its messages to them:
-   * replying to any of these messages continues that prospect's conversation.
+   * Sends an HTML message, in reply to `replyTo` if given, and returns its
+   * id. When Telegram refuses its buttons, the text still arrives, without
+   * them.
    */
-  const deliverAnswer = async <T>(
+  const deliver = async (
     chatId: TelegramChatId,
-    result: Result<T, AiError>,
-    present: (value: T) => readonly string[],
+    { html, keyboard }: Presented,
+    log: Logger,
+    replyTo?: number,
+  ): Promise<number | null> => {
+    const options: SendOptions =
+      replyTo === undefined
+        ? { parseMode: "HTML" }
+        : { parseMode: "HTML", replyTo };
+    const first = await sendMessage(
+      chatId,
+      html,
+      keyboard === null ? options : { ...options, keyboard },
+    );
+    const refused =
+      !first.ok && keyboard !== null && isKeyboardRejection(first.error);
+    if (refused) {
+      log.warn(
+        { telegram_error: first.error },
+        "keyboard rejected, answer resent without buttons",
+      );
+    }
+    const delivery = refused ? await sendMessage(chatId, html, options) : first;
+    if (!delivery.ok) {
+      log.error(
+        { error_type: delivery.error.type, telegram_error: delivery.error },
+        "reply not delivered",
+      );
+      return null;
+    }
+    return delivery.value.messageId;
+  };
+
+  /**
+   * Delivers a message about a prospect, then links it to them: replying to
+   * it, or tapping its buttons, continues with that prospect.
+   */
+  const deliverLinked = async (
+    chatId: TelegramChatId,
+    presented: Presented,
     prospectId: string | null,
     log: Logger,
+    replyTo?: number,
   ): Promise<void> => {
-    const sent = await deliver(
-      chatId,
-      result.ok
-        ? present(result.value)
-        : [escapeHtml(aiProblemReply(result.error))],
-      log,
-    );
-    if (prospectId === null || sent.length === 0) {
+    const sent = await deliver(chatId, presented, log, replyTo);
+    if (prospectId === null || sent === null) {
       return;
     }
     try {
-      await linkMessages(prospectId, chatId, sent);
+      await linkMessages(prospectId, chatId, [sent]);
     } catch (error) {
-      // The answer arrived: only replying to it loses the prospect.
+      // The message arrived: only replying to it loses the prospect.
       log.warn(errorFields(error), "bot messages not linked to the prospect");
     }
+  };
+
+  /** Delivers the answer of an analysis, linked to its prospect. */
+  const deliverAnswer = async <T>(
+    chatId: TelegramChatId,
+    result: Result<T, AiError>,
+    present: (value: T, footer: Footer) => Presented,
+    answer: Readonly<{
+      prospectId: string | null;
+      costMicroUsd: number | null;
+    }>,
+    log: Logger,
+  ): Promise<void> => {
+    const footer = await costFooter(answer.costMicroUsd, log);
+    await deliverLinked(
+      chatId,
+      result.ok
+        ? present(result.value, footer)
+        : plainMessage(aiProblemReply(result.error), footer),
+      answer.prospectId,
+      log,
+    );
   };
 
   const answerScreenshots = async (
@@ -241,7 +378,7 @@ export const createUpdateHandler = ({
       log.warn({ image_problem: analyzed.error }, "screenshots not processed");
       await deliver(
         chatId,
-        [escapeHtml(imageProblemReply(analyzed.error))],
+        plainMessage(imageProblemReply(analyzed.error)),
         log,
       );
       return;
@@ -250,8 +387,14 @@ export const createUpdateHandler = ({
     await deliverAnswer(
       chatId,
       generation.result,
-      (analysis) => screenshotsMessages(analysis, memory, pause),
-      prospectId,
+      (analysis, footer) =>
+        screenshotsAnswer(analysis, {
+          memory,
+          pause,
+          linked: prospectId !== null,
+          footer,
+        }),
+      analyzed.value,
       log,
     );
   };
@@ -262,17 +405,182 @@ export const createUpdateHandler = ({
     reference: ProspectReference | null,
     log: Logger,
   ): Promise<void> => {
-    const { generation, memory, pause, prospectId } = await whileTyping(
-      chatId,
-      () => replyToConversation(text, reference, log),
+    const answer = await whileTyping(chatId, () =>
+      replyToConversation(text, reference, log),
     );
+    const { generation, username, memory, pause, prospectId } = answer;
     await deliverAnswer(
       chatId,
       generation.result,
-      (reply) => conversationMessages(reply, memory, pause),
-      prospectId,
+      (reply, footer) =>
+        conversationAnswer(reply, username, {
+          memory,
+          pause,
+          linked: prospectId !== null,
+          footer,
+        }),
+      answer,
       log,
     );
+  };
+
+  /** The message that answers a tap, in reply to the tapped message. */
+  const deliverPressAnswer = async (
+    tapped: TappedBotMessage,
+    press: ButtonPress,
+    answer: ButtonAnswer,
+    log: Logger,
+  ): Promise<void> => {
+    const { chatId, messageId } = tapped;
+    switch (answer.type) {
+      case "SUGGESTED": {
+        const { result } = answer.generation;
+        const footer = await costFooter(answer.costMicroUsd, log);
+        await deliverLinked(
+          chatId,
+          result.ok
+            ? newSuggestionsAnswer(
+                result.value,
+                {
+                  action: answer.action,
+                  kind: answer.kind,
+                  username: answer.username,
+                  upgraded: answer.upgraded,
+                  previousLost: answer.previousLost,
+                },
+                footer,
+              )
+            : plainMessage(aiProblemReply(result.error), footer),
+          answer.prospectId,
+          log,
+          messageId,
+        );
+        return;
+      }
+      case "PAUSED":
+        await deliverLinked(
+          chatId,
+          pauseAnswer(answer.pause, press.kind),
+          answer.prospectId,
+          log,
+          messageId,
+        );
+        return;
+      case "CARD":
+        await deliverLinked(
+          chatId,
+          {
+            html: prospectCard(answer.memory, answer.history, answer.pause),
+            keyboard: null,
+          },
+          answer.memory.prospect.id,
+          log,
+          messageId,
+        );
+        return;
+      case "NOT_LINKED":
+        await deliver(chatId, plainMessage(NOT_LINKED_REPLY), log, messageId);
+        return;
+      case "UNAVAILABLE":
+        await deliver(
+          chatId,
+          plainMessage(MEMORY_UNAVAILABLE_REPLY),
+          log,
+          messageId,
+        );
+        return;
+    }
+  };
+
+  /** Stops the loading indicator of a button, with a notice if any. */
+  const acknowledge = async (
+    queryId: string,
+    notice: string | undefined,
+    log: Logger,
+  ): Promise<void> => {
+    const answered = await answerCallbackQuery(queryId, notice);
+    if (!answered.ok) {
+      // The indicator stops by itself: the tap is still answered.
+      log.warn(
+        {
+          error_type: answered.error.type,
+          telegram_error: answered.error,
+        },
+        "button tap not acknowledged",
+      );
+    }
+  };
+
+  /**
+   * Answers a tap: acknowledged at once, before reading the memory or
+   * calling the AI, then answered with a new message.
+   */
+  const answerPress = async (
+    queryId: string,
+    tapped: TappedBotMessage,
+    press: ButtonPress,
+    key: string,
+    log: Logger,
+  ): Promise<void> => {
+    try {
+      await acknowledge(queryId, pressNotice(press.action), log);
+      const request = {
+        chatId: tapped.chatId,
+        messageId: tapped.messageId,
+        suggestions: tapped.suggestions,
+      };
+      // What the bot remembers is shown at once; writing takes a while.
+      const answer =
+        press.action === "ANALYZE"
+          ? await pressButton(press, request, log)
+          : await whileTyping(tapped.chatId, () =>
+              pressButton(press, request, log),
+            );
+      log.info(
+        {
+          button: press.action,
+          kind: press.kind,
+          response: answer.type,
+          ...(answer.type === "PAUSED" ? { pause: answer.pause } : {}),
+        },
+        "button handled",
+      );
+      await deliverPressAnswer(tapped, press, answer, log);
+    } finally {
+      inFlight.finish(key);
+    }
+  };
+
+  /** What can be decided about a tap without waiting for anything. */
+  const handleCallback = (
+    updateId: number,
+    { queryId, senderId, message, press }: IncomingCallback,
+    log: Logger,
+  ): UpdateOutcome => {
+    if (message === null) {
+      return ignored("NO_BUTTON_MESSAGE");
+    }
+    if (message.chatType !== "private") {
+      return ignored("NOT_PRIVATE_CHAT");
+    }
+    if (!isAuthorizedUser(allowedUserId, senderId)) {
+      return ignored("UNAUTHORIZED_SENDER");
+    }
+    // A tap is never released for a retry: each one may pay for the AI.
+    if (!processedUpdates.claim(updateId)) {
+      return ignored("DUPLICATE");
+    }
+    if (press === null) {
+      runInBackground(acknowledge(queryId, EXPIRED_BUTTON_NOTICE, log), log);
+      return ignored("INVALID_BUTTON");
+    }
+    const key = `${String(message.chatId)}:${String(message.messageId)}`;
+    if (!inFlight.start(key)) {
+      runInBackground(acknowledge(queryId, BUSY_NOTICE, log), log);
+      return ignored("BUSY");
+    }
+    runInBackground(answerPress(queryId, message, press, key, log), log);
+    return { type: "PRESSED", button: press.action, kind: press.kind };
   };
 
   const albums = createMediaGroupCollector<AlbumPhoto>({
@@ -305,6 +613,9 @@ export const createUpdateHandler = ({
   return async (update, log) => {
     if (update.type === "UNSUPPORTED") {
       return ignored("UNSUPPORTED_UPDATE");
+    }
+    if (update.type === "CALLBACK") {
+      return handleCallback(update.updateId, update.callback, log);
     }
 
     const { message } = update;
@@ -355,7 +666,12 @@ export const createUpdateHandler = ({
       return { type: "ACCEPTED", input: input.type };
     }
 
-    const sent = await sendMessage(chatId, replyTo(input));
+    const sent =
+      input.type === "CREDIT"
+        ? await sendMessage(chatId, await creditReply(input.request, log), {
+            parseMode: "HTML",
+          })
+        : await sendMessage(chatId, replyTo(input));
     if (sent.ok) {
       return { type: "REPLIED", input: input.type };
     }

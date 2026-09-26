@@ -3,11 +3,10 @@
 // remember.
 import type { AiEngine, Generation } from "../ai/engine.ts";
 import type { ConversationReply } from "../ai/outputs.ts";
-import { runOf, type GenerationLog } from "../ai/runs.ts";
+import { runOf, totalCost, type GenerationLog } from "../ai/runs.ts";
 import type { Pause } from "../conversations/transition.ts";
 import type { Observation } from "../prospects/memory.ts";
 import type { ProspectStore } from "../prospects/store.ts";
-import { errorFields } from "../shared/errors.ts";
 import type { Logger } from "../shared/logger.ts";
 import {
   conversationMove,
@@ -15,26 +14,26 @@ import {
   logGeneration,
   moved,
   notSaved,
+  resolveReference,
   type Loaded,
   type MemoryOutcome,
+  type ProspectReference,
+  type Resolved,
   type Stored,
 } from "./memory.ts";
 
-/** How Alex said whose conversation it is. */
-export type ProspectReference =
-  /** The @username written on the first line. */
-  | Readonly<{ type: "USERNAME"; username: string }>
-  /** A reply to a message the bot sent about the prospect. */
-  | Readonly<{ type: "REPLY"; chatId: number; messageId: number }>;
-
 export type ConversationAnswer = Readonly<{
   generation: Generation<ConversationReply>;
+  /** The prospect Alex named, when the reference led to one. */
+  username: string | null;
   /** Null when the generation failed: there is nothing to remember. */
   memory: MemoryOutcome | null;
   /** Why no message should be suggested now, whatever the analysis wrote. */
   pause: Pause | null;
   /** The prospect the answer is about, when known. */
   prospectId: string | null;
+  /** Estimated cost of the generation, in millionths of a dollar. */
+  costMicroUsd: number | null;
 }>;
 
 export type ReplyToConversation = (
@@ -48,11 +47,6 @@ export type ConversationDependencies = Readonly<{
   prospects: ProspectStore;
   generations: GenerationLog;
 }>;
-
-type Resolved =
-  | Readonly<{ type: "FOUND"; username: string }>
-  | Readonly<{ type: "UNKNOWN" }>
-  | Readonly<{ type: "UNAVAILABLE" }>;
 
 const observationOf = (reply: ConversationReply): Observation => ({
   displayName: null,
@@ -77,30 +71,6 @@ export const createConversationAnalyst = ({
   generations,
 }: ConversationDependencies): ReplyToConversation => {
   const steps = createMemorySteps({ prospects, generations });
-
-  const resolve = async (
-    reference: ProspectReference | null,
-    log: Logger,
-  ): Promise<Resolved> => {
-    if (reference === null) {
-      return { type: "UNKNOWN" };
-    }
-    if (reference.type === "USERNAME") {
-      return { type: "FOUND", username: reference.username };
-    }
-    try {
-      const username = await prospects.prospectOfMessage(
-        reference.chatId,
-        reference.messageId,
-      );
-      return username === null
-        ? { type: "UNKNOWN" }
-        : { type: "FOUND", username };
-    } catch (error) {
-      log.error(errorFields(error), "prospect of the reply unavailable");
-      return { type: "UNAVAILABLE" };
-    }
-  };
 
   const loadResolved = async (
     resolved: Resolved,
@@ -141,7 +111,7 @@ export const createConversationAnalyst = ({
   };
 
   return async (text, reference, log) => {
-    const resolved = await resolve(reference, log);
+    const resolved = await resolveReference(prospects, reference, log);
     const loaded = await loadResolved(resolved, log);
 
     const generation = await ai.replyToConversation(
@@ -162,12 +132,15 @@ export const createConversationAnalyst = ({
         )
       : { outcome: null, prospectId: knownId, pause: null };
 
-    await steps.record([runOf(generation, answer.prospectId)], log);
+    const runs = [runOf(generation, answer.prospectId)];
+    await steps.record(runs, log);
     return {
       generation,
+      username: resolved.type === "FOUND" ? resolved.username : null,
       memory: answer.outcome,
       pause: answer.pause,
       prospectId: answer.prospectId,
+      costMicroUsd: totalCost(runs),
     };
   };
 };

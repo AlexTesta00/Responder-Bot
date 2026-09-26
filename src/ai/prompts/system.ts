@@ -22,13 +22,13 @@ export const SYSTEM_POLICY = layer("system-policy", 2, [
 ]);
 
 /** How the messages Alex sends should sound. */
-export const COMMUNICATION_PRINCIPLES = layer("communication-principles", 2, [
+export const COMMUNICATION_PRINCIPLES = layer("communication-principles", 3, [
   "How good messages sound:",
   '- They read as if Alex typed them on a phone: Italian, informal "tu", short sentences, no corporate language, no lists, no hashtags. Use at most one emoji, and only when it fits naturally.',
   "- Each message has exactly one micro-goal, such as getting a reply, understanding how they work today or proposing a call. Never pack presentation, problem, solution, portfolio, price and call into one message.",
   "- They are specific to this prospect and refer to something real from the material. A generic message that could be sent to anyone is useless.",
   '- When they say what Alex does, they name the service that fits this prospect in plain words, such as "mi occupo di siti con prenotazione online", rather than a generic "faccio siti web". Phrasings such as "mi occupo di…", "sviluppo…" or "sono web developer" work well.',
-  "- They are brief: a first message is one or two sentences, and a reply rarely needs more than three. Say little when little is enough.",
+  "- They are brief: a first message is one or two sentences, and a reply rarely needs more than three. Say little when little is enough. Each message stays within 250 characters, so that Alex can copy it with one tap.",
   "- They never pressure, never exaggerate and never invent results, prices, clients or deadlines.",
   "- They are ready to send: no quotation marks around them, no labels, no placeholders such as [nome].",
   "- If the prospect writes in another language, the messages use that language.",

@@ -3,7 +3,7 @@
 // conversation on and remember.
 import type { AiEngine, Generation } from "../ai/engine.ts";
 import type { ScreenshotsAnalysis } from "../ai/outputs.ts";
-import { runOf, type GenerationLog } from "../ai/runs.ts";
+import { runOf, totalCost, type GenerationLog } from "../ai/runs.ts";
 import type { Pause } from "../conversations/transition.ts";
 import type { DownloadedImage } from "../inputs/images.ts";
 import type { Observation } from "../prospects/memory.ts";
@@ -28,6 +28,8 @@ export type ScreenshotsAnswer = Readonly<{
   pause: Pause | null;
   /** The prospect the answer is about, when known. */
   prospectId: string | null;
+  /** Estimated cost of the generations, in millionths of a dollar. */
+  costMicroUsd: number | null;
 }>;
 
 export type AnalyzeScreenshots = (
@@ -142,18 +144,17 @@ export const createScreenshotsAnalyst = ({
         ? { outcome: null, prospectId: knownId, pause: null }
         : await rememberAnalysis(recognized, loaded, analysis, log);
 
-    await steps.record(
-      [
-        runOf(identity, answer.prospectId),
-        runOf(generation, answer.prospectId),
-      ],
-      log,
-    );
+    const runs = [
+      runOf(identity, answer.prospectId),
+      runOf(generation, answer.prospectId),
+    ];
+    await steps.record(runs, log);
     return {
       generation,
       memory: answer.outcome,
       pause: answer.pause,
       prospectId: answer.prospectId,
+      costMicroUsd: totalCost(runs),
     };
   };
 };

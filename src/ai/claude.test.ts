@@ -9,6 +9,7 @@ import { FIRST_MESSAGE_TASK } from "./prompts/first-message.ts";
 import { promptSignature } from "./prompts/layer.ts";
 import {
   conversationRequest,
+  newSuggestionsRequest,
   PROMPT_LAYERS,
   PROSPECT_IDENTITY_REQUEST,
   screenshotsRequest,
@@ -56,24 +57,33 @@ const json = (status: number, body: unknown): Promise<Response> =>
     }),
   );
 
+const USAGE = {
+  input_tokens: 1_200,
+  output_tokens: 300,
+  cache_read_input_tokens: 800,
+  cache_creation_input_tokens: 0,
+};
+
 const message = ({
   text = JSON.stringify(profileOutput),
   stopReason = "end_turn",
-}: Readonly<{ text?: string; stopReason?: string }> = {}): Promise<Response> =>
+  model = "claude-opus-5",
+  usage = USAGE,
+}: Readonly<{
+  text?: string;
+  stopReason?: string;
+  model?: string;
+  usage?: Record<string, unknown>;
+}> = {}): Promise<Response> =>
   json(200, {
     id: "msg_test",
     type: "message",
     role: "assistant",
-    model: "claude-opus-5",
+    model,
     content: [{ type: "text", text }],
     stop_reason: stopReason,
     stop_sequence: null,
-    usage: {
-      input_tokens: 1_200,
-      output_tokens: 300,
-      cache_read_input_tokens: 800,
-      cache_creation_input_tokens: 0,
-    },
+    usage,
   });
 
 const apiError = (status: number, type: string): Promise<Response> =>
@@ -106,6 +116,24 @@ const setup = (respond: () => Promise<Response> = () => message()) => {
 
 const systemTextOf = (request: RecordedRequest | undefined): string =>
   JSON.stringify(request?.body);
+
+const MEMORY: ProspectMemory = {
+  prospect: {
+    id: "prospect-1",
+    username: "mariofit",
+    displayName: "Mario",
+    businessType: "personal trainer",
+    facts: [],
+    hypotheses: [],
+    conversation: null,
+    summary: "Primo messaggio inviato, nessuna risposta.",
+    objections: ["Teme che un sito costi troppo."],
+    commitments: [{ by: "ALEX", text: "Mandargli un esempio." }],
+    createdAt: new Date("2026-09-20T10:00:00Z"),
+    updatedAt: new Date("2026-09-20T10:00:00Z"),
+  },
+  messages: [{ author: "ALEX", text: "Ciao Mario!" }],
+};
 
 describe("createClaudeEngine", () => {
   it("asks Claude to analyze screenshots with the versioned instructions", async () => {
@@ -158,23 +186,7 @@ describe("createClaudeEngine", () => {
 
   it("sends what the bot remembers about the prospect", async () => {
     const { engine, requests } = setup();
-    const memory: ProspectMemory = {
-      prospect: {
-        id: "prospect-1",
-        username: "mariofit",
-        displayName: "Mario",
-        businessType: "personal trainer",
-        facts: [],
-        hypotheses: [],
-        conversation: null,
-        summary: "Primo messaggio inviato, nessuna risposta.",
-        objections: ["Teme che un sito costi troppo."],
-        commitments: [{ by: "ALEX", text: "Mandargli un esempio." }],
-        createdAt: new Date("2026-09-20T10:00:00Z"),
-        updatedAt: new Date("2026-09-20T10:00:00Z"),
-      },
-      messages: [{ author: "ALEX", text: "Ciao Mario!" }],
-    };
+    const memory = MEMORY;
 
     await engine.analyzeScreenshots(
       [{ format: "image/png", bytes: PNG }],
@@ -216,7 +228,183 @@ describe("createClaudeEngine", () => {
       inputTokens: 1_200,
       outputTokens: 300,
       cacheReadTokens: 800,
+      cacheWriteTokens: 0,
+      // 1200×5 + 300×25 + 800×0.5 millionths of a dollar on Opus 5.
+      costMicroUsd: 13_900,
       stopReason: "end_turn",
+    });
+  });
+
+  it("estimates the cost of the prompt cache writes", async () => {
+    const { engine } = setup(() =>
+      message({
+        usage: {
+          ...USAGE,
+          cache_creation_input_tokens: 3_000,
+          cache_creation: {
+            ephemeral_5m_input_tokens: 2_000,
+            ephemeral_1h_input_tokens: 1_000,
+          },
+        },
+      }),
+    );
+
+    const { report } = await engine.analyzeScreenshots([], null, null);
+
+    expect(report).toMatchObject({
+      cacheWriteTokens: 3_000,
+      // 13900 + 2000×6.25 + 1000×10
+      costMicroUsd: 36_400,
+    });
+  });
+
+  it("prices both the declined attempt and the fallback model", async () => {
+    const iteration = {
+      cache_creation: null,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      input_tokens: 1_000,
+      output_tokens: 100,
+    };
+    const { engine } = setup(() =>
+      message({
+        model: "claude-sonnet-5",
+        usage: {
+          ...USAGE,
+          iterations: [
+            { ...iteration, type: "message", model: null },
+            {
+              ...iteration,
+              type: "fallback_message",
+              model: "claude-sonnet-5",
+            },
+          ],
+        },
+      }),
+    );
+
+    const { report } = await engine.analyzeScreenshots([], null, null);
+
+    // Opus 5 for the refusal (1000×5 + 100×25), then Sonnet 5 (1000×2 + 100×10).
+    expect(report).toMatchObject({
+      model: "claude-sonnet-5",
+      costMicroUsd: 10_500,
+    });
+  });
+
+  it("writes new suggestions from the memory, with less reasoning", async () => {
+    const { engine, requests } = setup(() =>
+      message({
+        text: JSON.stringify({
+          first_messages: null,
+          replies: {
+            best: "Ti mando un esempio?",
+            alternative: "Come lavori oggi?",
+            direct: "Ti preparo un preventivo?",
+          },
+          note: null,
+        }),
+      }),
+    );
+    const request = {
+      action: "MORE",
+      kind: "REPLIES",
+      previous: [{ style: "BEST", text: "Dipende: cosa ti serve?" }],
+    } as const;
+
+    const generation = await engine.suggestAgain(request, MEMORY);
+
+    expect(generation.result).toMatchObject({
+      ok: true,
+      value: {
+        suggestions: [
+          { style: "BEST", text: "Ti mando un esempio?" },
+          { style: "ALTERNATIVE" },
+          { style: "DIRECT" },
+        ],
+        note: null,
+      },
+    });
+    expect(generation.report).toMatchObject({
+      mode: "NEW_SUGGESTIONS",
+      prompt: promptSignature(PROMPT_LAYERS.NEW_SUGGESTIONS),
+    });
+    const [sent] = requests;
+    expect(sent?.body).toMatchObject({
+      model: "claude-opus-5",
+      max_tokens: 16_000,
+      fallbacks: "default",
+      output_config: { effort: "medium", format: { type: "json_schema" } },
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: newSuggestionsRequest(request, MEMORY, TODAY),
+            },
+          ],
+        },
+      ],
+    });
+    expect(sent?.headers.get("anthropic-beta")).toContain(
+      "server-side-fallback",
+    );
+  });
+
+  it("does not price an attempt declined before writing anything", async () => {
+    const iteration = {
+      cache_creation: null,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      input_tokens: 1_000,
+    };
+    const { engine } = setup(() =>
+      message({
+        model: "claude-sonnet-5",
+        usage: {
+          ...USAGE,
+          iterations: [
+            { ...iteration, type: "message", model: null, output_tokens: 0 },
+            {
+              ...iteration,
+              type: "fallback_message",
+              model: "claude-sonnet-5",
+              output_tokens: 100,
+            },
+          ],
+        },
+      }),
+    );
+
+    const { report } = await engine.analyzeScreenshots([], null, null);
+
+    // Only Sonnet 5: 1000×2 + 100×10.
+    expect(report).toMatchObject({ costMicroUsd: 3_000 });
+  });
+
+  it("does not price a refusal before any output", async () => {
+    const { engine } = setup(() =>
+      message({
+        stopReason: "refusal",
+        usage: { ...USAGE, output_tokens: 0 },
+      }),
+    );
+
+    const { result, report } = await engine.analyzeScreenshots([], null, null);
+
+    expect(result).toStrictEqual({ ok: false, error: { type: "REFUSED" } });
+    expect(report).toMatchObject({ costMicroUsd: 0 });
+  });
+
+  it("does not guess the cost of a model without known prices", async () => {
+    const { engine } = setup(() => message({ model: "claude-future-9" }));
+
+    const { report } = await engine.analyzeScreenshots([], null, null);
+
+    expect(report).toMatchObject({
+      model: "claude-future-9",
+      costMicroUsd: null,
     });
   });
 

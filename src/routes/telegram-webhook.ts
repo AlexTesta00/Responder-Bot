@@ -26,6 +26,17 @@ const isValidSecret = (expected: string, received: unknown): boolean =>
   typeof received === "string" &&
   timingSafeEqual(sha256(expected), sha256(received));
 
+const senderOf = (update: IncomingUpdate): number | null => {
+  switch (update.type) {
+    case "MESSAGE":
+      return update.message.senderId;
+    case "CALLBACK":
+      return update.callback.senderId;
+    case "UNSUPPORTED":
+      return null;
+  }
+};
+
 const logOutcome = (
   log: FastifyBaseLogger,
   update: IncomingUpdate,
@@ -46,17 +57,20 @@ const logOutcome = (
     case "COLLECTED":
       log.info(fields, "telegram update collected into an album");
       return;
+    case "PRESSED":
+      log.info(
+        { ...fields, button: outcome.button, kind: outcome.kind },
+        "telegram button pressed",
+      );
+      return;
     case "IGNORED":
-      if (
-        outcome.reason === "UNAUTHORIZED_SENDER" &&
-        update.type === "MESSAGE"
-      ) {
+      if (outcome.reason === "UNAUTHORIZED_SENDER") {
         // The sender id helps to spot a wrong TELEGRAM_ALLOWED_USER_ID.
         log.warn(
           {
             ...fields,
             reason: outcome.reason,
-            sender_id: update.message.senderId,
+            sender_id: senderOf(update),
           },
           "telegram update ignored",
         );

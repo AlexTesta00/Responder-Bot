@@ -4,8 +4,11 @@ import type { Result } from "../shared/result.ts";
 import type {
   ConversationReply,
   InvalidOutput,
+  NewSuggestions,
   ProspectIdentity,
   ScreenshotsAnalysis,
+  Suggestion,
+  SuggestionKind,
 } from "./outputs.ts";
 import type { PromptMode } from "./prompts/modes.ts";
 
@@ -31,7 +34,29 @@ export type GenerationReport = Readonly<{
   inputTokens: number | null;
   outputTokens: number | null;
   cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  /** Estimated cost in millionths of a dollar, when the prices are known. */
+  costMicroUsd: number | null;
   stopReason: string | null;
+}>;
+
+/** What a button under the suggestions asks for. */
+export type SuggestionAction =
+  /** Three new suggestions of the same kind, for the same goal. */
+  | "MORE"
+  /** The suggestions shown, rewritten to sound more natural. */
+  | "NATURAL"
+  /** The suggestions shown, rewritten to be more direct. */
+  | "DIRECT"
+  /** Alex sent one of them and got no reply: follow-ups. */
+  | "FOLLOW_UP";
+
+export type SuggestionsRequest = Readonly<{
+  action: SuggestionAction;
+  /** The kind of the suggestions to write. */
+  kind: SuggestionKind;
+  /** The suggestions Alex saw, when they could be read back. */
+  previous: readonly Suggestion[];
 }>;
 
 export type Generation<T> = Readonly<{
@@ -56,4 +81,12 @@ export type AiEngine = Readonly<{
     /** What the bot remembers about the prospect, when Alex said who it is. */
     memory: ProspectMemory | null,
   ) => Promise<Generation<ConversationReply>>;
+  /**
+   * New suggestions from a button, written from the memory: only for a
+   * known prospect, whose memory is required.
+   */
+  suggestAgain: (
+    request: SuggestionsRequest,
+    memory: ProspectMemory,
+  ) => Promise<Generation<NewSuggestions>>;
 }>;
