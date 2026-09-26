@@ -2562,7 +2562,7 @@ Il risultato finale deve essere una conversazione che sembra naturale perché na
 Current development phase:
 
 ```text
-Sprint 05 — Prospect Memory
+Sprint 06 — Conversation Manager
 (implemented; pull request to main in review, end-to-end test on the
 deployment that follows the merge)
 ```
@@ -2602,8 +2602,8 @@ an example, a call or a quote. Services: websites, landing pages and
 e-commerce; online bookings and automations; custom software and apps;
 IT support)
 
-Sprint 05 — Prospect Memory: implemented
-(MySQL, the MariaDB included in Hostinger's plans, instead of
+Sprint 05 — Prospect Memory ✅
+(deployed on https://aboutly.site; MySQL, the MariaDB included in Hostinger's plans, instead of
 PostgreSQL, chosen by Alex; Kysely on mysql2 as data-access layer, with
 plain SQL migrations applied at startup. Tables: prospects,
 prospect_messages, generation_runs. With a single Instagram
@@ -2614,12 +2614,24 @@ username before the analysis, so the right memory is loaded; the
 memory of one prospect never enters another's context, a property
 tested explicitly. Pasted conversations name no prospect and have no
 memory yet.)
+
+Sprint 06 — Conversation Manager: implemented
+(objections and promises in memory, kept up to date by each analysis;
+pure transition rules in conversations/transition.ts: DO_NOT_CONTACT
+is final and one kind closing ends a NOT_INTERESTED conversation until
+the prospect writes again, and after 2 follow-ups without a reply, as
+Alex chose, the prospect is GHOSTED and gets no more suggestions;
+history of stage changes; today's date and unanswered messages in the
+context; pasted conversations linked to a prospect by replying to a
+message of the bot or by @username on the first line, as Alex chose.
+The spec's objections/promises/transitions are covered; follow-up
+scheduling and the prospect list are left to the Personal CRM sprint.)
 ```
 
 Next milestone:
 
 ```text
-Sprint 06 — Conversation Manager
+Sprint 07 — Telegram UX
 ```
 
 ## 51. Final project philosophy

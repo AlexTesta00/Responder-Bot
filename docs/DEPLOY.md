@@ -64,6 +64,7 @@ Da fare una volta sola in hPanel.
 3. Su Telegram manda `/start` e `/help` al bot: deve rispondere a entrambi.
 4. Manda uno screenshot del profilo Instagram di un'attività: la chat mostra "sta scrivendo…" e, di solito entro un minuto, arrivano il riepilogo del profilo e tre primi messaggi. Il riepilogo dice «🧠 Nuovo prospect: l'ho salvato in memoria».
 5. Manda un altro screenshot dello stesso prospect: il riepilogo dice «🧠 Già in memoria».
+6. Rispondi a uno dei messaggi del bot su quel prospect incollando il testo di un suo messaggio: anche qui «🧠 Già in memoria», con obiezioni e promesse aperte nel riepilogo.
 
 ## Diagnostica
 
@@ -80,7 +81,9 @@ Da fare una volta sola in hPanel.
   - All'avvio `database ready` elenca in `applied_migrations` le migrazioni appena applicate (vuoto se lo schema era già aggiornato).
   - Se l'app non parte, `database migration failed` riporta il codice dell'errore in `error_code`: `ER_ACCESS_DENIED_ERROR` indica utente o password sbagliati, `ER_BAD_DB_ERROR` un nome del database sbagliato, `ECONNREFUSED` un host o una porta sbagliati (prova `localhost` al posto di `127.0.0.1`).
   - `prospect memory unavailable` o `prospect memory not saved` indicano un errore del database durante un'analisi: il bot risponde comunque, senza storico, e lo segnala nel riepilogo.
-- **phpMyAdmin**, dalla stessa sezione di hPanel, mostra le tabelle `prospects`, `prospect_messages` e `generation_runs`. Per cancellare la memoria di un prospect basta eliminarne la riga in `prospects`: i suoi messaggi vengono eliminati con lei.
+  - `bot messages not linked to the prospect` indica che la risposta è arrivata ma non è stata collegata al prospect: rispondendo a quei messaggi il bot non saprà di chi si tratta. Si può sempre usare @username nella prima riga.
+  - `prospect memory saved` riporta lo `stage` deciso dalle regole di transizione, per esempio `GHOSTED` dopo 2 follow-up senza risposta.
+- **phpMyAdmin**, dalla stessa sezione di hPanel, mostra le tabelle `prospects`, `prospect_messages`, `prospect_stage_changes` (lo storico degli stage), `telegram_messages` (quali messaggi del bot riguardano quale prospect) e `generation_runs`. Per cancellare la memoria di un prospect basta eliminarne la riga in `prospects`: i suoi messaggi vengono eliminati con lei.
 - Se cambi `TELEGRAM_WEBHOOK_SECRET`, aggiornalo sia in hPanel sia nel `.env` locale, poi ripeti `npm run telegram:webhook -- set https://aboutly.site`.
 
 ## Note tecniche
