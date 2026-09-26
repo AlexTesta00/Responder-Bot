@@ -50,13 +50,39 @@ describe("classifyText", () => {
     "instagram.com/mariofit oppure instagram.com/coachmarco",
     "ftp://example.com/file",
   ])("keeps %j as text", (text) => {
-    expect(classifyText(text)).toStrictEqual({ type: "TEXT", text });
+    expect(classifyText(text)).toStrictEqual({
+      type: "TEXT",
+      text,
+      username: null,
+    });
   });
 
   it("trims the surrounding whitespace of texts", () => {
     expect(classifyText("  ci sentiamo domani \n")).toStrictEqual({
       type: "TEXT",
       text: "ci sentiamo domani",
+      username: null,
     });
+  });
+
+  it("reads the prospect named on the first line of a pasted text", () => {
+    expect(
+      classifyText("@MarioFit\nMario: Quanto costa?\nIo: Dipende!"),
+    ).toStrictEqual({
+      type: "TEXT",
+      text: "Mario: Quanto costa?\nIo: Dipende!",
+      username: "mariofit",
+    });
+  });
+
+  it.each([
+    ["@mariofit", { type: "INSTAGRAM_PROFILE", username: "mariofit" }],
+    ["@mariofit\n  ", { type: "INSTAGRAM_PROFILE", username: "mariofit" }],
+    [
+      "ciao @mariofit\ncome va?",
+      { type: "TEXT", text: "ciao @mariofit\ncome va?", username: null },
+    ],
+  ])("names no pasted conversation in %j", (text, input) => {
+    expect(classifyText(text)).toStrictEqual(input);
   });
 });

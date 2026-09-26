@@ -38,6 +38,8 @@ const profileOutput: ScreenshotsOutput = {
   observed_facts: ["La bio invita a scrivere START in DM."],
   hypotheses: ["Gestire i DM a mano potrebbe richiedere tempo."],
   conversation: null,
+  objections: [],
+  commitments: [],
   summary: " Personal trainer che raccoglie contatti con START in DM. ",
   first_messages: {
     best: "Ciao Mario, ho visto lo START in bio: quanti DM ricevi a settimana?",
@@ -56,6 +58,11 @@ const conversationOutput: ScreenshotsOutput = {
     { author: "PROSPECT", text: "Quanto costa un sito?" },
   ],
   conversation,
+  objections: [" Il prezzo gli sembra alto. ", " "],
+  commitments: [
+    { by: "ALEX", text: " Mandargli un esempio. " },
+    { by: "PROSPECT", text: "" },
+  ],
   first_messages: null,
   replies,
 };
@@ -94,6 +101,8 @@ describe("toScreenshotsAnalysis", () => {
           { author: "PROSPECT", text: "Quanto costa un sito?" },
         ],
         summary: "Personal trainer che raccoglie contatti con START in DM.",
+        objections: ["Il prezzo gli sembra alto."],
+        commitments: [{ by: "ALEX", text: "Mandargli un esempio." }],
         analysis: {
           lastProspectMessage: "Quanto costa un sito?",
           stage: "ENGAGED",
@@ -201,9 +210,16 @@ describe("toScreenshotsAnalysis", () => {
 describe("toConversationReply", () => {
   it("turns a pasted conversation into an analysis and replies", () => {
     const output: ConversationReplyOutput = {
+      messages: [
+        { author: "ALEX", text: "Ciao Mario!" },
+        { author: "PROSPECT", text: " Quanto costa un sito? " },
+      ],
       observed_facts: [],
       hypotheses: [],
       conversation,
+      objections: [],
+      commitments: [{ by: "PROSPECT", text: "Mi fa sapere domani." }],
+      summary: "Ha chiesto il prezzo.",
       replies,
       note: null,
     };
@@ -211,6 +227,13 @@ describe("toConversationReply", () => {
     expect(toConversationReply(output)).toMatchObject({
       ok: true,
       value: {
+        messages: [
+          { author: "ALEX", text: "Ciao Mario!" },
+          { author: "PROSPECT", text: "Quanto costa un sito?" },
+        ],
+        objections: [],
+        commitments: [{ by: "PROSPECT", text: "Mi fa sapere domani." }],
+        summary: "Ha chiesto il prezzo.",
         analysis: { intent: "PRICE_REQUEST", nextGoal: "UNDERSTAND_PROCESS" },
         suggestions: [
           { style: "BEST" },

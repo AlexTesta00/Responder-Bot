@@ -67,7 +67,37 @@ export const NEXT_GOALS = [
 
 export type NextGoal = (typeof NEXT_GOALS)[number];
 
+export type MessageAuthor = "ALEX" | "PROSPECT";
+
+/** A message of the Instagram conversation between Alex and a prospect. */
+export type ConversationMessage = Readonly<{
+  author: MessageAuthor;
+  text: string;
+}>;
+
+/** Something Alex or the prospect said they would do, not done yet. */
+export type Commitment = Readonly<{
+  by: MessageAuthor;
+  text: string;
+}>;
+
 /** Judged from concrete signals (asking for prices, examples, a call), not tone. */
 export const INTEREST_LEVELS = ["UNKNOWN", "LOW", "MEDIUM", "HIGH"] as const;
 
 export type InterestLevel = (typeof INTEREST_LEVELS)[number];
+
+/** A move of the conversation from one stage to another. */
+export type StageChange = Readonly<{
+  /** Null for the first stage a prospect gets. */
+  from: ConversationStage | null;
+  to: ConversationStage;
+  at: Date;
+}>;
+
+/** Where the conversation stands, as the latest analysis read it. */
+export type ConversationState = Readonly<{
+  stage: ConversationStage;
+  intent: ConversationIntent;
+  interest: InterestLevel;
+  nextGoal: NextGoal;
+}>;

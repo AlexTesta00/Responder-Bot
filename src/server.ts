@@ -18,6 +18,7 @@ import {
   type Env,
   type NodeEnv,
 } from "./config/env.ts";
+import { createConversationAnalyst } from "./copilot/conversation.ts";
 import { createScreenshotsAnalyst } from "./copilot/screenshots.ts";
 import { createDatabase } from "./db/connection.ts";
 import { createMysqlGenerationLog } from "./db/generation-log.ts";
@@ -78,6 +79,14 @@ const start = async (env: Env): Promise<void> => {
   const databaseConfig = databaseConfigOf(env);
   const database =
     databaseConfig === null ? null : createDatabase(databaseConfig);
+  const prospects =
+    database === null
+      ? createInMemoryProspectStore()
+      : createMysqlProspectStore(database);
+  const generations =
+    database === null
+      ? discardGenerationRuns
+      : createMysqlGenerationLog(database);
 
   const app = await buildApp({
     logLevel: LOG_LEVEL_BY_ENV[env.NODE_ENV],
@@ -91,16 +100,15 @@ const start = async (env: Env): Promise<void> => {
         downloadImage: createImageDownloader(telegram, MAX_IMAGE_BYTES),
         analyzeScreenshots: createScreenshotsAnalyst({
           ai,
-          prospects:
-            database === null
-              ? createInMemoryProspectStore()
-              : createMysqlProspectStore(database),
-          generations:
-            database === null
-              ? discardGenerationRuns
-              : createMysqlGenerationLog(database),
+          prospects,
+          generations,
         }),
-        replyToConversation: ai.replyToConversation,
+        replyToConversation: createConversationAnalyst({
+          ai,
+          prospects,
+          generations,
+        }),
+        linkMessages: prospects.linkMessages,
         schedule: scheduleWithTimers,
       }),
     },

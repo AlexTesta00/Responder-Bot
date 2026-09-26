@@ -1,9 +1,11 @@
+import { sql } from "kysely";
+import { Migrator } from "kysely/migration";
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import { errorFields } from "../shared/errors.ts";
 import { ok } from "../shared/result.ts";
 import { createDatabase } from "./connection.ts";
-import { migrateToLatest } from "./migrations.ts";
+import { migrateToLatest, MIGRATIONS } from "./migrations.ts";
 import {
   recreateTestDatabase,
   TEST_MYSQL_URL,
@@ -22,7 +24,12 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
     const db = await freshDatabase();
 
     expect(await migrateToLatest(db)).toStrictEqual(
-      ok(["0001_prospect_memory"]),
+      ok([
+        "0001_prospect_memory",
+        "0002_objections_and_commitments",
+        "0003_stage_changes",
+        "0004_telegram_messages",
+      ]),
     );
     expect(await migrateToLatest(db)).toStrictEqual(ok([]));
 
@@ -30,7 +37,9 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
     expect(tables.map((table) => table.name).toSorted()).toStrictEqual([
       "generation_runs",
       "prospect_messages",
+      "prospect_stage_changes",
       "prospects",
+      "telegram_messages",
     ]);
   });
 
@@ -54,6 +63,8 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
         interest: null,
         next_goal: null,
         summary: null,
+        objections: "[]",
+        commitments: "[]",
         created_at: createdAt,
         updated_at: createdAt,
       })
@@ -65,6 +76,36 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
         .select(["display_name", "created_at"])
         .executeTakeFirst(),
     ).toStrictEqual({ display_name: "Mario 💪🏼 Fit", created_at: createdAt });
+  });
+
+  it("fills in the new columns of prospects saved before them", async () => {
+    const db = await freshDatabase();
+    const migrator = new Migrator({
+      db,
+      provider: { getMigrations: () => Promise.resolve({ ...MIGRATIONS }) },
+    });
+    await migrator.migrateTo("0001_prospect_memory");
+    await sql`
+      INSERT INTO prospects
+        (id, platform, username, facts, hypotheses, created_at, updated_at)
+      VALUES
+        ('00000000-0000-4000-8000-000000000001', 'instagram', 'mariofit',
+         '[]', '[]', NOW(3), NOW(3))
+    `.execute(db);
+
+    expect(await migrateToLatest(db)).toStrictEqual(
+      ok([
+        "0002_objections_and_commitments",
+        "0003_stage_changes",
+        "0004_telegram_messages",
+      ]),
+    );
+    expect(
+      await db
+        .selectFrom("prospects")
+        .select(["objections", "commitments"])
+        .execute(),
+    ).toStrictEqual([{ objections: "[]", commitments: "[]" }]);
   });
 
   it("reports a failure without its message", async () => {

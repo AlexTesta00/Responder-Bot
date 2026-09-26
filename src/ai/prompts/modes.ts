@@ -1,8 +1,11 @@
+import { unansweredMessages } from "../../conversations/transition.ts";
 import type { ProspectMemory } from "../../prospects/memory.ts";
 import { CONVERSATION_REPLY_TASK } from "./conversation-reply.ts";
 import { FIRST_MESSAGE_TASK } from "./first-message.ts";
 import { PROSPECT_IDENTITY_TASK } from "./identity.ts";
 import type { PromptLayer } from "./layer.ts";
+import { MEMORY_TASK } from "./memory.ts";
+import { PASTED_CONVERSATION_TASK } from "./pasted.ts";
 import { SCREENSHOTS_TASK } from "./screenshots.ts";
 import { COMMUNICATION_PRINCIPLES, SYSTEM_POLICY } from "./system.ts";
 
@@ -22,12 +25,15 @@ export const PROMPT_LAYERS: Readonly<
     SYSTEM_POLICY,
     COMMUNICATION_PRINCIPLES,
     SCREENSHOTS_TASK,
+    MEMORY_TASK,
     FIRST_MESSAGE_TASK,
     CONVERSATION_REPLY_TASK,
   ],
   CONVERSATION_REPLY: [
     SYSTEM_POLICY,
     COMMUNICATION_PRINCIPLES,
+    PASTED_CONVERSATION_TASK,
+    MEMORY_TASK,
     CONVERSATION_REPLY_TASK,
   ],
 };
@@ -46,19 +52,40 @@ export const PROSPECT_IDENTITY_REQUEST =
 const listed = (title: string, items: readonly string[]): string[] =>
   items.length === 0 ? [] : [title, ...items.map((item) => `- ${item}`)];
 
-/** What the memory holds about a prospect, as the model reads it. */
-export const memoryContext = ({ prospect, messages }: ProspectMemory): string =>
-  [
+const day = (date: Date): string => date.toISOString().slice(0, 10);
+
+const speaker = (author: "ALEX" | "PROSPECT"): string =>
+  author === "ALEX" ? "Alex" : "Prospect";
+
+/**
+ * What the memory holds about a prospect, as the model reads it. `today`
+ * tells how long ago the last analysis was.
+ */
+export const memoryContext = (
+  { prospect, messages }: ProspectMemory,
+  today: Date,
+): string => {
+  const unanswered = unansweredMessages(messages);
+  const reading = prospect.conversation;
+  return [
+    `Today: ${day(today)}`,
     `Username: @${prospect.username}`,
     `Name: ${prospect.displayName ?? "unknown"}`,
     `Business: ${prospect.businessType ?? "unknown"}`,
-    `Last updated: ${prospect.updatedAt.toISOString().slice(0, 10)}`,
-    ...(prospect.conversation === null
+    `Last updated: ${day(prospect.updatedAt)}`,
+    ...(reading === null
       ? []
       : [
-          `Latest reading: stage ${prospect.conversation.stage}, intent ${prospect.conversation.intent}, interest ${prospect.conversation.interest}, next goal ${prospect.conversation.nextGoal}`,
+          `Latest reading: stage ${reading.stage}, intent ${reading.intent}, interest ${reading.interest}, next goal ${reading.nextGoal}`,
         ]),
     ...(prospect.summary === null ? [] : [`Summary: ${prospect.summary}`]),
+    ...listed("Open objections:", prospect.objections),
+    ...listed(
+      "Open promises:",
+      prospect.commitments.map(
+        (commitment) => `${speaker(commitment.by)}: ${commitment.text}`,
+      ),
+    ),
     ...listed("Facts:", prospect.facts),
     ...listed("Hypotheses to verify:", prospect.hypotheses),
     ...(messages.length === 0
@@ -66,11 +93,24 @@ export const memoryContext = ({ prospect, messages }: ProspectMemory): string =>
       : [
           "Latest messages, oldest first:",
           ...messages.map(
-            (message) =>
-              `${message.author === "ALEX" ? "Alex" : "Prospect"}: ${message.text}`,
+            (message) => `${speaker(message.author)}: ${message.text}`,
           ),
         ]),
+    ...(unanswered === 0
+      ? []
+      : [
+          `Alex's messages still without a reply at the end: ${String(unanswered)}`,
+        ]),
   ].join("\n");
+};
+
+const memoryLines = (memory: ProspectMemory | null, today: Date): string[] =>
+  memory === null
+    ? []
+    : [
+        "Alex's memory of this prospect:",
+        withinTag("prospect_memory", memoryContext(memory, today)),
+      ];
 
 /**
  * Alex's request for a batch of screenshots, with the note Alex may have
@@ -79,23 +119,24 @@ export const memoryContext = ({ prospect, messages }: ProspectMemory): string =>
 export const screenshotsRequest = (
   note: string | null,
   memory: ProspectMemory | null,
+  today: Date,
 ): string =>
   [
     "Analyze these screenshots.",
     ...(note === null
       ? []
       : ["Alex added this note:", withinTag("alex_note", note)]),
-    ...(memory === null
-      ? []
-      : [
-          "Alex's memory of the prospect recognized in them:",
-          withinTag("prospect_memory", memoryContext(memory)),
-        ]),
+    ...memoryLines(memory, today),
   ].join("\n");
 
 /** A conversation Alex pasted, delimited as untrusted content. */
-export const conversationRequest = (text: string): string =>
+export const conversationRequest = (
+  text: string,
+  memory: ProspectMemory | null,
+  today: Date,
+): string =>
   [
     "Alex pasted this text from an Instagram conversation. It may be only the prospect's latest message or a longer part of the conversation.",
     withinTag("conversation", text),
+    ...memoryLines(memory, today),
   ].join("\n");

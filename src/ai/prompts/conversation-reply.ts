@@ -1,7 +1,7 @@
 import { layer } from "./layer.ts";
 
 /** The next message in a conversation that has already started. */
-export const CONVERSATION_REPLY_TASK = layer("conversation-reply", 2, [
+export const CONVERSATION_REPLY_TASK = layer("conversation-reply", 3, [
   "Task: next message in a conversation that has already started.",
   "",
   "Work out who wrote what: in Instagram screenshots Alex's messages are on the right and the prospect's on the left. Then decide, in this order:",
@@ -27,6 +27,7 @@ export const CONVERSATION_REPLY_TASK = layer("conversation-reply", 2, [
   "",
   "Special cases:",
   "- If the most recent message is Alex's, the prospect has not answered yet: write follow-ups that add something new and relevant, such as an idea of how one of Alex's services could help them, never \"hai visto il mio messaggio?\".",
-  "- If the prospect is not interested, the goal is CLOSE_GRACEFULLY: a short, kind closing that leaves the door open without insisting.",
+  "- Alex sends at most two follow-ups after a message that got no reply. If the conversation already ends with Alex's message followed by two follow-ups, all unanswered, set replies to null and say in the note that it is better to wait for the prospect.",
+  "- If the prospect is not interested, the goal is CLOSE_GRACEFULLY: a short, kind closing that leaves the door open without insisting. Once Alex has sent it, set replies to null.",
   "- If the prospect asked not to be contacted, set replies to null and explain in the note that Alex should not write again.",
 ]);

@@ -32,7 +32,25 @@ describe("parseUpdate", () => {
           chatId: 42,
           chatType: "private",
           senderId: 42,
-          content: { type: "TEXT", text: "/start" },
+          content: { type: "TEXT", text: "/start", replyTo: null },
+        },
+      },
+    });
+  });
+
+  it("knows which message a text replies to", () => {
+    expect(
+      parseUpdate(
+        privateMessage({
+          text: "Quanto costa?",
+          reply_to_message: { message_id: 1_234, text: "..." },
+        }),
+      ),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        message: {
+          content: { type: "TEXT", text: "Quanto costa?", replyTo: 1_234 },
         },
       },
     });

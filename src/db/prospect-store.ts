@@ -8,10 +8,12 @@ import {
   CONVERSATION_STAGES,
   INTEREST_LEVELS,
   NEXT_GOALS,
+  type Commitment,
+  type ConversationMessage,
+  type StageChange,
 } from "../conversations/domain.ts";
 import {
   MAX_STORED_MESSAGES,
-  type ConversationMessage,
   type Prospect,
   type ProspectMemory,
 } from "../prospects/memory.ts";
@@ -31,6 +33,19 @@ const parseJson = (text: string): unknown => {
 
 const notesSchema = z.string().transform(parseJson).pipe(z.array(z.string()));
 
+const authorSchema = z.enum(["ALEX", "PROSPECT"]);
+
+const commitmentsSchema = z
+  .string()
+  .transform(parseJson)
+  .pipe(
+    z.array(
+      z
+        .object({ by: authorSchema, text: z.string() })
+        .transform((commitment): Commitment => commitment),
+    ),
+  );
+
 const prospectRowSchema = z
   .object({
     id: z.string(),
@@ -44,6 +59,8 @@ const prospectRowSchema = z
     interest: z.enum(INTEREST_LEVELS).nullable(),
     next_goal: z.enum(NEXT_GOALS).nullable(),
     summary: z.string().nullable(),
+    objections: notesSchema,
+    commitments: commitmentsSchema,
     created_at: z.date(),
     updated_at: z.date(),
   })
@@ -67,16 +84,32 @@ const prospectRowSchema = z
             nextGoal: row.next_goal,
           },
     summary: row.summary,
+    objections: row.objections,
+    commitments: row.commitments,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }));
 
 const messagesSchema = z.array(
   z
-    .object({ author: z.enum(["ALEX", "PROSPECT"]), body: z.string() })
+    .object({ author: authorSchema, body: z.string() })
     .transform((row): ConversationMessage => ({
       author: row.author,
       text: row.body,
+    })),
+);
+
+const stageChangesSchema = z.array(
+  z
+    .object({
+      from_stage: z.enum(CONVERSATION_STAGES).nullable(),
+      to_stage: z.enum(CONVERSATION_STAGES),
+      changed_at: z.date(),
+    })
+    .transform((row): StageChange => ({
+      from: row.from_stage,
+      to: row.to_stage,
+      at: row.changed_at,
     })),
 );
 
@@ -124,13 +157,15 @@ export const createMysqlProspectStore = (
         interest: profile.conversation?.interest ?? null,
         next_goal: profile.conversation?.nextGoal ?? null,
         summary: profile.summary,
+        objections: JSON.stringify(profile.objections),
+        commitments: JSON.stringify(profile.commitments),
         updated_at: time,
       };
 
       // Locking the row makes concurrent saves of a prospect take turns.
       const existing = await trx
         .selectFrom("prospects")
-        .select("id")
+        .select(["id", "stage"])
         .where("platform", "=", PLATFORM)
         .where("username", "=", profile.username)
         .forUpdate()
@@ -152,6 +187,20 @@ export const createMysqlProspectStore = (
           .updateTable("prospects")
           .set(columns)
           .where("id", "=", id)
+          .execute();
+      }
+
+      const stage = profile.conversation?.stage ?? null;
+      const earlierStage = existing?.stage ?? null;
+      if (stage !== null && stage !== earlierStage) {
+        await trx
+          .insertInto("prospect_stage_changes")
+          .values({
+            prospect_id: id,
+            from_stage: earlierStage,
+            to_stage: stage,
+            changed_at: time,
+          })
           .execute();
       }
 
@@ -192,4 +241,53 @@ export const createMysqlProspectStore = (
       }
       return memory;
     }),
+  stageHistory: async (username) =>
+    stageChangesSchema.parse(
+      await db
+        .selectFrom("prospect_stage_changes")
+        .innerJoin(
+          "prospects",
+          "prospects.id",
+          "prospect_stage_changes.prospect_id",
+        )
+        .select([
+          "prospect_stage_changes.from_stage",
+          "prospect_stage_changes.to_stage",
+          "prospect_stage_changes.changed_at",
+        ])
+        .where("prospects.platform", "=", PLATFORM)
+        .where("prospects.username", "=", username)
+        .orderBy("prospect_stage_changes.id")
+        .execute(),
+    ),
+  linkMessages: async (prospectId, chatId, messageIds) => {
+    if (messageIds.length === 0) {
+      return;
+    }
+    const time = now();
+    await db
+      .insertInto("telegram_messages")
+      .values(
+        messageIds.map((messageId) => ({
+          chat_id: chatId,
+          message_id: messageId,
+          prospect_id: prospectId,
+          created_at: time,
+        })),
+      )
+      .execute();
+  },
+  prospectOfMessage: async (chatId, messageId) => {
+    const row = await db
+      .selectFrom("telegram_messages")
+      .innerJoin("prospects", "prospects.id", "telegram_messages.prospect_id")
+      .select("prospects.username")
+      .where("telegram_messages.chat_id", "=", chatId)
+      .where("telegram_messages.message_id", "=", messageId)
+      .executeTakeFirst();
+    return z
+      .string()
+      .nullable()
+      .parse(row?.username ?? null);
+  },
 });

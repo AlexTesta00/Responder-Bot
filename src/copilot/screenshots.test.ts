@@ -38,7 +38,12 @@ const generation = <T>(
 const identity = (username: string | null): Generation<ProspectIdentity> =>
   generation("PROSPECT_IDENTITY", ok({ username, displayName: null }));
 
-const conversation = (username: string | null): ScreenshotsAnalysis => ({
+type ConversationScreenshots = Extract<
+  ScreenshotsAnalysis,
+  Readonly<{ kind: "CONVERSATION" }>
+>;
+
+const conversation = (username: string | null): ConversationScreenshots => ({
   kind: "CONVERSATION",
   prospect: { username, displayName: "Mario", businessType: "trainer" },
   messages: [
@@ -55,6 +60,8 @@ const conversation = (username: string | null): ScreenshotsAnalysis => ({
     nextGoal: "UNDERSTAND_PROCESS",
     rationale: "Chiede il prezzo senza contesto.",
   },
+  objections: ["Il prezzo di un sito gli sembra alto."],
+  commitments: [],
   summary: "Ha risposto chiedendo il prezzo di un sito.",
   suggestions: [{ style: "BEST", text: "Dipende: cosa ti serve?" }],
   note: null,
@@ -68,6 +75,8 @@ const profile = (username: string, summary: string): ProspectProfile => ({
   hypotheses: [],
   conversation: null,
   summary,
+  objections: [],
+  commitments: [],
 });
 
 type SetupOptions = Readonly<{
@@ -234,6 +243,7 @@ describe("createScreenshotsAnalyst", () => {
 
   it("keeps answering when the memory cannot be read", async () => {
     const broken: ProspectStore = {
+      ...createInMemoryProspectStore(),
       load: () => Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1")),
       save: () => Promise.reject(new Error("not expected")),
     };
@@ -256,7 +266,7 @@ describe("createScreenshotsAnalyst", () => {
 
   it("says so when the memory cannot be saved", async () => {
     const readOnly: ProspectStore = {
-      load: () => Promise.resolve(null),
+      ...createInMemoryProspectStore(),
       save: () => Promise.reject(new Error("ER_LOCK_DEADLOCK")),
     };
     const { analyze, log } = setup({ prospects: readOnly });
@@ -302,6 +312,97 @@ describe("createScreenshotsAnalyst", () => {
         report: { ...identity("mariofit").report, mode: "SCREENSHOTS" },
         outcome: "OK",
       },
+    ]);
+  });
+
+  it("tells which prospect the answer is about", async () => {
+    const { prospects, analyze } = setup();
+
+    const answer = await analyze();
+
+    expect(answer.prospectId).toBe(
+      (await prospects.load("mariofit"))?.prospect.id,
+    );
+    expect(answer.pause).toBeNull();
+  });
+
+  it("pauses at a request not to be contacted, and remembers it", async () => {
+    const stop = conversation("mariofit");
+    const { prospects, analyze } = setup({
+      analysis: {
+        ...stop,
+        analysis: { ...stop.analysis, intent: "DO_NOT_CONTACT" },
+      },
+    });
+
+    const answer = await analyze();
+
+    expect(answer.pause).toBe("DO_NOT_CONTACT");
+    expect(
+      (await prospects.load("mariofit"))?.prospect.conversation?.stage,
+    ).toBe("DO_NOT_CONTACT");
+  });
+
+  it("keeps that pause even for a new look at the profile", async () => {
+    const prospects = createInMemoryProspectStore();
+    await prospects.save({
+      profile: {
+        ...profile("mariofit", "Ha chiesto di non essere più contattato."),
+        conversation: {
+          stage: "DO_NOT_CONTACT",
+          intent: "DO_NOT_CONTACT",
+          interest: "LOW",
+          nextGoal: "CLOSE_GRACEFULLY",
+        },
+      },
+      newMessages: [{ author: "PROSPECT", text: "Non scrivermi più" }],
+    });
+    const { analyze } = setup({
+      prospects,
+      analysis: {
+        kind: "PROFILE",
+        prospect: {
+          username: "mariofit",
+          displayName: null,
+          businessType: null,
+        },
+        facts: [],
+        hypotheses: [],
+        summary: null,
+        suggestions: [{ style: "BEST", text: "Ciao!" }],
+        note: null,
+      },
+    });
+
+    expect((await analyze()).pause).toBe("DO_NOT_CONTACT");
+  });
+
+  it("stops suggesting after the second follow-up without a reply", async () => {
+    const prospects = createInMemoryProspectStore();
+    await prospects.save({
+      profile: profile("mariofit", "Ha chiesto il prezzo, poi è sparito."),
+      newMessages: [
+        { author: "PROSPECT", text: "Quanto costa un sito?" },
+        { author: "ALEX", text: "Dipende: cosa ti serve?" },
+        { author: "ALEX", text: "Ti mando qualche esempio?" },
+      ],
+    });
+    const { analyze } = setup({
+      prospects,
+      analysis: {
+        ...conversation("mariofit"),
+        messages: [
+          { author: "ALEX", text: "Ti mando qualche esempio?" },
+          { author: "ALEX", text: "Ultimo messaggio, promesso" },
+        ],
+      },
+    });
+
+    const answer = await analyze();
+
+    expect(answer.pause).toBe("FOLLOW_UP_LIMIT");
+    expect(await prospects.stageHistory("mariofit")).toMatchObject([
+      { from: null, to: "GHOSTED" },
     ]);
   });
 

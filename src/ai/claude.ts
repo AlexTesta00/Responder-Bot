@@ -52,6 +52,8 @@ export type ClaudeEngineOptions = Readonly<{
   fastModel: string;
   /** Clock for measuring durations, in milliseconds. */
   now?: () => number;
+  /** Today's date, which the memory is compared with. */
+  today?: () => Date;
 }>;
 
 const imageBlock = (image: DownloadedImage): ContentBlock => ({
@@ -126,6 +128,7 @@ export const createClaudeEngine = ({
   model,
   fastModel,
   now = () => performance.now(),
+  today = () => new Date(),
 }: ClaudeEngineOptions): AiEngine => {
   const generate = async <Output, T>(
     mode: PromptMode,
@@ -205,15 +208,15 @@ export const createClaudeEngine = ({
         // Images first, then the request that refers to them.
         [
           ...images.map(imageBlock),
-          { type: "text", text: screenshotsRequest(note, memory) },
+          { type: "text", text: screenshotsRequest(note, memory, today()) },
         ],
         screenshotsOutputSchema,
         toScreenshotsAnalysis,
       ),
-    replyToConversation: (text) =>
+    replyToConversation: (text, memory) =>
       generate(
         "CONVERSATION_REPLY",
-        [{ type: "text", text: conversationRequest(text) }],
+        [{ type: "text", text: conversationRequest(text, memory, today()) }],
         conversationReplyOutputSchema,
         toConversationReply,
       ),

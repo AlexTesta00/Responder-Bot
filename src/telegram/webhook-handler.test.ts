@@ -4,6 +4,7 @@ import type { AiEngine, AiError, Generation } from "../ai/engine.ts";
 import type { ConversationReply, ScreenshotsAnalysis } from "../ai/outputs.ts";
 import type { PromptMode } from "../ai/prompts/modes.ts";
 import { discardGenerationRuns } from "../ai/runs.ts";
+import { createConversationAnalyst } from "../copilot/conversation.ts";
 import { createScreenshotsAnalyst } from "../copilot/screenshots.ts";
 import type { DownloadedImage, DownloadImage } from "../inputs/images.ts";
 import { createInMemoryProspectStore } from "../prospects/store.ts";
@@ -22,6 +23,7 @@ import {
   aiProblemReply,
   conversationMessages,
   escapeHtml,
+  pauseMessage,
   screenshotsMessages,
 } from "./suggestions.ts";
 import type { ChatType, IncomingUpdate, MessageContent } from "./update.ts";
@@ -64,8 +66,12 @@ const PROFILE: ScreenshotsAnalysis = {
 };
 
 const REPLY: ConversationReply = {
+  messages: [{ author: "PROSPECT", text: "Quanto costa un sito come il tuo?" }],
   facts: [],
   hypotheses: [],
+  objections: [],
+  commitments: [],
+  summary: "Ha chiesto il prezzo di un sito.",
   analysis: {
     lastProspectMessage: "Quanto costa un sito come il tuo?",
     stage: "ENGAGED",
@@ -137,7 +143,7 @@ const messageWith = (
 });
 
 const textMessage = (text: string, options?: MessageOptions): IncomingUpdate =>
-  messageWith({ type: "TEXT", text }, options);
+  messageWith({ type: "TEXT", text, replyTo: null }, options);
 
 const screenshotMessage = (
   caption: string | null = null,
@@ -185,9 +191,12 @@ type SendResult = Awaited<ReturnType<TelegramClient["sendMessage"]>>;
 
 /** sendMessage returns `results` on consecutive calls, then succeeds. */
 const setup = (...results: readonly SendResult[]) => {
-  const sendMessage = vi.fn<TelegramClient["sendMessage"]>(() =>
-    Promise.resolve(ok(undefined)),
-  );
+  // Each message the bot sends gets the next id, as on Telegram.
+  let lastMessageId = 1_000;
+  const sendMessage = vi.fn<TelegramClient["sendMessage"]>(() => {
+    lastMessageId += 1;
+    return Promise.resolve(ok({ messageId: lastMessageId }));
+  });
   for (const result of results) {
     sendMessage.mockResolvedValueOnce(result);
   }
@@ -225,19 +234,22 @@ const setup = (...results: readonly SendResult[]) => {
 
   const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const { schedule, runPending } = manualSchedule();
+  const prospects = createInMemoryProspectStore();
+  const copilot = {
+    ai: { identifyProspect, analyzeScreenshots, replyToConversation },
+    prospects,
+    generations: discardGenerationRuns,
+  };
   const handler = createUpdateHandler({
     allowedUserId: ALEX,
     processedUpdates: createProcessedUpdates(100),
     sendMessage,
     sendTyping,
     downloadImage,
-    // The real use case, with the memory in the process.
-    analyzeScreenshots: createScreenshotsAnalyst({
-      ai: { identifyProspect, analyzeScreenshots, replyToConversation },
-      prospects: createInMemoryProspectStore(),
-      generations: discardGenerationRuns,
-    }),
-    replyToConversation,
+    // The real use cases, with the memory in the process.
+    analyzeScreenshots: createScreenshotsAnalyst(copilot),
+    replyToConversation: createConversationAnalyst(copilot),
+    linkMessages: prospects.linkMessages,
     schedule,
   });
   const handleUpdate = (update: IncomingUpdate) =>
@@ -245,6 +257,7 @@ const setup = (...results: readonly SendResult[]) => {
 
   return {
     handleUpdate,
+    prospects,
     sendMessage,
     sendTyping,
     downloadImage,
@@ -416,7 +429,7 @@ describe("suggestions", () => {
     expect(analyzed).toStrictEqual([[{ format: "image/png", bytes: PNG }]]);
     expect(analyzeScreenshots.mock.calls[0]?.[1]).toBe("profilo di Mario");
     expect(sendMessage.mock.calls).toStrictEqual(
-      htmlCalls(screenshotsMessages(PROFILE, { type: "CREATED" })),
+      htmlCalls(screenshotsMessages(PROFILE, { type: "CREATED" }, null)),
     );
     expect(log.info).toHaveBeenCalledWith(
       { ai_mode: "SCREENSHOTS", ...GENERATION_FIELDS },
@@ -444,9 +457,18 @@ describe("suggestions", () => {
     await vi.waitFor(() => {
       expect(sendMessage).toHaveBeenCalledTimes(2);
     });
-    expect(replyToConversation).toHaveBeenCalledExactlyOnceWith(CONVERSATION);
+    expect(replyToConversation).toHaveBeenCalledExactlyOnceWith(
+      CONVERSATION,
+      null,
+    );
     expect(sendMessage.mock.calls).toStrictEqual(
-      htmlCalls(conversationMessages(REPLY)),
+      htmlCalls(
+        conversationMessages(
+          REPLY,
+          { type: "NOT_SAVED", reason: "NO_PROSPECT" },
+          null,
+        ),
+      ),
     );
     expect(log.info).toHaveBeenCalledWith(
       { ai_mode: "CONVERSATION_REPLY", ...GENERATION_FIELDS },
@@ -666,6 +688,87 @@ describe("prospect memory", () => {
   });
 });
 
+describe("conversations", () => {
+  it("continues a conversation from a reply to the bot's analysis", async () => {
+    const { handleUpdate, sendMessage, replyToConversation } = setup();
+
+    await handleUpdate(screenshotMessage());
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+    // The analysis arrived as messages 1001 and 1002: Alex replies to one.
+    await handleUpdate(
+      messageWith(
+        { type: "TEXT", text: CONVERSATION, replyTo: 1_002 },
+        { updateId: 101 },
+      ),
+    );
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(4);
+    });
+
+    expect(replyToConversation.mock.calls[0]?.[1]?.prospect).toMatchObject({
+      username: "mariofit",
+    });
+    expect(sendMessage.mock.calls[2]?.[1]).toContain("🧠 Già in memoria");
+  });
+
+  it("remembers a conversation pasted under the prospect's @username", async () => {
+    const { handleUpdate, sendMessage, replyToConversation, prospects } =
+      setup();
+
+    const outcome = await handleUpdate(
+      textMessage(`@giulia.bakery\n${CONVERSATION}`),
+    );
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    expect(outcome).toStrictEqual({ type: "ACCEPTED", input: "TEXT" });
+    expect(replyToConversation).toHaveBeenCalledExactlyOnceWith(
+      CONVERSATION,
+      null,
+    );
+    expect(sendMessage.mock.calls[0]?.[1]).toContain("🧠 Nuovo prospect");
+    expect(await prospects.load("giulia.bakery")).not.toBeNull();
+  });
+
+  it("explains how to remember a conversation pasted alone", async () => {
+    const { handleUpdate, sendMessage } = setup();
+
+    await handleUpdate(textMessage(CONVERSATION));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    expect(sendMessage.mock.calls[0]?.[1]).toContain("@username");
+  });
+
+  it("shows why it suggests nothing", async () => {
+    const { handleUpdate, sendMessage, replyToConversation } = setup();
+    replyToConversation.mockResolvedValue(
+      generation(
+        "CONVERSATION_REPLY",
+        ok({
+          ...REPLY,
+          analysis: {
+            ...REPLY.analysis,
+            stage: "DO_NOT_CONTACT",
+            intent: "DO_NOT_CONTACT",
+          },
+        }),
+      ),
+    );
+
+    await handleUpdate(textMessage(`@mariofit\n${CONVERSATION}`));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    expect(sendMessage.mock.calls[1]?.[1]).toBe(pauseMessage("DO_NOT_CONTACT"));
+  });
+});
+
 describe("albums", () => {
   it("analyzes the photos of an album together, once", async () => {
     const {
@@ -705,7 +808,7 @@ describe("albums", () => {
     expect(analyzed).toStrictEqual([[png, png, png]]);
     expect(analyzeScreenshots.mock.calls[0]?.[1]).toBe("profilo di Mario");
     expect(sendMessage.mock.calls).toStrictEqual(
-      htmlCalls(screenshotsMessages(PROFILE, { type: "CREATED" })),
+      htmlCalls(screenshotsMessages(PROFILE, { type: "CREATED" }, null)),
     );
     expect(log.info).toHaveBeenCalledWith(
       { input: "SCREENSHOTS", images: 3 },

@@ -2,9 +2,9 @@
 // implementation by its own test file.
 import { describe, expect, it } from "vitest";
 
+import type { ConversationMessage } from "../conversations/domain.ts";
 import {
   MAX_STORED_MESSAGES,
-  type ConversationMessage,
   type MemoryUpdate,
   type ProspectProfile,
 } from "./memory.ts";
@@ -34,6 +34,11 @@ const MARIO: ProspectProfile = {
     nextGoal: "VALIDATE_PROBLEM",
   },
   summary: "Personal trainer, riceve molti START in DM.",
+  objections: ["Un sito gli sembra una spesa alta per ora."],
+  commitments: [
+    { by: "ALEX", text: "Mandargli un esempio di prenotazione online." },
+    { by: "PROSPECT", text: "Fargli sapere entro venerdì." },
+  ],
 };
 
 const GIULIA: ProspectProfile = {
@@ -44,6 +49,8 @@ const GIULIA: ProspectProfile = {
   hypotheses: [],
   conversation: null,
   summary: null,
+  objections: [],
+  commitments: [],
 };
 
 /** A clock that moves one second at each save, and predictable ids. */
@@ -165,6 +172,47 @@ export const describeProspectStore = (name: string, open: OpenStore): void => {
         alex("Ciao Mario!"),
         prospect("Ciao, dimmi pure"),
       ]);
+    });
+
+    it("records every change of stage, and only those", async () => {
+      const valued = {
+        ...MARIO,
+        conversation: {
+          stage: "VALUE",
+          intent: "CURIOUS",
+          interest: "HIGH",
+          nextGoal: "PROPOSE_CALL",
+        },
+      } as const;
+      const store = await save(
+        { profile: { ...MARIO, conversation: null }, newMessages: [] },
+        { profile: MARIO, newMessages: [] },
+        { profile: MARIO, newMessages: [] },
+        { profile: valued, newMessages: [] },
+        { profile: GIULIA, newMessages: [] },
+      );
+
+      expect(await store.stageHistory("mariofit")).toStrictEqual([
+        { from: null, to: "DISCOVERY", at: at(2) },
+        { from: "DISCOVERY", to: "VALUE", at: at(4) },
+      ]);
+      expect(await store.stageHistory("giulia.bakery")).toStrictEqual([]);
+      expect(await store.stageHistory("nobody")).toStrictEqual([]);
+    });
+
+    it("remembers which prospect each message of the bot is about", async () => {
+      const store = await open(dependencies());
+      const mario = await store.save({ profile: MARIO, newMessages: [] });
+      const giulia = await store.save({ profile: GIULIA, newMessages: [] });
+
+      await store.linkMessages(mario.prospect.id, 42, [1_001, 1_002]);
+      await store.linkMessages(giulia.prospect.id, 42, [1_003]);
+      await store.linkMessages(giulia.prospect.id, 42, []);
+
+      expect(await store.prospectOfMessage(42, 1_002)).toBe("mariofit");
+      expect(await store.prospectOfMessage(42, 1_003)).toBe("giulia.bakery");
+      expect(await store.prospectOfMessage(42, 1_004)).toBeNull();
+      expect(await store.prospectOfMessage(7, 1_001)).toBeNull();
     });
 
     it("keeps emojis and accents", async () => {

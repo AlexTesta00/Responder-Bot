@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import type { ConversationMessage } from "../conversations/domain.ts";
 import {
   messagesToAppend,
   remember,
-  type ConversationMessage,
   type Observation,
   type ProspectMemory,
 } from "./memory.ts";
@@ -33,6 +33,8 @@ const OBSERVATION: Observation = {
     nextGoal: "VALIDATE_PROBLEM",
   },
   summary: "Personal trainer, riceve una trentina di START a settimana.",
+  objections: null,
+  commitments: null,
   messages: CHAT,
 };
 
@@ -51,6 +53,8 @@ const MEMORY: ProspectMemory = {
       nextGoal: "GET_REPLY",
     },
     summary: "Primo messaggio inviato.",
+    objections: ["Il prezzo gli sembra alto."],
+    commitments: [{ by: "ALEX", text: "Mandare un esempio di sito." }],
     createdAt: new Date("2026-09-20T10:00:00Z"),
     updatedAt: new Date("2026-09-20T10:00:00Z"),
   },
@@ -116,6 +120,8 @@ describe("remember", () => {
         hypotheses: OBSERVATION.hypotheses,
         conversation: OBSERVATION.conversation,
         summary: OBSERVATION.summary,
+        objections: [],
+        commitments: [],
       },
       newMessages: CHAT,
     });
@@ -152,6 +158,32 @@ describe("remember", () => {
     expect(update.profile.hypotheses).toStrictEqual([
       "Gestire i DM a mano gli fa perdere contatti.",
       "Potrebbe volere un sito.",
+    ]);
+  });
+
+  it("keeps objections and promises when the analysis cannot tell", () => {
+    const update = remember("mariofit", MEMORY, OBSERVATION);
+
+    expect(update.profile.objections).toStrictEqual(MEMORY.prospect.objections);
+    expect(update.profile.commitments).toStrictEqual(
+      MEMORY.prospect.commitments,
+    );
+  });
+
+  it("replaces them with the ones still open", () => {
+    const update = remember("mariofit", MEMORY, {
+      ...OBSERVATION,
+      objections: [],
+      commitments: [
+        { by: "PROSPECT", text: "Mi fa sapere dopo le vacanze." },
+        { by: "PROSPECT", text: " mi fa sapere  dopo le vacanze. " },
+        { by: "ALEX", text: "  " },
+      ],
+    });
+
+    expect(update.profile.objections).toStrictEqual([]);
+    expect(update.profile.commitments).toStrictEqual([
+      { by: "PROSPECT", text: "Mi fa sapere dopo le vacanze." },
     ]);
   });
 

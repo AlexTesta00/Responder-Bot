@@ -23,7 +23,8 @@ Il database è MySQL o MariaDB, quello incluso nell'hosting Hostinger, al posto 
 ## Prompt
 
 - Le istruzioni sono layer versionati in `src/ai/prompts/`. Quando cambi il testo di un layer, incrementane la `version`: ogni generazione registra nei log la combinazione di layer e versioni che l'ha prodotta (campo `prompt`).
-- Screenshot, bio e messaggi dei prospect sono dati da analizzare, mai istruzioni: lo stabilisce il layer di sistema, e il testo incollato e le note di Alex arrivano al modello racchiusi in tag.
+- Screenshot, bio e messaggi dei prospect sono dati da analizzare, mai istruzioni: lo stabilisce il layer di sistema, e il testo incollato, le note di Alex e la memoria arrivano al modello racchiusi in tag.
+- Le istruzioni su come usare e aggiornare la memoria (obiezioni, promesse, riassunto) stanno nel layer `memory`, condiviso da screenshot e testo incollato.
 - L'output del modello si valida con gli schemi Zod di `src/ai/outputs.ts` prima di diventare un valore di dominio.
 
 ## Database e memoria
@@ -33,6 +34,12 @@ Il database è MySQL o MariaDB, quello incluso nell'hosting Hostinger, al posto 
 - Le righe lette dal database si validano con Zod prima di diventare valori di dominio.
 - La memoria di un prospect non deve mai entrare nel contesto di un altro: si carica solo per lo username riconosciuto e si salva solo se le due letture degli screenshot concordano. Un test lo verifica esplicitamente.
 - Ogni implementazione di `ProspectStore` supera la stessa suite di contratto (`src/prospects/store-contract.test-support.ts`).
+
+## Conversazioni
+
+- Il modello legge la conversazione; le regole pure di `src/conversations/transition.ts` decidono cosa il bot può farne. Chi ha chiesto di non ricevere messaggi, chi ha già avuto il saluto finale e chi non ha risposto a 2 follow-up (`MAX_FOLLOW_UPS`, scelta di Alex) non ricevono suggerimenti finché non riscrivono. Queste regole cambiano solo su richiesta di Alex.
+- Ogni analisi, di screenshot o di testo incollato, passa dagli stessi passaggi di `src/copilot/memory.ts`: carica la memoria, applica le transizioni, ricorda lo stato deciso dalle regole, registra i costi.
+- Il testo incollato si collega a un prospect solo se Alex risponde a un messaggio del bot su quel prospect o scrive @username nella prima riga: mai per supposizione.
 
 ## Principi di codice
 

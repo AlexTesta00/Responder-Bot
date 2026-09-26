@@ -8,14 +8,23 @@ Visione, principi ingegneristici e roadmap: [docs/PROJECT.md](docs/PROJECT.md). 
 
 ## Stato
 
-**Sprint 05 — Prospect Memory.** Il bot riceve gli update da Telegram tramite webhook, verifica il secret e risponde solo all'utente autorizzato in chat privata. Gli screenshot, anche inviati come album, e il testo di una conversazione vengono analizzati da Claude tramite l'API Anthropic:
+**Sprint 06 — Conversation Manager.** Il bot riceve gli update da Telegram tramite webhook, verifica il secret e risponde solo all'utente autorizzato in chat privata. Gli screenshot, anche inviati come album, e il testo di una conversazione vengono analizzati da Claude tramite l'API Anthropic:
 
 - dagli screenshot di un profilo nascono tre primi messaggi (BEST, CURIOSITY, NATURAL);
 - dagli screenshot di una conversazione, o dal suo testo incollato, nascono l'analisi (ultimo messaggio del prospect, stage, intent, interesse, prossimo obiettivo) e tre risposte (BEST, ALTERNATIVE, DIRECT).
 
 I suggerimenti portano verso i servizi di Alex: siti, landing page ed e-commerce, prenotazioni online e automazioni, software e app su misura, assistenza informatica. Il primo messaggio aggancia il prospect su qualcosa di specifico e accenna a cosa fa Alex; l'offerta vera arriva quando risponde, con un passo concreto: un esempio, una call o un preventivo.
 
-Il bot ricorda ogni prospect. Prima dell'analisi, un'occhiata veloce con un modello piccolo (Claude Haiku) legge lo username negli screenshot; se il prospect è già noto, Claude riceve anche la sua memoria: profilo, ultima lettura della conversazione, un riassunto e gli ultimi messaggi. Dopo l'analisi la memoria si aggiorna, e ogni risposta dice se il prospect è nuovo, già in memoria o non salvato. La memoria di un prospect non entra mai nel contesto di un altro: due letture degli stessi screenshot devono concordare prima di scrivere qualcosa. Il testo incollato non indica il prospect e per ora resta senza memoria.
+Il bot ricorda ogni prospect. Prima dell'analisi, un'occhiata veloce con un modello piccolo (Claude Haiku) legge lo username negli screenshot; se il prospect è già noto, Claude riceve anche la sua memoria: profilo, ultima lettura della conversazione, un riassunto e gli ultimi messaggi. Dopo l'analisi la memoria si aggiorna, e ogni risposta dice se il prospect è nuovo, già in memoria o non salvato. La memoria di un prospect non entra mai nel contesto di un altro: due letture degli stessi screenshot devono concordare prima di scrivere qualcosa.
+
+Il bot gestisce la conversazione, non solo i messaggi:
+
+- ricorda le obiezioni ancora aperte del prospect e le promesse da mantenere, di Alex e del prospect, e le risposte ne tengono conto;
+- sa che giorno è, da quanto dura la conversazione e quanti messaggi di Alex aspettano risposta;
+- regole nel codice decidono quando fermarsi: se il prospect chiede di non ricevere altri messaggi, dopo il saluto finale a chi non è interessato e dopo 2 follow-up senza risposta (il prospect diventa GHOSTED) non arrivano suggerimenti, finché il prospect non riscrive; al loro posto il bot spiega perché;
+- tiene lo storico dei cambi di stage di ogni conversazione.
+
+Anche il testo incollato usa la memoria: basta rispondere (in Telegram) a un messaggio del bot su quel prospect, oppure scrivere @username nella prima riga e sotto la conversazione. Senza uno dei due il bot risponde lo stesso, ma non sa di chi è la conversazione e non la ricorda.
 
 Claude decide da solo se uno screenshot mostra un profilo o una conversazione, e non suggerisce nulla quando non va scritto nulla. Mentre lavora la chat mostra "sta scrivendo…". Comandi, link e @username Instagram ricevono una risposta immediata. Gli screenshot restano solo in memoria e vengono cancellati subito dopo l'analisi: nel database finiscono solo le informazioni estratte e al massimo gli ultimi 50 messaggi per prospect. Gira su Hostinger all'indirizzo `https://aboutly.site`, con il database MySQL (MariaDB) dell'hosting.
 
@@ -115,8 +124,13 @@ src/
 │   ├── outputs.ts              output strutturati: schemi Zod e conversione nel dominio
 │   ├── runs.ts                 registro delle generazioni: costi e durate, mai il contenuto
 │   └── prompts/                istruzioni a layer versionati e richieste di ogni modalità
-├── conversations/domain.ts     vocabolario delle conversazioni: stage, intent, obiettivi, interesse
-├── copilot/screenshots.ts      caso d'uso: riconosce il prospect, carica la memoria, analizza, ricorda
+├── conversations/
+│   ├── domain.ts               vocabolario delle conversazioni: stage, intent, obiettivi, messaggi, promesse
+│   └── transition.ts           regole di transizione: quando il bot deve fermarsi
+├── copilot/
+│   ├── memory.ts               passaggi comuni: carica la memoria, applica le transizioni, ricorda, registra i costi
+│   ├── screenshots.ts          caso d'uso: riconosce il prospect negli screenshot, analizza, ricorda
+│   └── conversation.ts         caso d'uso: conversazione incollata, collegata al prospect da risposta o @username
 ├── db/
 │   ├── connection.ts           connessione a MySQL o MariaDB con Kysely e mysql2
 │   ├── migrations.ts           schema del database, applicato in ordine all'avvio

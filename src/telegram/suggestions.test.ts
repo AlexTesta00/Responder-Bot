@@ -9,6 +9,7 @@ import {
   conversationMessages,
   escapeHtml,
   memoryLine,
+  pauseMessage,
   screenshotsMessages,
 } from "./suggestions.ts";
 
@@ -51,9 +52,11 @@ describe("escapeHtml", () => {
 
 describe("screenshotsMessages", () => {
   it("presents a profile, then the first messages to copy", () => {
-    const [summary, suggestions] = screenshotsMessages(profile, {
-      type: "CREATED",
-    });
+    const [summary, suggestions] = screenshotsMessages(
+      profile,
+      { type: "CREATED" },
+      null,
+    );
 
     expect(summary).toBe(
       [
@@ -92,6 +95,7 @@ describe("screenshotsMessages", () => {
         suggestions: [{ style: "BEST", text: "Ciao </pre><b>Mario</b>" }],
       },
       null,
+      null,
     );
 
     expect(summary).toContain("bar &amp; &lt;bistrot&gt;");
@@ -110,6 +114,8 @@ describe("screenshotsMessages", () => {
         facts: [],
         hypotheses: [],
         summary: null,
+        objections: [],
+        commitments: [],
         analysis,
         suggestions: [
           { style: "BEST", text: "Dipende: cosa ti serve?" },
@@ -119,6 +125,7 @@ describe("screenshotsMessages", () => {
         note: null,
       },
       { type: "UPDATED", knownMessages: 3 },
+      null,
     );
 
     expect(summary).toBe(
@@ -142,10 +149,13 @@ describe("screenshotsMessages", () => {
         facts: [],
         hypotheses: [],
         summary: null,
+        objections: [],
+        commitments: [],
         analysis: { ...analysis, intent: "DO_NOT_CONTACT" },
         suggestions: [],
         note: "Ha chiesto di non essere contattato.",
       },
+      null,
       null,
     );
 
@@ -157,6 +167,7 @@ describe("screenshotsMessages", () => {
     const [summary] = screenshotsMessages(
       { ...profile, facts: ["1", "2", "3", "4", "5", "6"] },
       null,
+      null,
     );
 
     expect(summary?.match(/^• /gm)).toHaveLength(6);
@@ -165,7 +176,11 @@ describe("screenshotsMessages", () => {
 
   it("explains screenshots that are neither profiles nor conversations", () => {
     expect(
-      screenshotsMessages({ kind: "UNRELATED", note: "È un tramonto." }, null),
+      screenshotsMessages(
+        { kind: "UNRELATED", note: "È un tramonto." },
+        null,
+        null,
+      ),
     ).toStrictEqual([
       "🤔 Non sembra un profilo o una conversazione di Instagram.\n\n📝 È un tramonto.",
     ]);
@@ -177,6 +192,7 @@ describe("memoryLine", () => {
     [{ type: "CREATED" } as const, "Nuovo prospect"],
     [{ type: "UPDATED", knownMessages: 0 } as const, "dell'analisi precedente"],
     [{ type: "UPDATED", knownMessages: 1 } as const, "1 messaggio precedente"],
+    [{ type: "NOT_SAVED", reason: "NO_PROSPECT" } as const, "@username"],
     [{ type: "NOT_SAVED", reason: "NO_USERNAME" } as const, "username"],
     [{ type: "NOT_SAVED", reason: "OTHER_PERSON" } as const, "chi sia"],
     [{ type: "NOT_SAVED", reason: "UNAVAILABLE" } as const, "non disponibile"],
@@ -187,16 +203,71 @@ describe("memoryLine", () => {
 
 describe("conversationMessages", () => {
   it("presents the analysis of a pasted conversation and the replies", () => {
-    const [summary, suggestions] = conversationMessages({
-      facts: [],
-      hypotheses: [],
-      analysis,
-      suggestions: [{ style: "BEST", text: "Dipende: cosa ti serve?" }],
-      note: null,
-    });
+    const [summary, suggestions] = conversationMessages(
+      {
+        messages: [],
+        facts: [],
+        hypotheses: [],
+        analysis,
+        objections: [],
+        commitments: [],
+        summary: null,
+        suggestions: [{ style: "BEST", text: "Dipende: cosa ti serve?" }],
+        note: null,
+      },
+      null,
+      null,
+    );
 
     expect(summary).toContain("<b>Intent</b> PRICE_REQUEST");
     expect(suggestions).toContain("<pre>Dipende: cosa ti serve?</pre>");
+  });
+});
+
+describe("pauses and open points", () => {
+  it("shows the open objections and promises of a conversation", () => {
+    const [summary] = screenshotsMessages(
+      {
+        kind: "CONVERSATION",
+        prospect,
+        messages: [],
+        facts: [],
+        hypotheses: [],
+        summary: null,
+        objections: ["Il prezzo <alto>"],
+        commitments: [
+          { by: "ALEX", text: "Mandare un esempio" },
+          { by: "PROSPECT", text: "Farti sapere venerdì" },
+        ],
+        analysis,
+        suggestions: [{ style: "BEST", text: "Ecco l'esempio!" }],
+        note: null,
+      },
+      null,
+      null,
+    );
+
+    expect(summary).toContain(
+      "<b>Obiezioni aperte</b>\n• Il prezzo &lt;alto&gt;",
+    );
+    expect(summary).toContain(
+      "<b>Promesse</b>\n• Tu: Mandare un esempio\n• Prospect: Farti sapere venerdì",
+    );
+  });
+
+  it("shows why it suggests nothing, in place of the suggestions", () => {
+    const messages = screenshotsMessages(profile, null, "FOLLOW_UP_LIMIT");
+
+    expect(messages[1]).toBe(pauseMessage("FOLLOW_UP_LIMIT"));
+    expect(messages[1]).toContain("2 follow-up");
+  });
+
+  it.each([
+    ["DO_NOT_CONTACT", "non ricevere altri messaggi"],
+    ["CLOSED", "saluto finale"],
+    ["FOLLOW_UP_LIMIT", "senza risposta"],
+  ] as const)("explains the pause %s", (pause, expected) => {
+    expect(pauseMessage(pause)).toContain(expected);
   });
 });
 

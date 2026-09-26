@@ -14,7 +14,7 @@ const TABLE_OPTIONS = sql.raw(
  * Every change to the schema, in the order it runs, which is the order of the
  * names. A migration that has run must never change: add a new one instead.
  */
-const MIGRATIONS: Readonly<Record<string, Migration>> = {
+export const MIGRATIONS: Readonly<Record<string, Migration>> = {
   "0001_prospect_memory": {
     up: async (db) => {
       await sql`
@@ -70,6 +70,58 @@ const MIGRATIONS: Readonly<Record<string, Migration>> = {
           KEY generation_runs_created_at (created_at),
           CONSTRAINT generation_runs_prospect_fk FOREIGN KEY (prospect_id)
             REFERENCES prospects (id) ON DELETE SET NULL
+        ) ${TABLE_OPTIONS}
+      `.execute(db);
+    },
+  },
+  "0002_objections_and_commitments": {
+    up: async (db) => {
+      // Added as nullable, filled in for existing prospects, then required:
+      // the portable way to give TEXT columns a value on MySQL and MariaDB.
+      await sql`
+        ALTER TABLE prospects
+          ADD COLUMN objections TEXT NULL,
+          ADD COLUMN commitments TEXT NULL
+      `.execute(db);
+      await sql`
+        UPDATE prospects SET objections = '[]', commitments = '[]'
+      `.execute(db);
+      await sql`
+        ALTER TABLE prospects
+          MODIFY objections TEXT NOT NULL,
+          MODIFY commitments TEXT NOT NULL
+      `.execute(db);
+    },
+  },
+  "0003_stage_changes": {
+    up: async (db) => {
+      await sql`
+        CREATE TABLE prospect_stage_changes (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          prospect_id CHAR(36) CHARACTER SET ascii NOT NULL,
+          from_stage VARCHAR(40) CHARACTER SET ascii NULL,
+          to_stage VARCHAR(40) CHARACTER SET ascii NOT NULL,
+          changed_at DATETIME(3) NOT NULL,
+          PRIMARY KEY (id),
+          KEY prospect_stage_changes_prospect (prospect_id, changed_at),
+          CONSTRAINT prospect_stage_changes_prospect_fk FOREIGN KEY (prospect_id)
+            REFERENCES prospects (id) ON DELETE CASCADE
+        ) ${TABLE_OPTIONS}
+      `.execute(db);
+    },
+  },
+  "0004_telegram_messages": {
+    up: async (db) => {
+      await sql`
+        CREATE TABLE telegram_messages (
+          chat_id BIGINT NOT NULL,
+          message_id BIGINT NOT NULL,
+          prospect_id CHAR(36) CHARACTER SET ascii NOT NULL,
+          created_at DATETIME(3) NOT NULL,
+          PRIMARY KEY (chat_id, message_id),
+          KEY telegram_messages_prospect_id (prospect_id),
+          CONSTRAINT telegram_messages_prospect_fk FOREIGN KEY (prospect_id)
+            REFERENCES prospects (id) ON DELETE CASCADE
         ) ${TABLE_OPTIONS}
       `.execute(db);
     },
