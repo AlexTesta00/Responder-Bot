@@ -25,6 +25,13 @@ const envShape = {
     .transform(Number)
     // The schema's int() also rejects numbers beyond the safe integer range.
     .pipe(telegramUserIdSchema),
+  ANTHROPIC_API_KEY: z
+    .string()
+    .regex(
+      /^sk-ant-[\w-]+$/,
+      "Expected an API key from the Claude Developer Platform",
+    ),
+  ANTHROPIC_MODEL: z.string().trim().min(1).default("claude-opus-5"),
 };
 
 const envSchema = z.object(envShape).readonly();
