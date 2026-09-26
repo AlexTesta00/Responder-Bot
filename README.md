@@ -13,6 +13,8 @@ Visione, principi ingegneristici e roadmap: [docs/PROJECT.md](docs/PROJECT.md). 
 - dagli screenshot di un profilo nascono tre primi messaggi (BEST, CURIOSITY, NATURAL);
 - dagli screenshot di una conversazione, o dal suo testo incollato, nascono l'analisi (ultimo messaggio del prospect, stage, intent, interesse, prossimo obiettivo) e tre risposte (BEST, ALTERNATIVE, DIRECT).
 
+I suggerimenti portano verso i servizi di Alex: siti, landing page ed e-commerce, prenotazioni online e automazioni, software e app su misura, assistenza informatica. Il primo messaggio aggancia il prospect su qualcosa di specifico e accenna a cosa fa Alex; l'offerta vera arriva quando risponde, con un passo concreto: un esempio, una call o un preventivo.
+
 Claude decide da solo se uno screenshot mostra un profilo o una conversazione, e non suggerisce nulla quando non va scritto nulla. Mentre lavora la chat mostra "sta scrivendo…". Comandi, link e @username Instagram ricevono una risposta immediata. Gli screenshot restano solo in memoria e vengono cancellati subito dopo l'analisi. Gira su Hostinger all'indirizzo `https://aboutly.site`. La memoria dei prospect, con il database, arriva nello sprint successivo.
 
 ## Requisiti

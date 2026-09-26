@@ -2562,9 +2562,8 @@ Il risultato finale deve essere una conversazione che sembra naturale perché na
 Current development phase:
 
 ```text
-Sprint 04 — AI Engine
-(implemented; pull request to main in review, end-to-end test on the
-deployment that follows the merge)
+Sprint 04 follow-up — suggestions steered towards Alex's services
+(pull request to main in review)
 ```
 
 Current completed work:
@@ -2585,12 +2584,21 @@ Sprint 03 — Multimodal Input ✅
 (verified end-to-end on https://aboutly.site; screenshot type, profile
 or conversation, is left to the AI engine: no manual labelling)
 
-Sprint 04 — AI Engine: implemented
-(Claude through the Anthropic API instead of OpenAI, chosen by Alex;
-default model claude-opus-5. The modes map to two requests:
-SCREENSHOTS covers FIRST_MESSAGE, ANALYZE and REPLY_SCREENSHOT, since
-Claude tells profiles and conversations apart by itself;
-CONVERSATION_REPLY covers pasted conversations and FOLLOW_UP)
+Sprint 04 — AI Engine ✅
+(verified end-to-end on https://aboutly.site; Claude through the
+Anthropic API instead of OpenAI, chosen by Alex; default model
+claude-opus-5. The modes map to two requests: SCREENSHOTS covers
+FIRST_MESSAGE, ANALYZE and REPLY_SCREENSHOT, since Claude tells
+profiles and conversations apart by itself; CONVERSATION_REPLY covers
+pasted conversations and FOLLOW_UP)
+
+Sprint 04 follow-up — sales-oriented suggestions: implemented
+(chosen by Alex after the first tests: the first message hooks onto
+something specific and hints at what Alex does, aiming for a reply;
+the offer comes once the prospect answers, with a concrete next step:
+an example, a call or a quote. Services: websites, landing pages and
+e-commerce; online bookings and automations; custom software and apps;
+IT support)
 ```
 
 Next milestone:
