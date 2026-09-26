@@ -1,15 +1,21 @@
 import { z } from "zod";
 
 import { err, ok, type Result } from "../shared/result.ts";
+import {
+  telegramChatIdSchema,
+  telegramUserIdSchema,
+  type TelegramChatId,
+  type TelegramUserId,
+} from "./ids.ts";
 
 // Only the fields the bot uses: Zod drops everything else.
 const chatSchema = z.object({
-  id: z.number().int(),
+  id: telegramChatIdSchema,
   type: z.enum(["private", "group", "supergroup", "channel"]),
 });
 
 const messageSchema = z.object({
-  from: z.object({ id: z.number().int() }).optional(),
+  from: z.object({ id: telegramUserIdSchema }).optional(),
   chat: chatSchema,
   text: z.string().optional(),
 });
@@ -25,9 +31,9 @@ export type MessageContent =
   Readonly<{ type: "TEXT"; text: string }> | Readonly<{ type: "OTHER" }>;
 
 export type IncomingMessage = Readonly<{
-  chatId: number;
+  chatId: TelegramChatId;
   chatType: ChatType;
-  senderId: number;
+  senderId: TelegramUserId;
   content: MessageContent;
 }>;
 

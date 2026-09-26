@@ -5,8 +5,10 @@ import {
   isRetryable,
   type TelegramError,
 } from "./client.ts";
+import { telegramChatIdSchema } from "./ids.ts";
 
 const TOKEN = "123456:test-token_value";
+const CHAT_ID = telegramChatIdSchema.parse(42);
 
 type RecordedRequest = Readonly<{
   url: string;
@@ -50,7 +52,7 @@ describe("createTelegramClient", () => {
     );
     const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
 
-    const result = await client.sendMessage(42, "Ciao!");
+    const result = await client.sendMessage(CHAT_ID, "Ciao!");
 
     expect(result).toStrictEqual({ ok: true, value: undefined });
     expect(requests).toStrictEqual([
@@ -118,7 +120,7 @@ describe("createTelegramClient", () => {
     );
     const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
 
-    expect(await client.sendMessage(42, "Ciao!")).toStrictEqual({
+    expect(await client.sendMessage(CHAT_ID, "Ciao!")).toStrictEqual({
       ok: false,
       error: {
         type: "API_ERROR",
@@ -137,7 +139,7 @@ describe("createTelegramClient", () => {
     );
     const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
 
-    expect(await client.sendMessage(42, "Ciao!")).toStrictEqual({
+    expect(await client.sendMessage(CHAT_ID, "Ciao!")).toStrictEqual({
       ok: false,
       error: { type: "INVALID_RESPONSE", method: "sendMessage", status: 502 },
     });
@@ -163,7 +165,7 @@ describe("createTelegramClient", () => {
     );
     const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
 
-    const result = await client.sendMessage(42, "Ciao!");
+    const result = await client.sendMessage(CHAT_ID, "Ciao!");
 
     expect(result).toStrictEqual({
       ok: false,
@@ -189,7 +191,7 @@ describe("createTelegramClient", () => {
       timeoutMs: 10,
     });
 
-    expect(await client.sendMessage(42, "Ciao!")).toStrictEqual({
+    expect(await client.sendMessage(CHAT_ID, "Ciao!")).toStrictEqual({
       ok: false,
       error: { type: "NETWORK_ERROR", method: "sendMessage", timedOut: true },
     });

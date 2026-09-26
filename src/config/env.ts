@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { err, ok, type Result } from "../shared/result.ts";
+import { telegramUserIdSchema } from "../telegram/ids.ts";
 
 const envShape = {
   NODE_ENV: z
@@ -22,8 +23,8 @@ const envShape = {
     .string()
     .regex(/^\d+$/, "Expected a numeric Telegram user ID")
     .transform(Number)
-    // Zod's int() also rejects numbers beyond the safe integer range.
-    .pipe(z.number().int().positive()),
+    // The schema's int() also rejects numbers beyond the safe integer range.
+    .pipe(telegramUserIdSchema),
 };
 
 const envSchema = z.object(envShape).readonly();

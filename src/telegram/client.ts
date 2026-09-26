@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { err, ok, type Result } from "../shared/result.ts";
+import type { TelegramChatId } from "./ids.ts";
 
 const API_BASE_URL = "https://api.telegram.org";
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -52,7 +53,7 @@ export type SetWebhookOptions = Readonly<{
 
 export type TelegramClient = Readonly<{
   sendMessage: (
-    chatId: number,
+    chatId: TelegramChatId,
     text: string,
   ) => Promise<Result<void, TelegramError>>;
   setWebhook: (
