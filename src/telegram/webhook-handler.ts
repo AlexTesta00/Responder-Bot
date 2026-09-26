@@ -1,8 +1,6 @@
 import type { AiEngine, AiError } from "../ai/engine.ts";
-import {
-  logGeneration,
-  type AnalyzeScreenshots,
-} from "../copilot/screenshots.ts";
+import { logGeneration } from "../copilot/memory.ts";
+import type { AnalyzeScreenshots } from "../copilot/screenshots.ts";
 import { classifyText, type Input } from "../inputs/classify.ts";
 import {
   withDownloadedImages,

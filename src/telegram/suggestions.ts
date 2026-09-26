@@ -1,5 +1,5 @@
 import type { AiError } from "../ai/engine.ts";
-import type { MemoryOutcome } from "../copilot/screenshots.ts";
+import type { MemoryOutcome } from "../copilot/memory.ts";
 import type {
   ConversationAnalysis,
   ConversationReply,
@@ -69,6 +69,8 @@ export const memoryLine = (memory: MemoryOutcome): string => {
     }
     case "NOT_SAVED":
       switch (memory.reason) {
+        case "NO_PROSPECT":
+          return "💡 Non so di quale prospect si tratta, quindi non l'ho salvata: rispondi a un mio messaggio su quel prospect, o scrivi @username nella prima riga.";
         case "NO_USERNAME":
           return "⚠️ Non vedo lo username: questa analisi non è in memoria. La prossima volta includi uno screenshot in cui si legge.";
         case "OTHER_PERSON":
