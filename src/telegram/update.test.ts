@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseUpdate } from "./update.ts";
+import { ALLOWED_UPDATES, parseUpdate } from "./update.ts";
 
 // Shaped like real Bot API payloads, including fields the bot ignores.
 const privateMessage = (fields: Record<string, unknown>) => ({
@@ -190,6 +190,12 @@ describe("parseUpdate", () => {
       ok: false,
       error: { type: "INVALID_UPDATE", fields: ["message.chat.type"] },
     });
+  });
+});
+
+describe("ALLOWED_UPDATES", () => {
+  it("subscribes the webhook to messages and button taps", () => {
+    expect(ALLOWED_UPDATES).toStrictEqual(["message", "callback_query"]);
   });
 });
 

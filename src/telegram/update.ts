@@ -11,6 +11,9 @@ import {
   type TelegramUserId,
 } from "./ids.ts";
 
+/** The update types the bot reads: the webhook subscribes to these only. */
+export const ALLOWED_UPDATES = ["message", "callback_query"] as const;
+
 // Only the fields the bot uses: Zod drops everything else.
 const chatSchema = z.object({
   id: telegramChatIdSchema,

@@ -29,6 +29,10 @@ describe("replyTo", () => {
     expect(reply).toContain("/credito 25,40");
   });
 
+  it.each(["/start", "/help"])("explains the buttons on %s", (command) => {
+    expect(replyToText(command)).toContain("📋 copia, 🔄 altre 3");
+  });
+
   it("points unknown commands to /help", () => {
     expect(replyToText("/unknown")).toContain("/help");
   });

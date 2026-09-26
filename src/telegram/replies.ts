@@ -10,6 +10,9 @@ export type InstantInput = Exclude<
   Readonly<{ type: "SCREENSHOTS" | "TEXT" | "CREDIT" }>
 >;
 
+const BUTTONS =
+  "Sotto ogni risposta trovi i bottoni: 📋 copia, 🔄 altre 3, 🙂 più naturale, 🎯 più diretto, 💬 follow-up (quando il tuo messaggio non ha avuto risposta), 🔍 cosa ricordo del prospect.";
+
 const START = [
   "Ciao! 👋 Sono il tuo copilota per l'outreach su Instagram.",
   "",
@@ -18,6 +21,8 @@ const START = [
   "• screenshot di una conversazione, o il testo dei suoi messaggi, e ti dico a che punto è e ti propongo tre risposte.",
   "",
   "Tu scegli, correggi se vuoi e invii: io non scrivo mai a nessuno.",
+  "",
+  BUTTONS,
   "",
   "Scrivi /help per vedere i comandi.",
 ].join("\n");
@@ -29,6 +34,8 @@ const HELP = [
   "/credito – quanto hai speso questo mese e il credito che resta; con il saldo della Console, per esempio /credito 25,40, lo aggiorna",
   "",
   "Oltre ai comandi puoi mandarmi screenshot di profili e conversazioni (anche più di uno insieme), il testo di una conversazione e link o @username di profili Instagram.",
+  "",
+  BUTTONS,
 ].join("\n");
 
 /** The reply to an input the bot answers without the AI engine. */

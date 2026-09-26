@@ -12,6 +12,7 @@ import {
   type TelegramClient,
   type TelegramError,
 } from "../src/telegram/client.ts";
+import { ALLOWED_UPDATES } from "../src/telegram/update.ts";
 
 const USAGE = [
   "Usage:",
@@ -47,12 +48,14 @@ const printWebhookInfo = async (telegram: TelegramClient): Promise<void> => {
     fail(`Could not read the webhook status: ${describeFailure(info.error)}`);
   }
 
-  const { url, pendingUpdateCount, lastErrorMessage } = info.value;
+  const { url, pendingUpdateCount, lastErrorMessage, allowedUpdates } =
+    info.value;
   process.stdout.write(
     [
       `Webhook URL:     ${url === "" ? "(not set)" : url}`,
       `Pending updates: ${String(pendingUpdateCount)}`,
       `Last error:      ${lastErrorMessage ?? "none"}`,
+      `Allowed updates: ${allowedUpdates === null ? "(Telegram's default)" : allowedUpdates.join(", ")}`,
       "",
     ].join("\n"),
   );
@@ -76,9 +79,11 @@ switch (command) {
     const registered = await telegram.setWebhook({
       url: new URL(TELEGRAM_WEBHOOK_PATH, baseUrl.data).href,
       secretToken: env.value.TELEGRAM_WEBHOOK_SECRET,
-      allowedUpdates: ["message"],
-      // Messages sent while no webhook was registered are stale by now.
-      dropPendingUpdates: true,
+      // Messages and button taps: without callback_query, buttons spin.
+      allowedUpdates: [...ALLOWED_UPDATES],
+      // Registering again an active webhook, as when it gains update
+      // types, must not lose the messages waiting to be delivered.
+      dropPendingUpdates: false,
     });
     if (!registered.ok) {
       fail(`Webhook registration failed: ${describeFailure(registered.error)}`);
