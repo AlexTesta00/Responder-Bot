@@ -63,4 +63,5 @@ Da fare una volta sola in hPanel.
 ## Note tecniche
 
 - `.npmrc` imposta `include=dev`. Hostinger esegue `npm install` con le variabili dell'app, e con `NODE_ENV=production` npm salterebbe le devDependencies necessarie alla build (TypeScript).
+- Il web server di Hostinger (LiteSpeed, tramite `lsnode.js`) carica l'entry file con `require()`, che non può caricare moduli ES con top-level await: in quel caso l'app va in crash a ogni avvio (`ERR_REQUIRE_ASYNC_MODULE`) e il sito risponde 503. Per questo `src/server.ts` avvia il servizio da una funzione async, e una regola ESLint vieta il top-level await in `src/` e in `index.js`.
 - Il registro degli update già elaborati vive in memoria: a ogni riavvio riparte vuoto. Sarà spostato nel database nello sprint dedicato alla memoria dei prospect.
