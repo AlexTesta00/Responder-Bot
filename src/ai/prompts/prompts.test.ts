@@ -34,7 +34,7 @@ describe("prompt layers", () => {
 
   it("identifies each combination by its layers and versions", () => {
     expect(promptSignature(PROMPT_LAYERS.CONVERSATION_REPLY)).toBe(
-      "system-policy@1+communication-principles@1+conversation-reply@1",
+      "system-policy@2+communication-principles@2+conversation-reply@2",
     );
   });
 

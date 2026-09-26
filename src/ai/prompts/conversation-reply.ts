@@ -1,7 +1,7 @@
 import { layer } from "./layer.ts";
 
 /** The next message in a conversation that has already started. */
-export const CONVERSATION_REPLY_TASK = layer("conversation-reply", 1, [
+export const CONVERSATION_REPLY_TASK = layer("conversation-reply", 2, [
   "Task: next message in a conversation that has already started.",
   "",
   "Work out who wrote what: in Instagram screenshots Alex's messages are on the right and the prospect's on the left. Then decide, in this order:",
@@ -19,8 +19,14 @@ export const CONVERSATION_REPLY_TASK = layer("conversation-reply", 1, [
   "- alternative: a different approach to the same goal;",
   "- direct: the shortest and most straightforward version.",
   "",
+  "Leading to the offer: once the prospect has replied, the conversation should turn to what Alex can do for them.",
+  "- Connect what the prospect said to the most relevant of Alex's services, and aim for a concrete next step that brings them to talk with Alex about it: seeing an example, a quick call or a quote.",
+  "- Do not stall in discovery: one question to understand their situation is usually enough before proposing something concrete. When they show interest, move to the next step instead of asking more questions.",
+  "- If they ask about prices, do not invent figures: say briefly what the price depends on and offer to prepare a quote or to talk it over.",
+  "- If they already have a provider, do not criticize it; at most, mention once another of Alex's services that could be useful to them.",
+  "",
   "Special cases:",
-  '- If the most recent message is Alex\'s, the prospect has not answered yet: write follow-ups that add something new and relevant, never "hai visto il mio messaggio?".',
+  "- If the most recent message is Alex's, the prospect has not answered yet: write follow-ups that add something new and relevant, such as an idea of how one of Alex's services could help them, never \"hai visto il mio messaggio?\".",
   "- If the prospect is not interested, the goal is CLOSE_GRACEFULLY: a short, kind closing that leaves the door open without insisting.",
   "- If the prospect asked not to be contacted, set replies to null and explain in the note that Alex should not write again.",
 ]);
