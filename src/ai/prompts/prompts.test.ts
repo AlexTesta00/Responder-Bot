@@ -61,10 +61,10 @@ describe("prompt layers", () => {
 
   it("identifies each combination by its layers and versions", () => {
     expect(promptSignature(PROMPT_LAYERS.CONVERSATION_REPLY)).toBe(
-      "system-policy@2+communication-principles@2+pasted-conversation@1+memory@1+conversation-reply@3",
+      "system-policy@2+communication-principles@3+pasted-conversation@1+memory@1+conversation-reply@3",
     );
     expect(promptSignature(PROMPT_LAYERS.SCREENSHOTS)).toBe(
-      "system-policy@2+communication-principles@2+screenshots@3+memory@1+first-message@2+conversation-reply@3",
+      "system-policy@2+communication-principles@3+screenshots@3+memory@1+first-message@2+conversation-reply@3",
     );
   });
 
