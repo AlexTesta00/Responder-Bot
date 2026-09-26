@@ -7,7 +7,7 @@ import type { TelegramWebhookOptions } from "./routes/telegram-webhook.ts";
 
 const telegramWebhook: TelegramWebhookOptions = {
   secret: "test-webhook-secret-0123456789abcdef",
-  handleUpdate: () => Promise.resolve({ type: "REPLIED" }),
+  handleUpdate: () => Promise.resolve({ type: "REPLIED", input: "COMMAND" }),
 };
 
 type AppWithLogs = Readonly<{

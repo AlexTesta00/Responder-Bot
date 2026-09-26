@@ -29,7 +29,9 @@ const withSecret = (secret: string) => ({
   "x-telegram-bot-api-secret-token": secret,
 });
 
-const setup = async (outcome: UpdateOutcome = { type: "REPLIED" }) => {
+const setup = async (
+  outcome: UpdateOutcome = { type: "REPLIED", input: "COMMAND" },
+) => {
   const logLines: string[] = [];
   const handleUpdate = vi.fn<UpdateHandler>(() => Promise.resolve(outcome));
   const app = await buildApp({
@@ -64,7 +66,9 @@ describe("POST /telegram/webhook", () => {
     const response = await post(startUpdate);
 
     expect(response.statusCode).toBe(200);
-    expect(handleUpdate).toHaveBeenCalledExactlyOnceWith({
+    expect(handleUpdate).toHaveBeenCalledOnce();
+    // The second argument is the request logger.
+    expect(handleUpdate.mock.calls[0]?.[0]).toStrictEqual({
       type: "MESSAGE",
       updateId: 100,
       message: {
@@ -172,6 +176,7 @@ describe("webhook workflow", () => {
           allowedUserId: telegramUserIdSchema.parse(42),
           processedUpdates: createProcessedUpdates(100),
           sendMessage,
+          downloadImage: () => Promise.reject(new Error("not expected")),
         }),
       },
     });

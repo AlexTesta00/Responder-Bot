@@ -1,12 +1,15 @@
+import { classifyText, type Input } from "../inputs/classify.ts";
+import { withDownloadedImages, type DownloadImage } from "../inputs/images.ts";
+import type { Logger } from "../shared/logger.ts";
 import {
   isRetryable,
   type TelegramClient,
   type TelegramError,
 } from "./client.ts";
-import { replyTo } from "./commands.ts";
 import type { TelegramUserId } from "./ids.ts";
 import type { ProcessedUpdates } from "./processed-updates.ts";
-import type { IncomingUpdate } from "./update.ts";
+import { imageProblemReply, replyTo } from "./replies.ts";
+import type { IncomingUpdate, MessageContent } from "./update.ts";
 
 export type IgnoredReason =
   | "UNSUPPORTED_UPDATE"
@@ -15,16 +18,20 @@ export type IgnoredReason =
   | "DUPLICATE";
 
 export type UpdateOutcome =
-  | Readonly<{ type: "REPLIED" }>
+  | Readonly<{ type: "REPLIED"; input: Input["type"] }>
   | Readonly<{ type: "IGNORED"; reason: IgnoredReason }>
   | Readonly<{ type: "FAILED"; retryable: boolean; error: TelegramError }>;
 
-export type UpdateHandler = (update: IncomingUpdate) => Promise<UpdateOutcome>;
+export type UpdateHandler = (
+  update: IncomingUpdate,
+  log: Logger,
+) => Promise<UpdateOutcome>;
 
 export type UpdateHandlerDependencies = Readonly<{
   allowedUserId: TelegramUserId;
   processedUpdates: ProcessedUpdates;
   sendMessage: TelegramClient["sendMessage"];
+  downloadImage: DownloadImage;
 }>;
 
 export const isAuthorizedUser = (
@@ -37,14 +44,48 @@ const ignored = (reason: IgnoredReason): UpdateOutcome => ({
   reason,
 });
 
+const inputOf = (content: MessageContent): Input => {
+  switch (content.type) {
+    case "TEXT":
+      return classifyText(content.text);
+    case "IMAGE":
+      return {
+        type: "SCREENSHOTS",
+        images: [content.image],
+        caption: content.caption,
+      };
+    case "OTHER":
+      return { type: "UNSUPPORTED" };
+  }
+};
+
 /** Decides what to do with an update and answers the allowed user. */
-export const createUpdateHandler =
-  ({
-    allowedUserId,
-    processedUpdates,
-    sendMessage,
-  }: UpdateHandlerDependencies): UpdateHandler =>
-  async (update) => {
+export const createUpdateHandler = ({
+  allowedUserId,
+  processedUpdates,
+  sendMessage,
+  downloadImage,
+}: UpdateHandlerDependencies): UpdateHandler => {
+  const replyText = async (input: Input, log: Logger): Promise<string> => {
+    if (input.type !== "SCREENSHOTS") {
+      return replyTo(input);
+    }
+
+    // For now the screenshots are only checked: downloaded, read and wiped.
+    // The analysis will use them once the AI engine exists.
+    const checked = await withDownloadedImages(
+      input.images,
+      downloadImage,
+      () => Promise.resolve(),
+    );
+    if (checked.ok) {
+      return replyTo(input);
+    }
+    log.warn({ image_problem: checked.error }, "screenshots not processed");
+    return imageProblemReply(checked.error);
+  };
+
+  return async (update, log) => {
     if (update.type === "UNSUPPORTED") {
       return ignored("UNSUPPORTED_UPDATE");
     }
@@ -63,9 +104,10 @@ export const createUpdateHandler =
       return ignored("DUPLICATE");
     }
 
-    const sent = await sendMessage(message.chatId, replyTo(message.content));
+    const input = inputOf(message.content);
+    const sent = await sendMessage(message.chatId, await replyText(input, log));
     if (sent.ok) {
-      return { type: "REPLIED" };
+      return { type: "REPLIED", input: input.type };
     }
 
     const retryable = isRetryable(sent.error);
@@ -75,3 +117,4 @@ export const createUpdateHandler =
     }
     return { type: "FAILED", retryable, error: sent.error };
   };
+};

@@ -1,3 +1,4 @@
+import type { ImageRef } from "./images.ts";
 import { usernameFromLinks, usernameFromMention } from "./instagram.ts";
 
 export type Command = "start" | "help";
@@ -9,6 +10,16 @@ export type TextInput =
   | Readonly<{ type: "INSTAGRAM_PROFILE"; username: string }>
   | Readonly<{ type: "LINK"; url: string }>
   | Readonly<{ type: "TEXT"; text: string }>;
+
+/** Everything the bot can receive. */
+export type Input =
+  | TextInput
+  | Readonly<{
+      type: "SCREENSHOTS";
+      images: readonly ImageRef[];
+      caption: string | null;
+    }>
+  | Readonly<{ type: "UNSUPPORTED" }>;
 
 /** Name of commands such as "/start", "/help@SomeBot" or "/start ref-42". */
 const commandName = (text: string): string | undefined =>
