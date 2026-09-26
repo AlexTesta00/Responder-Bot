@@ -85,3 +85,43 @@ describe("request logging", () => {
     expect(logLines.join("\n")).not.toContain("header-secret");
   });
 });
+
+describe("error handling", () => {
+  it("hides the details of unexpected errors from the response", async () => {
+    const { app, logLines } = await buildAppWithLogs();
+    app.get("/failing", () => {
+      throw new Error("internal detail that must not leak");
+    });
+
+    const response = await app.inject({ method: "GET", url: "/failing" });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toStrictEqual({
+      statusCode: 500,
+      error: "Internal Server Error",
+      message: "Internal Server Error",
+    });
+    expect(logLines.join("\n")).toContain("internal detail that must not leak");
+  });
+
+  it("describes errors caused by the request", async () => {
+    const { app } = await buildAppWithLogs();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/telegram/webhook",
+      headers: {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": telegramWebhook.secret,
+      },
+      payload: "{not json",
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      statusCode: 400,
+      error: "Bad Request",
+    });
+    expect(response.body).toContain("JSON");
+  });
+});
