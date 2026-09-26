@@ -8,6 +8,22 @@ const envShape = {
     .default("development"),
   HOST: z.string().trim().min(1).default("0.0.0.0"),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
+  TELEGRAM_BOT_TOKEN: z
+    .string()
+    .regex(/^\d+:[\w-]+$/, "Expected the bot token issued by @BotFather"),
+  // Telegram accepts 1-256 characters; 32 is the minimum we consider strong.
+  TELEGRAM_WEBHOOK_SECRET: z
+    .string()
+    .regex(
+      /^[\w-]{32,256}$/,
+      "Expected 32-256 letters, digits, underscores or hyphens",
+    ),
+  TELEGRAM_ALLOWED_USER_ID: z
+    .string()
+    .regex(/^\d+$/, "Expected a numeric Telegram user ID")
+    .transform(Number)
+    // Zod's int() also rejects numbers beyond the safe integer range.
+    .pipe(z.number().int().positive()),
 };
 
 const envSchema = z.object(envShape).readonly();
