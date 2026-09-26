@@ -19,7 +19,8 @@
     "test:coverage": "vitest run --coverage",
     "lint": "eslint . --max-warnings=0 && prettier --check .",
     "format": "prettier --write .",
-    "check": "npm run lint && npm run typecheck && npm test && npm run build"
+    "check": "npm run lint && npm run typecheck && npm test && npm run build",
+    "telegram:webhook": "node --env-file-if-exists=.env scripts/telegram-webhook.ts"
   },
   "devDependencies": {
     "@eslint-community/eslint-plugin-eslint-comments": "^4.8.1",
