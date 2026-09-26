@@ -27,15 +27,40 @@ import {
 type ContentBlock = Anthropic.Beta.Messages.BetaContentBlockParam;
 type Message = Anthropic.Beta.Messages.BetaMessage;
 
-// Room for the model's adaptive thinking as well as its answer.
-const MAX_TOKENS = 16_000;
-
-// Recognizing the prospect only returns a username and a name.
-const IDENTITY_MAX_TOKENS = 1_024;
-
 // If the model declines a request, the API re-runs it on the fallback model
 // Anthropic recommends for that kind of refusal.
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
+
+type ModeSettings = Readonly<{
+  /** The main model, or the small and fast one. */
+  tier: "MAIN" | "FAST";
+  maxTokens: number;
+  /** How much the model reasons; null leaves the model's default. */
+  effort: "medium" | "high" | null;
+  /** Whether a refusal is retried on the fallback model. */
+  fallback: boolean;
+}>;
+
+// Only the analyses need the large model, its effort and its fallback, with
+// room for adaptive thinking as well as the answer. Recognizing the prospect
+// only returns a username and a name.
+const ANALYSIS: ModeSettings = {
+  tier: "MAIN",
+  maxTokens: 16_000,
+  effort: "high",
+  fallback: true,
+};
+
+const MODE_SETTINGS = {
+  PROSPECT_IDENTITY: {
+    tier: "FAST",
+    maxTokens: 1_024,
+    effort: null,
+    fallback: false,
+  },
+  SCREENSHOTS: ANALYSIS,
+  CONVERSATION_REPLY: ANALYSIS,
+} satisfies Record<PromptMode, ModeSettings>;
 
 // The schemas as the SDK adapts them for strict structured outputs; the
 // answers are then validated against the original Zod schemas.
@@ -177,8 +202,7 @@ export const createClaudeEngine = ({
     toDomain: (output: Output) => Result<T, InvalidOutput>,
   ): Promise<Generation<T>> => {
     const layers = PROMPT_LAYERS[mode];
-    // Only the analysis needs the large model, its effort and its fallback.
-    const quick = mode === "PROSPECT_IDENTITY";
+    const settings: ModeSettings = MODE_SETTINGS[mode];
     const format = {
       type: "json_schema",
       schema: OUTPUT_SCHEMAS[mode],
@@ -196,14 +220,14 @@ export const createClaudeEngine = ({
       stopReason: null,
     };
 
-    const requested = quick ? fastModel : model;
+    const requested = settings.tier === "FAST" ? fastModel : model;
     try {
       const message = await client.beta.messages.create({
         model: requested,
-        max_tokens: quick ? IDENTITY_MAX_TOKENS : MAX_TOKENS,
-        ...(quick
-          ? {}
-          : { betas: [FALLBACK_BETA], fallbacks: "default" as const }),
+        max_tokens: settings.maxTokens,
+        ...(settings.fallback
+          ? { betas: [FALLBACK_BETA], fallbacks: "default" as const }
+          : {}),
         system: [
           {
             type: "text",
@@ -212,7 +236,10 @@ export const createClaudeEngine = ({
           },
         ],
         messages: [{ role: "user", content: [...content] }],
-        output_config: quick ? { format } : { effort: "high", format },
+        output_config:
+          settings.effort === null
+            ? { format }
+            : { effort: settings.effort, format },
       });
       return {
         result: resultOf(message, schema, toDomain),
