@@ -1,10 +1,28 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  canonicalUsername,
   usernameFromLinks,
   usernameFromMention,
   usernameFromProfileUrl,
 } from "./instagram.ts";
+
+describe("canonicalUsername", () => {
+  it.each([
+    ["mariofit", "mariofit"],
+    ["@MarioFit", "mariofit"],
+    [" coach.marco_ ", "coach.marco_"],
+  ])("reads %j as %j", (value, username) => {
+    expect(canonicalUsername(value)).toBe(username);
+  });
+
+  it.each(["", "@", "mario fit", "mario-fit", "a".repeat(31), "explore"])(
+    "rejects %j",
+    (value) => {
+      expect(canonicalUsername(value)).toBeNull();
+    },
+  );
+});
 
 describe("usernameFromProfileUrl", () => {
   it.each([

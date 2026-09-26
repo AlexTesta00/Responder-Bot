@@ -59,6 +59,13 @@ export const usernameFromProfileUrl = (candidate: string): string | null => {
     : null;
 };
 
+/**
+ * The form of a username the bot stores and compares, from "name" or
+ * "@Name"; null if it cannot be an Instagram username.
+ */
+export const canonicalUsername = (value: string): string | null =>
+  normalizeUsername(value.trim().replace(/^@/, ""));
+
 /** Username written as a mention, such as "@name". */
 export const usernameFromMention = (text: string): string | null => {
   const name = /^@([\w.]+)$/.exec(text)?.[1];
