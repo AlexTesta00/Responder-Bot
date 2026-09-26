@@ -80,6 +80,27 @@ describe("createTelegramClient", () => {
     });
   });
 
+  it("never sends half of an emoji, which Telegram refuses", async () => {
+    const { fetchFn, requests } = fakeFetch(() =>
+      jsonResponse(200, { ok: true, result: { message_id: 1 } }),
+    );
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+    const half = "😀".slice(0, 1);
+
+    await client.sendMessage(CHAT_ID, `Ciao ${half}`, {
+      keyboard: [
+        [{ type: "COPY", label: "📋", text: `Ok ${half}`, primary: false }],
+      ],
+    });
+
+    expect(requests[0]?.body).toMatchObject({
+      text: "Ciao �",
+      reply_markup: {
+        inline_keyboard: [[{ copy_text: { text: "Ok �" } }]],
+      },
+    });
+  });
+
   it("sends buttons under a message, in reply to another one", async () => {
     const { fetchFn, requests } = fakeFetch(() =>
       jsonResponse(200, { ok: true, result: { message_id: 8 } }),

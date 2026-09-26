@@ -71,10 +71,13 @@ export const section = (title: string, items: readonly string[]): string[] =>
           .map((item) => `• ${escapeHtml(item)}`),
       ];
 
-const quoted = (text: string): string =>
-  text.length <= MAX_QUOTED_LENGTH
+// Cut by code points: halving an emoji would leave text Telegram refuses.
+const quoted = (text: string): string => {
+  const characters = Array.from(text);
+  return characters.length <= MAX_QUOTED_LENGTH
     ? text
-    : `${text.slice(0, MAX_QUOTED_LENGTH).trimEnd()}…`;
+    : `${characters.slice(0, MAX_QUOTED_LENGTH).join("").trimEnd()}…`;
+};
 
 /** Tells Alex whether the prospect's history was used and kept. */
 export const memoryLine = (memory: MemoryOutcome): string => {

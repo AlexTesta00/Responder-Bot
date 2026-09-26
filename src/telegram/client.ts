@@ -172,7 +172,7 @@ const buttonParams = (button: InlineButton): Record<string, unknown> => {
     case "COPY":
       return {
         text: button.label,
-        copy_text: { text: button.text },
+        copy_text: { text: button.text.toWellFormed() },
         // Green on the clients that support button styles (Bot API 9.4).
         ...(button.primary ? { style: "success" } : {}),
       };
@@ -181,14 +181,17 @@ const buttonParams = (button: InlineButton): Record<string, unknown> => {
   }
 };
 
-/** The body of sendMessage: options appear only when they are given. */
+/**
+ * The body of sendMessage: options appear only when they are given. Texts
+ * are made well-formed, since Telegram refuses a lone half of an emoji.
+ */
 const messageParams = (
   chatId: TelegramChatId,
   text: string,
   { parseMode, keyboard, replyTo }: SendOptions = {},
 ): Record<string, unknown> => ({
   chat_id: chatId,
-  text,
+  text: text.toWellFormed(),
   ...(parseMode === undefined ? {} : { parse_mode: parseMode }),
   ...(keyboard === undefined
     ? {}

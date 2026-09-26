@@ -260,6 +260,23 @@ describe("screenshotsAnswer", () => {
     expect(html).toContain(`↩️ «${"a".repeat(120)}…»`);
   });
 
+  it("never cuts an emoji in half when quoting", () => {
+    const { html } = unlinkedScreenshots(
+      {
+        ...conversation,
+        analysis: {
+          ...analysis,
+          lastProspectMessage: `${"a".repeat(119)}😀${"b".repeat(50)}`,
+        },
+      },
+      null,
+      null,
+    );
+
+    expect(html).toContain(`↩️ «${"a".repeat(119)}😀…»`);
+    expect(html.isWellFormed()).toBe(true);
+  });
+
   it("says so when no message should be sent, with the reason in sight", () => {
     const { html, keyboard } = unlinkedScreenshots(
       {
