@@ -38,10 +38,87 @@ describe("parseUpdate", () => {
     });
   });
 
-  it("keeps messages without text, such as photos, as other content", () => {
+  it("parses a photo, keeping its largest size", () => {
     expect(
-      parseUpdate(privateMessage({ photo: [{ file_id: "abc" }] })),
+      parseUpdate(
+        privateMessage({
+          photo: [
+            { file_id: "small", width: 90, height: 195, file_size: 1_200 },
+            { file_id: "large", width: 1170, height: 2532, file_size: 310_000 },
+            { file_id: "medium", width: 590, height: 1280, file_size: 80_000 },
+          ],
+        }),
+      ),
     ).toMatchObject({
+      ok: true,
+      value: {
+        message: {
+          content: {
+            type: "IMAGE",
+            image: { fileId: "large", fileSize: 310_000 },
+            caption: null,
+            mediaGroupId: null,
+          },
+        },
+      },
+    });
+  });
+
+  it("keeps the caption and the album of a photo", () => {
+    expect(
+      parseUpdate(
+        privateMessage({
+          photo: [{ file_id: "large", width: 1170, height: 2532 }],
+          caption: "profilo di Mario",
+          media_group_id: "13579",
+        }),
+      ),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        message: {
+          content: {
+            type: "IMAGE",
+            image: { fileId: "large", fileSize: null },
+            caption: "profilo di Mario",
+            mediaGroupId: "13579",
+          },
+        },
+      },
+    });
+  });
+
+  it("parses an image sent as a file", () => {
+    expect(
+      parseUpdate(
+        privateMessage({
+          document: {
+            file_id: "screenshot",
+            file_name: "IMG_0001.PNG",
+            mime_type: "image/png",
+            file_size: 1_500_000,
+          },
+        }),
+      ),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        message: {
+          content: {
+            type: "IMAGE",
+            image: { fileId: "screenshot", fileSize: 1_500_000 },
+          },
+        },
+      },
+    });
+  });
+
+  it.each([
+    ["a sticker", { sticker: { file_id: "sticker", type: "regular" } }],
+    ["a voice message", { voice: { file_id: "voice", duration: 3 } }],
+    ["a PDF", { document: { file_id: "offer", mime_type: "application/pdf" } }],
+  ])("keeps %s as other content", (_description, fields) => {
+    expect(parseUpdate(privateMessage(fields))).toMatchObject({
       ok: true,
       value: { type: "MESSAGE", message: { content: { type: "OTHER" } } },
     });
