@@ -1,0 +1,13 @@
+# MariaDB for the database tests: the engine Hostinger runs.
+#
+#   docker compose up -d
+#   TEST_MYSQL_URL=mysql://root:test@127.0.0.1:3307/responder_test npm test
+#
+# Each test file creates and drops its own database on this server.
+services:
+  mariadb:
+    image: mariadb:10.11
+    environment:
+      MARIADB_ROOT_PASSWORD: test
+    ports:
+      - "127.0.0.1:3307:3306"

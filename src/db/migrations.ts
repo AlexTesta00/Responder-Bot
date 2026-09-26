@@ -1,0 +1,109 @@
+import { sql, type Kysely } from "kysely";
+import { Migrator, type Migration } from "kysely/migration";
+
+import { err, ok, type Result } from "../shared/result.ts";
+import type { Database } from "./schema.ts";
+
+// utf8mb4 stores the emojis of Instagram messages; the collation is one that
+// both MariaDB and MySQL support.
+const TABLE_OPTIONS = sql.raw(
+  "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+);
+
+/**
+ * Every change to the schema, in the order it runs, which is the order of the
+ * names. A migration that has run must never change: add a new one instead.
+ */
+const MIGRATIONS: Readonly<Record<string, Migration>> = {
+  "0001_prospect_memory": {
+    up: async (db) => {
+      await sql`
+        CREATE TABLE prospects (
+          id CHAR(36) CHARACTER SET ascii NOT NULL,
+          platform VARCHAR(20) CHARACTER SET ascii NOT NULL,
+          username VARCHAR(30) NOT NULL,
+          display_name VARCHAR(100) NULL,
+          business_type VARCHAR(100) NULL,
+          facts TEXT NOT NULL,
+          hypotheses TEXT NOT NULL,
+          stage VARCHAR(40) CHARACTER SET ascii NULL,
+          intent VARCHAR(40) CHARACTER SET ascii NULL,
+          interest VARCHAR(20) CHARACTER SET ascii NULL,
+          next_goal VARCHAR(40) CHARACTER SET ascii NULL,
+          summary TEXT NULL,
+          created_at DATETIME(3) NOT NULL,
+          updated_at DATETIME(3) NOT NULL,
+          PRIMARY KEY (id),
+          UNIQUE KEY prospects_platform_username (platform, username)
+        ) ${TABLE_OPTIONS}
+      `.execute(db);
+
+      await sql`
+        CREATE TABLE prospect_messages (
+          prospect_id CHAR(36) CHARACTER SET ascii NOT NULL,
+          seq INT UNSIGNED NOT NULL,
+          author VARCHAR(10) CHARACTER SET ascii NOT NULL,
+          body TEXT NOT NULL,
+          created_at DATETIME(3) NOT NULL,
+          PRIMARY KEY (prospect_id, seq),
+          CONSTRAINT prospect_messages_prospect_fk FOREIGN KEY (prospect_id)
+            REFERENCES prospects (id) ON DELETE CASCADE
+        ) ${TABLE_OPTIONS}
+      `.execute(db);
+
+      await sql`
+        CREATE TABLE generation_runs (
+          id CHAR(36) CHARACTER SET ascii NOT NULL,
+          prospect_id CHAR(36) CHARACTER SET ascii NULL,
+          ai_mode VARCHAR(40) CHARACTER SET ascii NOT NULL,
+          prompt VARCHAR(500) CHARACTER SET ascii NOT NULL,
+          model VARCHAR(100) CHARACTER SET ascii NULL,
+          outcome VARCHAR(40) CHARACTER SET ascii NOT NULL,
+          duration_ms INT UNSIGNED NOT NULL,
+          input_tokens INT UNSIGNED NULL,
+          output_tokens INT UNSIGNED NULL,
+          cache_read_tokens INT UNSIGNED NULL,
+          stop_reason VARCHAR(40) CHARACTER SET ascii NULL,
+          created_at DATETIME(3) NOT NULL,
+          PRIMARY KEY (id),
+          KEY generation_runs_prospect_id (prospect_id),
+          KEY generation_runs_created_at (created_at),
+          CONSTRAINT generation_runs_prospect_fk FOREIGN KEY (prospect_id)
+            REFERENCES prospects (id) ON DELETE SET NULL
+        ) ${TABLE_OPTIONS}
+      `.execute(db);
+    },
+  },
+};
+
+export type MigrationFailure = Readonly<{
+  type: "MIGRATION_FAILED";
+  /** The migration that failed, or null if none could start. */
+  migration: string | null;
+  error: unknown;
+}>;
+
+/**
+ * Applies the migrations that have not run yet and returns their names. A
+ * lock table keeps two processes from migrating at the same time.
+ */
+export const migrateToLatest = async (
+  db: Kysely<Database>,
+): Promise<Result<readonly string[], MigrationFailure>> => {
+  const migrator = new Migrator({
+    db,
+    provider: { getMigrations: () => Promise.resolve({ ...MIGRATIONS }) },
+  });
+  const { error, results = [] } = await migrator.migrateToLatest();
+
+  if (error !== undefined) {
+    return err({
+      type: "MIGRATION_FAILED",
+      migration:
+        results.find((result) => result.status === "Error")?.migrationName ??
+        null,
+      error,
+    });
+  }
+  return ok(results.map((result) => result.migrationName));
+};

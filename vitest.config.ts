@@ -7,7 +7,7 @@ export default defineConfig({
       provider: "v8",
       // Report every source file, including those no test imports yet.
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.test.ts"],
+      exclude: ["src/**/*.test.ts", "src/**/*.test-support.ts"],
       reporter: ["text", "html"],
     },
   },
