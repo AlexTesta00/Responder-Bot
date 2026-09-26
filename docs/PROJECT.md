@@ -2562,7 +2562,7 @@ Il risultato finale deve essere una conversazione che sembra naturale perché na
 Current development phase:
 
 ```text
-Sprint 01 — Foundation
+Sprint 01 — Foundation ✅ (pull request to main in review)
 ```
 
 Current completed work:
@@ -2574,14 +2574,13 @@ Telegram bot token generated ✅
 
 Telegram bot token stored locally in .env ✅
 
-Repository bootstrap in progress
+Sprint 01 — Foundation ✅
 ```
 
 Next milestone:
 
 ```text
-S01-C01
-chore(repo): bootstrap TypeScript service
+Sprint 02 — Telegram Core
 ```
 
 ## 51. Final project philosophy
