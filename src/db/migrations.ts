@@ -1,6 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import { Migrator, type Migration } from "kysely/migration";
 
+import { pricesOf } from "../ai/pricing.ts";
 import { err, ok, type Result } from "../shared/result.ts";
 import type { Database } from "./schema.ts";
 
@@ -122,6 +123,43 @@ export const MIGRATIONS: Readonly<Record<string, Migration>> = {
           KEY telegram_messages_prospect_id (prospect_id),
           CONSTRAINT telegram_messages_prospect_fk FOREIGN KEY (prospect_id)
             REFERENCES prospects (id) ON DELETE CASCADE
+        ) ${TABLE_OPTIONS}
+      `.execute(db);
+    },
+  },
+  "0005_generation_costs": {
+    up: async (db) => {
+      await sql`
+        ALTER TABLE generation_runs
+          ADD COLUMN cache_write_tokens INT UNSIGNED NULL AFTER cache_read_tokens,
+          ADD COLUMN cost_micro_usd INT UNSIGNED NULL AFTER cache_write_tokens
+      `.execute(db);
+      // The runs recorded so far get the estimate the prices of today give
+      // them. Their cache writes were not recorded, so it is a little low.
+      const { rows } = await sql<{ model: string }>`
+        SELECT DISTINCT model FROM generation_runs WHERE model IS NOT NULL
+      `.execute(db);
+      for (const { model } of rows) {
+        const prices = pricesOf(model);
+        if (prices !== undefined) {
+          await sql`
+            UPDATE generation_runs
+            SET cost_micro_usd = ROUND(
+              COALESCE(input_tokens, 0) * ${prices.input}
+              + COALESCE(output_tokens, 0) * ${prices.output}
+              + COALESCE(cache_read_tokens, 0) * ${prices.cacheRead}
+            )
+            WHERE model = ${model}
+          `.execute(db);
+        }
+      }
+      await sql`
+        CREATE TABLE credit_balances (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          amount_micro_usd BIGINT UNSIGNED NOT NULL,
+          set_at DATETIME(3) NOT NULL,
+          PRIMARY KEY (id),
+          KEY credit_balances_set_at (set_at)
         ) ${TABLE_OPTIONS}
       `.execute(db);
     },

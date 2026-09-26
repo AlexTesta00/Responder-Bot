@@ -25,6 +25,8 @@ export const createMysqlGenerationLog = (
         input_tokens: report.inputTokens,
         output_tokens: report.outputTokens,
         cache_read_tokens: report.cacheReadTokens,
+        cache_write_tokens: report.cacheWriteTokens,
+        cost_micro_usd: report.costMicroUsd,
         stop_reason: report.stopReason,
         created_at: now(),
       })

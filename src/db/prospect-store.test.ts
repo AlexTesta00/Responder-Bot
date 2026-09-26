@@ -116,6 +116,8 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("MySQL", () => {
           input_tokens: 5_400,
           output_tokens: 900,
           cache_read_tokens: 2_048,
+          cache_write_tokens: 3_000,
+          cost_micro_usd: 71_274,
           stop_reason: "end_turn",
           created_at: new Date("2026-09-26T10:00:00.250Z"),
         },

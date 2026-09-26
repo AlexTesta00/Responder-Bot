@@ -62,8 +62,18 @@ export interface GenerationRunsTable {
   input_tokens: number | null;
   output_tokens: number | null;
   cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
+  /** Estimated cost in millionths of a dollar. */
+  cost_micro_usd: number | null;
   stop_reason: string | null;
   created_at: Date;
+}
+
+/** Each credit Alex read on the Claude Console; the last one counts. */
+export interface CreditBalancesTable {
+  id: Generated<number>;
+  amount_micro_usd: number;
+  set_at: Date;
 }
 
 export interface Database {
@@ -72,4 +82,5 @@ export interface Database {
   prospect_stage_changes: ProspectStageChangesTable;
   telegram_messages: TelegramMessagesTable;
   generation_runs: GenerationRunsTable;
+  credit_balances: CreditBalancesTable;
 }

@@ -29,12 +29,14 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
         "0002_objections_and_commitments",
         "0003_stage_changes",
         "0004_telegram_messages",
+        "0005_generation_costs",
       ]),
     );
     expect(await migrateToLatest(db)).toStrictEqual(ok([]));
 
     const tables = await db.introspection.getTables();
     expect(tables.map((table) => table.name).toSorted()).toStrictEqual([
+      "credit_balances",
       "generation_runs",
       "prospect_messages",
       "prospect_stage_changes",
@@ -98,6 +100,7 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
         "0002_objections_and_commitments",
         "0003_stage_changes",
         "0004_telegram_messages",
+        "0005_generation_costs",
       ]),
     );
     expect(
@@ -106,6 +109,58 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
         .select(["objections", "commitments"])
         .execute(),
     ).toStrictEqual([{ objections: "[]", commitments: "[]" }]);
+  });
+
+  it("estimates the cost of the generations recorded before costs were", async () => {
+    const db = await freshDatabase();
+    const migrator = new Migrator({
+      db,
+      provider: { getMigrations: () => Promise.resolve({ ...MIGRATIONS }) },
+    });
+    await migrator.migrateTo("0004_telegram_messages");
+    await sql`
+      INSERT INTO generation_runs
+        (id, ai_mode, prompt, model, outcome, duration_ms,
+         input_tokens, output_tokens, cache_read_tokens, stop_reason, created_at)
+      VALUES
+        ('00000000-0000-4000-8000-000000000001', 'SCREENSHOTS', 'p@1',
+         'claude-opus-5', 'OK', 1000, 1200, 300, 800, 'end_turn', NOW(3)),
+        ('00000000-0000-4000-8000-000000000002', 'PROSPECT_IDENTITY', 'p@1',
+         'claude-haiku-4-5-20251001', 'OK', 1000, 1500, 20, NULL, 'end_turn', NOW(3)),
+        ('00000000-0000-4000-8000-000000000003', 'SCREENSHOTS', 'p@1',
+         'claude-future-9', 'OK', 1000, 1200, 300, 0, 'end_turn', NOW(3)),
+        ('00000000-0000-4000-8000-000000000004', 'SCREENSHOTS', 'p@1',
+         NULL, 'UNAVAILABLE', 1000, NULL, NULL, NULL, NULL, NOW(3))
+    `.execute(db);
+
+    await migrateToLatest(db);
+
+    expect(
+      await db
+        .selectFrom("generation_runs")
+        .select(["model", "cost_micro_usd", "cache_write_tokens"])
+        .orderBy("id")
+        .execute(),
+    ).toStrictEqual([
+      // 1200×5 + 300×25 + 800×0.5
+      {
+        model: "claude-opus-5",
+        cost_micro_usd: 13_900,
+        cache_write_tokens: null,
+      },
+      // 1500×1 + 20×5
+      {
+        model: "claude-haiku-4-5-20251001",
+        cost_micro_usd: 1_600,
+        cache_write_tokens: null,
+      },
+      {
+        model: "claude-future-9",
+        cost_micro_usd: null,
+        cache_write_tokens: null,
+      },
+      { model: null, cost_micro_usd: null, cache_write_tokens: null },
+    ]);
   });
 
   it("reports a failure without its message", async () => {
