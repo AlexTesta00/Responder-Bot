@@ -198,6 +198,145 @@ describe("createTelegramClient", () => {
   });
 });
 
+describe("file downloads", () => {
+  const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+
+  const fileResponse = (
+    body: Uint8Array | string,
+    init: ResponseInit = {},
+  ): Promise<Response> => Promise.resolve(new Response(body, init));
+
+  it("resolves a file id to its download path", async () => {
+    const { fetchFn, requests } = fakeFetch(() =>
+      jsonResponse(200, {
+        ok: true,
+        result: {
+          file_id: "abc",
+          file_unique_id: "unique",
+          file_size: 310_000,
+          file_path: "photos/file_7.jpg",
+        },
+      }),
+    );
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+
+    expect(await client.getFile("abc")).toStrictEqual({
+      ok: true,
+      value: { filePath: "photos/file_7.jpg", fileSize: 310_000 },
+    });
+    expect(requests).toStrictEqual([
+      {
+        url: `https://api.telegram.org/bot${TOKEN}/getFile`,
+        method: "POST",
+        body: { file_id: "abc" },
+      },
+    ]);
+  });
+
+  it("reports files Telegram cannot serve", async () => {
+    const { fetchFn } = fakeFetch(() =>
+      jsonResponse(200, {
+        ok: true,
+        result: { file_id: "abc", file_unique_id: "unique" },
+      }),
+    );
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+
+    expect(await client.getFile("abc")).toStrictEqual({
+      ok: true,
+      value: { filePath: null, fileSize: null },
+    });
+  });
+
+  it("downloads a file into memory", async () => {
+    const { fetchFn, requests } = fakeFetch(() => fileResponse(PNG_BYTES));
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+
+    const result = await client.downloadFile("photos/file_7.jpg", 1_000);
+
+    expect(result).toStrictEqual({ ok: true, value: PNG_BYTES });
+    expect(requests).toStrictEqual([
+      {
+        url: `https://api.telegram.org/file/bot${TOKEN}/photos/file_7.jpg`,
+        method: "GET",
+        body: undefined,
+      },
+    ]);
+  });
+
+  it("refuses a file declared larger than the limit", async () => {
+    const { fetchFn } = fakeFetch(() =>
+      fileResponse(PNG_BYTES, { headers: { "content-length": "5000" } }),
+    );
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+
+    expect(await client.downloadFile("photos/file_7.jpg", 1_000)).toStrictEqual(
+      {
+        ok: false,
+        error: {
+          type: "FILE_TOO_LARGE",
+          method: "downloadFile",
+          maxBytes: 1_000,
+        },
+      },
+    );
+  });
+
+  it("refuses a file larger than the limit", async () => {
+    const { fetchFn } = fakeFetch(() => fileResponse(new Uint8Array(2_000)));
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+
+    expect(await client.downloadFile("photos/file_7.jpg", 1_000)).toStrictEqual(
+      {
+        ok: false,
+        error: {
+          type: "FILE_TOO_LARGE",
+          method: "downloadFile",
+          maxBytes: 1_000,
+        },
+      },
+    );
+  });
+
+  it("returns errors of the file server", async () => {
+    const { fetchFn } = fakeFetch(() =>
+      fileResponse("Not Found", { status: 404, statusText: "Not Found" }),
+    );
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+
+    expect(await client.downloadFile("photos/file_7.jpg", 1_000)).toStrictEqual(
+      {
+        ok: false,
+        error: {
+          type: "API_ERROR",
+          method: "downloadFile",
+          status: 404,
+          description: "Not Found",
+        },
+      },
+    );
+  });
+
+  it("reports download failures without leaking the token", async () => {
+    const { fetchFn } = fakeFetch(() =>
+      Promise.reject(
+        new TypeError(
+          `fetch failed: https://api.telegram.org/file/bot${TOKEN}`,
+        ),
+      ),
+    );
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+
+    const result = await client.downloadFile("photos/file_7.jpg", 1_000);
+
+    expect(result).toStrictEqual({
+      ok: false,
+      error: { type: "NETWORK_ERROR", method: "downloadFile", timedOut: false },
+    });
+    expect(JSON.stringify(result)).not.toContain(TOKEN);
+  });
+});
+
 describe("isRetryable", () => {
   const apiError = (status: number): TelegramError => ({
     type: "API_ERROR",
@@ -224,6 +363,11 @@ describe("isRetryable", () => {
     [
       "a malformed success",
       { type: "INVALID_RESPONSE", method: "sendMessage", status: 200 },
+      false,
+    ],
+    [
+      "a file above the limit",
+      { type: "FILE_TOO_LARGE", method: "downloadFile", maxBytes: 1_000 },
       false,
     ],
   ] satisfies readonly (readonly [string, TelegramError, boolean])[])(

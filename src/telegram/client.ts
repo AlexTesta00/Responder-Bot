@@ -5,8 +5,10 @@ import type { TelegramChatId } from "./ids.ts";
 
 const API_BASE_URL = "https://api.telegram.org";
 const DEFAULT_TIMEOUT_MS = 10_000;
+const DEFAULT_DOWNLOAD_TIMEOUT_MS = 30_000;
 
-export type TelegramMethod = "sendMessage" | "setWebhook" | "getWebhookInfo";
+export type TelegramMethod =
+  "sendMessage" | "setWebhook" | "getWebhookInfo" | "getFile" | "downloadFile";
 
 export type TelegramError =
   | Readonly<{
@@ -24,6 +26,11 @@ export type TelegramError =
       type: "INVALID_RESPONSE";
       method: TelegramMethod;
       status: number;
+    }>
+  | Readonly<{
+      type: "FILE_TOO_LARGE";
+      method: TelegramMethod;
+      maxBytes: number;
     }>;
 
 /** Whether repeating the same call later may succeed. */
@@ -35,6 +42,8 @@ export const isRetryable = (error: TelegramError): boolean => {
       return error.status === 429 || error.status >= 500;
     case "INVALID_RESPONSE":
       return error.status >= 500;
+    case "FILE_TOO_LARGE":
+      return false;
   }
 };
 
@@ -51,6 +60,12 @@ export type SetWebhookOptions = Readonly<{
   dropPendingUpdates: boolean;
 }>;
 
+export type TelegramFile = Readonly<{
+  /** Where the file can be downloaded; missing when Telegram cannot serve it. */
+  filePath: string | null;
+  fileSize: number | null;
+}>;
+
 export type TelegramClient = Readonly<{
   sendMessage: (
     chatId: TelegramChatId,
@@ -60,12 +75,19 @@ export type TelegramClient = Readonly<{
     options: SetWebhookOptions,
   ) => Promise<Result<void, TelegramError>>;
   getWebhookInfo: () => Promise<Result<WebhookInfo, TelegramError>>;
+  getFile: (fileId: string) => Promise<Result<TelegramFile, TelegramError>>;
+  /** Downloads a file into memory, refusing anything above `maxBytes`. */
+  downloadFile: (
+    filePath: string,
+    maxBytes: number,
+  ) => Promise<Result<Uint8Array, TelegramError>>;
 }>;
 
 export type TelegramClientOptions = Readonly<{
   token: string;
   fetch?: typeof fetch;
   timeoutMs?: number;
+  downloadTimeoutMs?: number;
 }>;
 
 const apiResponseSchema = z.discriminatedUnion("ok", [
@@ -89,9 +111,26 @@ const webhookInfoSchema = z
     lastErrorMessage: info.last_error_message ?? null,
   }));
 
+const fileSchema = z
+  .object({
+    file_path: z.string().min(1).optional(),
+    file_size: z.number().int().nonnegative().optional(),
+  })
+  .transform((file): TelegramFile => ({
+    filePath: file.file_path ?? null,
+    fileSize: file.file_size ?? null,
+  }));
+
 type Delivery =
   | Readonly<{ delivered: true; response: Response }>
   | Readonly<{ delivered: false; timedOut: boolean }>;
+
+type Download =
+  | Readonly<{ read: true; bytes: Uint8Array }>
+  | Readonly<{ read: false; timedOut: boolean }>;
+
+const isTimeout = (error: unknown): boolean =>
+  error instanceof DOMException && error.name === "TimeoutError";
 
 const readJson = async (response: Response): Promise<unknown> => {
   try {
@@ -101,32 +140,36 @@ const readJson = async (response: Response): Promise<unknown> => {
   }
 };
 
+const readBytes = async (response: Response): Promise<Download> => {
+  try {
+    return { read: true, bytes: new Uint8Array(await response.arrayBuffer()) };
+  } catch (error) {
+    return { read: false, timedOut: isTimeout(error) };
+  }
+};
+
 /** Minimal Bot API client. Failures are returned as values, never thrown. */
 export const createTelegramClient = ({
   token,
   fetch: fetchFn = fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  downloadTimeoutMs = DEFAULT_DOWNLOAD_TIMEOUT_MS,
 }: TelegramClientOptions): TelegramClient => {
-  const post = async (
-    method: TelegramMethod,
-    params: Readonly<Record<string, unknown>>,
+  // Every URL contains the bot token: errors are reduced to what went wrong,
+  // never to their message, which may quote the URL.
+  const send = async (
+    url: string,
+    init: RequestInit,
+    timeout: number,
   ): Promise<Delivery> => {
     try {
-      const response = await fetchFn(`${API_BASE_URL}/bot${token}/${method}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(params),
-        signal: AbortSignal.timeout(timeoutMs),
+      const response = await fetchFn(url, {
+        ...init,
+        signal: AbortSignal.timeout(timeout),
       });
       return { delivered: true, response };
     } catch (error) {
-      // The error is dropped on purpose: its message may contain the request
-      // URL, and with it the bot token.
-      return {
-        delivered: false,
-        timedOut:
-          error instanceof DOMException && error.name === "TimeoutError",
-      };
+      return { delivered: false, timedOut: isTimeout(error) };
     }
   };
 
@@ -135,7 +178,15 @@ export const createTelegramClient = ({
     params: Readonly<Record<string, unknown>>,
     resultSchema: z.ZodType<T>,
   ): Promise<Result<T, TelegramError>> => {
-    const delivery = await post(method, params);
+    const delivery = await send(
+      `${API_BASE_URL}/bot${token}/${method}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(params),
+      },
+      timeoutMs,
+    );
     if (!delivery.delivered) {
       return err({
         type: "NETWORK_ERROR",
@@ -164,6 +215,53 @@ export const createTelegramClient = ({
       : err({ type: "INVALID_RESPONSE", method, status });
   };
 
+  const downloadFile = async (
+    filePath: string,
+    maxBytes: number,
+  ): Promise<Result<Uint8Array, TelegramError>> => {
+    const method = "downloadFile";
+    const delivery = await send(
+      `${API_BASE_URL}/file/bot${token}/${filePath}`,
+      { method: "GET" },
+      downloadTimeoutMs,
+    );
+    if (!delivery.delivered) {
+      return err({
+        type: "NETWORK_ERROR",
+        method,
+        timedOut: delivery.timedOut,
+      });
+    }
+
+    const { response } = delivery;
+    if (!response.ok) {
+      await response.body?.cancel();
+      return err({
+        type: "API_ERROR",
+        method,
+        status: response.status,
+        description: response.statusText,
+      });
+    }
+    // Refuse early when the declared size is already too large.
+    if (Number(response.headers.get("content-length")) > maxBytes) {
+      await response.body?.cancel();
+      return err({ type: "FILE_TOO_LARGE", method, maxBytes });
+    }
+
+    const download = await readBytes(response);
+    if (!download.read) {
+      return err({
+        type: "NETWORK_ERROR",
+        method,
+        timedOut: download.timedOut,
+      });
+    }
+    return download.bytes.byteLength > maxBytes
+      ? err({ type: "FILE_TOO_LARGE", method, maxBytes })
+      : ok(download.bytes);
+  };
+
   const withoutValue = <T>(
     result: Result<T, TelegramError>,
   ): Result<void, TelegramError> => (result.ok ? ok(undefined) : result);
@@ -187,5 +285,7 @@ export const createTelegramClient = ({
         ),
       ),
     getWebhookInfo: () => call("getWebhookInfo", {}, webhookInfoSchema),
+    getFile: (fileId) => call("getFile", { file_id: fileId }, fileSchema),
+    downloadFile,
   };
 };

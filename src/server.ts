@@ -15,11 +15,16 @@ import {
   type NodeEnv,
 } from "./config/env.ts";
 import { createTelegramClient } from "./telegram/client.ts";
+import { createImageDownloader } from "./telegram/files.ts";
+import { scheduleWithTimers } from "./telegram/media-group.ts";
 import { createProcessedUpdates } from "./telegram/processed-updates.ts";
 import { createUpdateHandler } from "./telegram/webhook-handler.ts";
 
 /** How many recent update ids are remembered to recognize redeliveries. */
 const PROCESSED_UPDATES_CAPACITY = 1_000;
+
+/** Screenshots stay far below this; Telegram serves bots files up to 20 MB. */
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 /** Verbose while developing, quiet in tests, informative in production. */
 const LOG_LEVEL_BY_ENV = {
@@ -52,6 +57,8 @@ const start = async (env: Env): Promise<void> => {
         allowedUserId: env.TELEGRAM_ALLOWED_USER_ID,
         processedUpdates: createProcessedUpdates(PROCESSED_UPDATES_CAPACITY),
         sendMessage: telegram.sendMessage,
+        downloadImage: createImageDownloader(telegram, MAX_IMAGE_BYTES),
+        schedule: scheduleWithTimers,
       }),
     },
   });

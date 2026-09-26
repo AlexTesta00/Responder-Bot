@@ -4,8 +4,8 @@ Il bot gira sull'hosting Node.js gestito di Hostinger (hPanel), sul dominio prin
 
 ## Come funziona
 
-- Hostinger è collegato al repository GitHub e pubblica il branch **`develop`** a ogni push: `npm install`, `npm run build`, riavvio dell'app.
-- `develop` riceve il lavoro di uno sprint quando è pronto per il test end-to-end; poi arriva su `main` con la pull request `develop → main`.
+- Hostinger è collegato al repository GitHub e pubblica il branch **`main`** a ogni push: `npm install`, `npm run build`, riavvio dell'app.
+- `main` riceve il lavoro solo con la pull request di fine sprint. Il deploy parte al merge e il test end-to-end dello sprint si fa su quel deploy, con una sola build per sprint.
 - Le variabili d'ambiente di produzione esistono solo in hPanel, mai su GitHub.
 - Telegram consegna gli update a `https://aboutly.site/telegram/webhook`.
 
@@ -14,7 +14,7 @@ Il bot gira sull'hosting Node.js gestito di Hostinger (hPanel), sul dominio prin
 Da fare una volta sola in hPanel.
 
 1. **Websites → Add Website → Deploy Web App → Import Git repository → Connect with GitHub.** Autorizza l'app GitHub di Hostinger solo sul repository `Responder-Bot`.
-2. Scegli il repository `AlexTesta00/Responder-Bot`, il branch `develop` e il dominio `aboutly.site`.
+2. Scegli il repository `AlexTesta00/Responder-Bot`, il branch `main` e il dominio `aboutly.site`.
 3. Impostazioni di build:
 
    | Campo            | Valore                   |

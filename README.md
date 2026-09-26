@@ -8,7 +8,7 @@ Visione, principi ingegneristici e roadmap: [docs/PROJECT.md](docs/PROJECT.md). 
 
 ## Stato
 
-**Sprint 02 — Telegram Core.** Il bot riceve gli update da Telegram tramite webhook, verifica il secret, risponde solo all'utente autorizzato in chat privata, elabora ogni update una sola volta e gestisce `/start` e `/help`. Gira su Hostinger all'indirizzo `https://aboutly.site`. Analisi di profili e screenshot, AI e database arrivano negli sprint successivi.
+**Sprint 03 — Multimodal Input.** Il bot riceve gli update da Telegram tramite webhook, verifica il secret e risponde solo all'utente autorizzato in chat privata. Riconosce comandi, link e @username di profili Instagram, link generici, testo e screenshot, anche inviati come album, che raggruppa in un'unica risposta. Gli screenshot vengono scaricati solo in memoria e cancellati subito dopo l'elaborazione. Gira su Hostinger all'indirizzo `https://aboutly.site`. Analisi AI e database arrivano negli sprint successivi.
 
 ## Requisiti
 
@@ -73,17 +73,25 @@ src/
 ├── server.ts                   entry point: valida l'ambiente, collega le dipendenze, avvia e chiude il server
 ├── app.ts                      costruisce l'applicazione Fastify, senza avviarla
 ├── config/env.ts               validazione delle variabili d'ambiente con Zod
+├── inputs/
+│   ├── classify.ts             cosa è un messaggio: comando, profilo, link, testo, screenshot
+│   ├── images.ts               ciclo di vita degli screenshot: scarica, elabora, cancella
+│   └── instagram.ts            username da link di profilo e @menzioni
 ├── routes/
 │   ├── health.ts               GET /health
 │   └── telegram-webhook.ts     POST /telegram/webhook: secret, parsing, esito dell'update
 ├── telegram/
-│   ├── client.ts               client della Bot API
-│   ├── commands.ts             risposte a /start e /help
+│   ├── client.ts               client della Bot API, download dei file compreso
+│   ├── files.ts                download degli screenshot con limite di dimensione
 │   ├── ids.ts                  ID utente e chat come tipi distinti
+│   ├── media-group.ts          raggruppa le foto di un album
 │   ├── processed-updates.ts    registro degli update già elaborati
-│   ├── update.ts               parsing degli update di Telegram
-│   └── webhook-handler.ts      caso d'uso: autorizza, deduplica e risponde
-└── shared/result.ts            tipo Result per gli errori attesi
+│   ├── replies.ts              testi delle risposte
+│   ├── update.ts               parsing degli update: testo, foto, immagini come file, didascalie
+│   └── webhook-handler.ts      caso d'uso: autorizza, deduplica, classifica e risponde
+└── shared/
+    ├── logger.ts               interfaccia di logging usata dal codice applicativo
+    └── result.ts               tipo Result per gli errori attesi
 scripts/telegram-webhook.ts     registrazione e stato del webhook
 index.js                        entry file per Hostinger: carica il server compilato in dist/
 ```

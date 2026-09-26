@@ -2562,7 +2562,9 @@ Il risultato finale deve essere una conversazione che sembra naturale perché na
 Current development phase:
 
 ```text
-Sprint 02 — Telegram Core ✅ (pull request to main in review)
+Sprint 03 — Multimodal Input
+(implemented; pull request to main in review, end-to-end test on the
+deployment that follows the merge)
 ```
 
 Current completed work:
@@ -2578,12 +2580,16 @@ Sprint 01 — Foundation ✅
 
 Sprint 02 — Telegram Core ✅
 (deployed early on Hostinger at https://aboutly.site, webhook verified end-to-end)
+
+Sprint 03 — Multimodal Input: implemented
+(screenshot type, profile or conversation, is left to the AI engine:
+no manual labelling)
 ```
 
 Next milestone:
 
 ```text
-Sprint 03 — Multimodal Input
+Sprint 04 — AI Engine
 ```
 
 ## 51. Final project philosophy

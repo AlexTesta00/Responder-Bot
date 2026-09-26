@@ -36,6 +36,8 @@ const describeFailure = (error: TelegramError): string => {
         : "Telegram is unreachable";
     case "INVALID_RESPONSE":
       return `unexpected response (HTTP ${String(error.status)})`;
+    case "FILE_TOO_LARGE":
+      return `file larger than ${String(error.maxBytes)} bytes`;
   }
 };
 

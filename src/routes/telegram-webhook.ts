@@ -35,7 +35,10 @@ const logOutcome = (
 
   switch (outcome.type) {
     case "REPLIED":
-      log.info(fields, "telegram update handled");
+      log.info({ ...fields, input: outcome.input }, "telegram update handled");
+      return;
+    case "COLLECTED":
+      log.info(fields, "telegram update collected into an album");
       return;
     case "IGNORED":
       if (
@@ -102,7 +105,7 @@ export const telegramWebhookRoutes: FastifyPluginCallback<
         return reply.code(200).send();
       }
 
-      const outcome = await handleUpdate(update.value);
+      const outcome = await handleUpdate(update.value, request.log);
       logOutcome(request.log, update.value, outcome);
 
       // Any status other than 2xx makes Telegram deliver the update again.

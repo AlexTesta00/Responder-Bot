@@ -41,7 +41,7 @@ GitHub Actions (`.github/workflows/ci.yml`): lint e typecheck in un job Ubuntu; 
 
 ## Deploy
 
-Hostinger (hosting Node.js gestito da hPanel) pubblica automaticamente il branch `develop` su `https://aboutly.site` a ogni push: **aggiornare `develop` significa andare in produzione**. Si usa solo il dominio principale; i sottodomini di `aboutly.site` sono riservati ad altri usi. Configurazione e diagnostica: [docs/DEPLOY.md](docs/DEPLOY.md).
+Hostinger (hosting Node.js gestito da hPanel) pubblica automaticamente il branch `main` su `https://aboutly.site` a ogni push: **ogni aggiornamento di `main` va in produzione**. Per avere una sola build per sprint, `main` riceve il lavoro solo con la pull request di fine sprint. Si usa solo il dominio principale; i sottodomini di `aboutly.site` sono riservati ad altri usi. Configurazione e diagnostica: [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Sicurezza
 
@@ -56,6 +56,6 @@ Codice, commenti e messaggi di commit in inglese; documentazione in italiano.
 
 ## Git
 
-- Branch: `main` ← `develop` ← `sprint/NN-nome`. Si lavora sul branch dello sprint.
+- Branch: `main` ← `develop` ← `sprint/NN-nome`. A inizio sprint il branch si crea dall'ultimo `main`; durante lo sprint si pusha solo quello.
 - Commit piccoli e con un solo scopo, in formato Conventional Commits. I commit del piano di sprint hanno il footer `Refs: SNN-CNN`.
-- A fine sprint `develop` avanza in fast-forward fino al branch dello sprint (e quindi va in deploy per il test end-to-end), poi si apre la pull request `develop` → `main`, che Alex revisiona e mergia con un merge commit. Mai merge diretti su `main`.
+- A fine sprint `develop` avanza in fast-forward fino al branch dello sprint e si apre la pull request `develop` → `main`. Alex la revisiona e la mergia con un merge commit; il merge fa partire il deploy, su cui si esegue il test end-to-end. Mai push diretti su `main`.
