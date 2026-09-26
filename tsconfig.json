@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    // Runtime: Node.js 24 LTS.
+    "target": "es2024",
+    "lib": ["es2024"],
+    "types": ["node"],
+
+    // Native ES modules. Sources import each other with `.ts` extensions so
+    // Node.js can run them directly; the build rewrites them to `.js`.
+    "module": "nodenext",
+    "rewriteRelativeImportExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+
+    // Type safety.
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+
+    // Emitting is the job of tsconfig.build.json.
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "*.config.ts"]
+}
