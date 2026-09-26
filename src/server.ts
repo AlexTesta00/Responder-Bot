@@ -1,9 +1,12 @@
 // Process entry point: the imperative shell. It validates the environment,
-// starts the HTTP application and closes it gracefully on shutdown signals.
+// wires the dependencies, starts the HTTP application and closes it
+// gracefully on shutdown signals.
 import type { FastifyInstance, LogLevel } from "fastify";
 
 import { buildApp } from "./app.ts";
 import { describeEnvError, parseEnv, type NodeEnv } from "./config/env.ts";
+import { createTelegramClient } from "./telegram/client.ts";
+import { createUpdateHandler } from "./telegram/webhook-handler.ts";
 
 /** Verbose while developing, quiet in tests, informative in production. */
 const LOG_LEVEL_BY_ENV = {
@@ -32,7 +35,18 @@ if (!env.ok) {
   process.exit(1);
 }
 
-const app = await buildApp({ logLevel: LOG_LEVEL_BY_ENV[env.value.NODE_ENV] });
+const telegram = createTelegramClient({ token: env.value.TELEGRAM_BOT_TOKEN });
+
+const app = await buildApp({
+  logLevel: LOG_LEVEL_BY_ENV[env.value.NODE_ENV],
+  telegramWebhook: {
+    secret: env.value.TELEGRAM_WEBHOOK_SECRET,
+    handleUpdate: createUpdateHandler({
+      allowedUserId: env.value.TELEGRAM_ALLOWED_USER_ID,
+      sendMessage: telegram.sendMessage,
+    }),
+  },
+});
 
 process.once("SIGINT", closeOnSignal(app));
 process.once("SIGTERM", closeOnSignal(app));

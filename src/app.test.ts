@@ -3,6 +3,12 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import { buildApp } from "./app.ts";
+import type { TelegramWebhookOptions } from "./routes/telegram-webhook.ts";
+
+const telegramWebhook: TelegramWebhookOptions = {
+  secret: "test-webhook-secret-0123456789abcdef",
+  handleUpdate: () => Promise.resolve({ type: "REPLIED" }),
+};
 
 type AppWithLogs = Readonly<{
   app: FastifyInstance;
@@ -19,6 +25,7 @@ const buildAppWithLogs = async (): Promise<AppWithLogs> => {
         logLines.push(line);
       },
     },
+    telegramWebhook,
   });
   onTestFinished(() => app.close());
   return { app, logLines };
@@ -26,7 +33,7 @@ const buildAppWithLogs = async (): Promise<AppWithLogs> => {
 
 describe("GET /health", () => {
   it("reports that the process is alive", async () => {
-    const app = await buildApp({ logLevel: "silent" });
+    const app = await buildApp({ logLevel: "silent", telegramWebhook });
     onTestFinished(() => app.close());
 
     const response = await app.inject({ method: "GET", url: "/health" });

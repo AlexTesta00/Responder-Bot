@@ -8,11 +8,16 @@ import {
 } from "fastify";
 
 import { healthRoutes } from "./routes/health.ts";
+import {
+  telegramWebhookRoutes,
+  type TelegramWebhookOptions,
+} from "./routes/telegram-webhook.ts";
 
 export type AppOptions = Readonly<{
   logLevel: LogLevel;
   /** Destination of the JSON log lines. Defaults to standard output. */
   logStream?: Readonly<{ write: (line: string) => void }>;
+  telegramWebhook: TelegramWebhookOptions;
 }>;
 
 /**
@@ -22,6 +27,7 @@ export type AppOptions = Readonly<{
 export const buildApp = async ({
   logLevel,
   logStream,
+  telegramWebhook,
 }: AppOptions): Promise<FastifyInstance> => {
   const app = fastify({
     logger:
@@ -34,6 +40,7 @@ export const buildApp = async ({
   });
 
   await app.register(healthRoutes);
+  await app.register(telegramWebhookRoutes, telegramWebhook);
 
   return app;
 };
