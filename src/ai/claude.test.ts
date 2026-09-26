@@ -56,24 +56,33 @@ const json = (status: number, body: unknown): Promise<Response> =>
     }),
   );
 
+const USAGE = {
+  input_tokens: 1_200,
+  output_tokens: 300,
+  cache_read_input_tokens: 800,
+  cache_creation_input_tokens: 0,
+};
+
 const message = ({
   text = JSON.stringify(profileOutput),
   stopReason = "end_turn",
-}: Readonly<{ text?: string; stopReason?: string }> = {}): Promise<Response> =>
+  model = "claude-opus-5",
+  usage = USAGE,
+}: Readonly<{
+  text?: string;
+  stopReason?: string;
+  model?: string;
+  usage?: Record<string, unknown>;
+}> = {}): Promise<Response> =>
   json(200, {
     id: "msg_test",
     type: "message",
     role: "assistant",
-    model: "claude-opus-5",
+    model,
     content: [{ type: "text", text }],
     stop_reason: stopReason,
     stop_sequence: null,
-    usage: {
-      input_tokens: 1_200,
-      output_tokens: 300,
-      cache_read_input_tokens: 800,
-      cache_creation_input_tokens: 0,
-    },
+    usage,
   });
 
 const apiError = (status: number, type: string): Promise<Response> =>
@@ -216,7 +225,78 @@ describe("createClaudeEngine", () => {
       inputTokens: 1_200,
       outputTokens: 300,
       cacheReadTokens: 800,
+      cacheWriteTokens: 0,
+      // 1200×5 + 300×25 + 800×0.5 millionths of a dollar on Opus 5.
+      costMicroUsd: 13_900,
       stopReason: "end_turn",
+    });
+  });
+
+  it("estimates the cost of the prompt cache writes", async () => {
+    const { engine } = setup(() =>
+      message({
+        usage: {
+          ...USAGE,
+          cache_creation_input_tokens: 3_000,
+          cache_creation: {
+            ephemeral_5m_input_tokens: 2_000,
+            ephemeral_1h_input_tokens: 1_000,
+          },
+        },
+      }),
+    );
+
+    const { report } = await engine.analyzeScreenshots([], null, null);
+
+    expect(report).toMatchObject({
+      cacheWriteTokens: 3_000,
+      // 13900 + 2000×6.25 + 1000×10
+      costMicroUsd: 36_400,
+    });
+  });
+
+  it("prices both the declined attempt and the fallback model", async () => {
+    const iteration = {
+      cache_creation: null,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      input_tokens: 1_000,
+      output_tokens: 100,
+    };
+    const { engine } = setup(() =>
+      message({
+        model: "claude-sonnet-5",
+        usage: {
+          ...USAGE,
+          iterations: [
+            { ...iteration, type: "message", model: null },
+            {
+              ...iteration,
+              type: "fallback_message",
+              model: "claude-sonnet-5",
+            },
+          ],
+        },
+      }),
+    );
+
+    const { report } = await engine.analyzeScreenshots([], null, null);
+
+    // Opus 5 for the refusal (1000×5 + 100×25), then Sonnet 5 (1000×2 + 100×10).
+    expect(report).toMatchObject({
+      model: "claude-sonnet-5",
+      costMicroUsd: 10_500,
+    });
+  });
+
+  it("does not guess the cost of a model without known prices", async () => {
+    const { engine } = setup(() => message({ model: "claude-future-9" }));
+
+    const { report } = await engine.analyzeScreenshots([], null, null);
+
+    expect(report).toMatchObject({
+      model: "claude-future-9",
+      costMicroUsd: null,
     });
   });
 

@@ -31,6 +31,9 @@ export type GenerationReport = Readonly<{
   inputTokens: number | null;
   outputTokens: number | null;
   cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  /** Estimated cost in millionths of a dollar, when the prices are known. */
+  costMicroUsd: number | null;
   stopReason: string | null;
 }>;
 

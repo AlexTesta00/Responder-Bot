@@ -49,6 +49,8 @@ const generated = (
     inputTokens: 900,
     outputTokens: 200,
     cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costMicroUsd: 9_500,
     stopReason: "end_turn",
   },
 });

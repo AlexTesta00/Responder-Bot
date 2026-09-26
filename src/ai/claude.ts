@@ -14,6 +14,7 @@ import {
   toScreenshotsAnalysis,
   type InvalidOutput,
 } from "./outputs.ts";
+import { costOf, type ModelUsage } from "./pricing.ts";
 import { promptSignature } from "./prompts/layer.ts";
 import {
   conversationRequest,
@@ -106,6 +107,45 @@ const resultOf = <Output, T>(
       });
 };
 
+/**
+ * The tokens each model billed. When the API fell back to another model, the
+ * iterations separate the declined attempt from the one that answered.
+ */
+const usageOf = (message: Message, requested: string): ModelUsage[] => {
+  const { usage } = message;
+  const sampled = (usage.iterations ?? []).flatMap((iteration) =>
+    iteration.type === "message" || iteration.type === "fallback_message"
+      ? [iteration]
+      : [],
+  );
+  if (sampled.length === 0) {
+    const cacheWrite = usage.cache_creation_input_tokens ?? 0;
+    return [
+      {
+        model: message.model,
+        inputTokens: usage.input_tokens,
+        outputTokens: usage.output_tokens,
+        cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+        cacheWrite5mTokens:
+          usage.cache_creation?.ephemeral_5m_input_tokens ?? cacheWrite,
+        cacheWrite1hTokens:
+          usage.cache_creation?.ephemeral_1h_input_tokens ?? 0,
+      },
+    ];
+  }
+  return sampled.map((iteration) => ({
+    model: iteration.model ?? requested,
+    inputTokens: iteration.input_tokens,
+    outputTokens: iteration.output_tokens,
+    cacheReadTokens: iteration.cache_read_input_tokens,
+    cacheWrite5mTokens:
+      iteration.cache_creation?.ephemeral_5m_input_tokens ??
+      iteration.cache_creation_input_tokens,
+    cacheWrite1hTokens:
+      iteration.cache_creation?.ephemeral_1h_input_tokens ?? 0,
+  }));
+};
+
 const errorOf = (error: unknown): AiError => {
   if (!(error instanceof Anthropic.APIError)) {
     // Not a failure of the API call: let the caller treat it as a bug.
@@ -151,12 +191,15 @@ export const createClaudeEngine = ({
       inputTokens: null,
       outputTokens: null,
       cacheReadTokens: null,
+      cacheWriteTokens: null,
+      costMicroUsd: null,
       stopReason: null,
     };
 
+    const requested = quick ? fastModel : model;
     try {
       const message = await client.beta.messages.create({
-        model: quick ? fastModel : model,
+        model: requested,
         max_tokens: quick ? IDENTITY_MAX_TOKENS : MAX_TOKENS,
         ...(quick
           ? {}
@@ -180,6 +223,8 @@ export const createClaudeEngine = ({
           inputTokens: message.usage.input_tokens,
           outputTokens: message.usage.output_tokens,
           cacheReadTokens: message.usage.cache_read_input_tokens,
+          cacheWriteTokens: message.usage.cache_creation_input_tokens,
+          costMicroUsd: costOf(usageOf(message, requested)),
           stopReason: message.stop_reason,
         },
       };

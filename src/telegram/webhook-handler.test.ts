@@ -99,6 +99,8 @@ const generation = <T>(
     inputTokens: 2_400,
     outputTokens: 350,
     cacheReadTokens: 1_800,
+    cacheWriteTokens: 0,
+    costMicroUsd: 21_650,
     stopReason: "end_turn",
   },
 });
@@ -111,6 +113,8 @@ const GENERATION_FIELDS = {
   input_tokens: 2_400,
   output_tokens: 350,
   cache_read_tokens: 1_800,
+  cache_write_tokens: 0,
+  cost_micro_usd: 21_650,
   stop_reason: "end_turn",
 };
 

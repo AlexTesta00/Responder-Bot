@@ -31,6 +31,8 @@ const generation = <T>(
     inputTokens: 1_500,
     outputTokens: 200,
     cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costMicroUsd: 12_500,
     stopReason: "end_turn",
   },
 });
