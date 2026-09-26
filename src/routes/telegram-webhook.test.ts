@@ -195,11 +195,8 @@ describe("webhook workflow", () => {
           sendMessage,
           sendTyping: notExpected,
           downloadImage: notExpected,
-          ai: {
-            identifyProspect: notExpected,
-            analyzeScreenshots: notExpected,
-            replyToConversation: notExpected,
-          },
+          analyzeScreenshots: notExpected,
+          replyToConversation: notExpected,
           schedule: () => () => undefined,
         }),
       },

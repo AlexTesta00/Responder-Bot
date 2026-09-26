@@ -1,4 +1,8 @@
-import type { AiEngine, Generation } from "../ai/engine.ts";
+import type { AiEngine, AiError } from "../ai/engine.ts";
+import {
+  logGeneration,
+  type AnalyzeScreenshots,
+} from "../copilot/screenshots.ts";
 import { classifyText, type Input } from "../inputs/classify.ts";
 import {
   withDownloadedImages,
@@ -6,6 +10,7 @@ import {
   type ImageRef,
 } from "../inputs/images.ts";
 import type { Logger } from "../shared/logger.ts";
+import type { Result } from "../shared/result.ts";
 import {
   isRetryable,
   type TelegramClient,
@@ -61,7 +66,10 @@ export type UpdateHandlerDependencies = Readonly<{
   sendMessage: TelegramClient["sendMessage"];
   sendTyping: TelegramClient["sendTyping"];
   downloadImage: DownloadImage;
-  ai: AiEngine;
+  /** Screenshots are analyzed with the memory of the prospect they show. */
+  analyzeScreenshots: AnalyzeScreenshots;
+  /** A pasted conversation names no prospect: it gets no memory yet. */
+  replyToConversation: AiEngine["replyToConversation"];
   schedule: Schedule;
 }>;
 
@@ -97,28 +105,6 @@ const inputOf = (content: MessageContent): Input => {
   }
 };
 
-/** Token usage and timings of a generation; never what it read or wrote. */
-const logGeneration = <T>(
-  { result, report }: Generation<T>,
-  log: Logger,
-): void => {
-  const fields = {
-    ai_mode: report.mode,
-    prompt: report.prompt,
-    model: report.model,
-    duration_ms: report.durationMs,
-    input_tokens: report.inputTokens,
-    output_tokens: report.outputTokens,
-    cache_read_tokens: report.cacheReadTokens,
-    stop_reason: report.stopReason,
-  };
-  if (result.ok) {
-    log.info(fields, "ai generation completed");
-  } else {
-    log.warn({ ...fields, ai_error: result.error }, "ai generation failed");
-  }
-};
-
 /** Decides what to do with an update and answers the allowed user. */
 export const createUpdateHandler = ({
   allowedUserId,
@@ -126,7 +112,8 @@ export const createUpdateHandler = ({
   sendMessage,
   sendTyping,
   downloadImage,
-  ai,
+  analyzeScreenshots,
+  replyToConversation,
   schedule,
 }: UpdateHandlerDependencies): UpdateHandler => {
   // The AI engine answers after Telegram has been acknowledged, so its
@@ -181,22 +168,19 @@ export const createUpdateHandler = ({
     }
   };
 
-  const deliverGeneration = <T>(
+  const deliverResult = <T>(
     chatId: TelegramChatId,
-    generation: Generation<T>,
+    result: Result<T, AiError>,
     present: (value: T) => readonly string[],
     log: Logger,
-  ): Promise<void> => {
-    logGeneration(generation, log);
-    const { result } = generation;
-    return deliver(
+  ): Promise<void> =>
+    deliver(
       chatId,
       result.ok
         ? present(result.value)
         : [escapeHtml(aiProblemReply(result.error))],
       log,
     );
-  };
 
   const answerScreenshots = async (
     chatId: TelegramChatId,
@@ -206,7 +190,7 @@ export const createUpdateHandler = ({
   ): Promise<void> => {
     const analyzed = await whileTyping(chatId, () =>
       withDownloadedImages(images, downloadImage, (downloaded) =>
-        ai.analyzeScreenshots(downloaded, caption, null),
+        analyzeScreenshots(downloaded, caption, log),
       ),
     );
     if (!analyzed.ok) {
@@ -218,7 +202,13 @@ export const createUpdateHandler = ({
       );
       return;
     }
-    await deliverGeneration(chatId, analyzed.value, screenshotsMessages, log);
+    const { generation, memory } = analyzed.value;
+    await deliverResult(
+      chatId,
+      generation.result,
+      (analysis) => screenshotsMessages(analysis, memory),
+      log,
+    );
   };
 
   const answerConversation = async (
@@ -227,9 +217,10 @@ export const createUpdateHandler = ({
     log: Logger,
   ): Promise<void> => {
     const generation = await whileTyping(chatId, () =>
-      ai.replyToConversation(text),
+      replyToConversation(text),
     );
-    await deliverGeneration(chatId, generation, conversationMessages, log);
+    logGeneration(generation, log);
+    await deliverResult(chatId, generation.result, conversationMessages, log);
   };
 
   const albums = createMediaGroupCollector<AlbumPhoto>({
