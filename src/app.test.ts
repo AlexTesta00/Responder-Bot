@@ -3,6 +3,12 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import { buildApp } from "./app.ts";
+import type { TelegramWebhookOptions } from "./routes/telegram-webhook.ts";
+
+const telegramWebhook: TelegramWebhookOptions = {
+  secret: "test-webhook-secret-0123456789abcdef",
+  handleUpdate: () => Promise.resolve({ type: "REPLIED" }),
+};
 
 type AppWithLogs = Readonly<{
   app: FastifyInstance;
@@ -19,6 +25,7 @@ const buildAppWithLogs = async (): Promise<AppWithLogs> => {
         logLines.push(line);
       },
     },
+    telegramWebhook,
   });
   onTestFinished(() => app.close());
   return { app, logLines };
@@ -26,7 +33,7 @@ const buildAppWithLogs = async (): Promise<AppWithLogs> => {
 
 describe("GET /health", () => {
   it("reports that the process is alive", async () => {
-    const app = await buildApp({ logLevel: "silent" });
+    const app = await buildApp({ logLevel: "silent", telegramWebhook });
     onTestFinished(() => app.close());
 
     const response = await app.inject({ method: "GET", url: "/health" });
@@ -76,5 +83,45 @@ describe("request logging", () => {
 
     expect(logLines).not.toHaveLength(0);
     expect(logLines.join("\n")).not.toContain("header-secret");
+  });
+});
+
+describe("error handling", () => {
+  it("hides the details of unexpected errors from the response", async () => {
+    const { app, logLines } = await buildAppWithLogs();
+    app.get("/failing", () => {
+      throw new Error("internal detail that must not leak");
+    });
+
+    const response = await app.inject({ method: "GET", url: "/failing" });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toStrictEqual({
+      statusCode: 500,
+      error: "Internal Server Error",
+      message: "Internal Server Error",
+    });
+    expect(logLines.join("\n")).toContain("internal detail that must not leak");
+  });
+
+  it("describes errors caused by the request", async () => {
+    const { app } = await buildAppWithLogs();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/telegram/webhook",
+      headers: {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": telegramWebhook.secret,
+      },
+      payload: "{not json",
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      statusCode: 400,
+      error: "Bad Request",
+    });
+    expect(response.body).toContain("JSON");
   });
 });

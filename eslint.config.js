@@ -4,6 +4,19 @@ import js from "@eslint/js";
 import { defineConfig, globalIgnores } from "eslint/config";
 import tseslint from "typescript-eslint";
 
+const noClasses = {
+  selector: "ClassDeclaration, ClassExpression",
+  message:
+    "Prefer functions and explicit dependencies. If a class is really the best model, disable this rule with a justification.",
+};
+
+const noTopLevelAwait = {
+  selector:
+    ":matches(AwaitExpression, ForOfStatement[await=true]):not(:function :matches(AwaitExpression, ForOfStatement))",
+  message:
+    "No top-level await in the service: Hostinger loads the entry file with require(), which cannot load ES modules that use it. Move the code into an async function.",
+};
+
 export default defineConfig(
   globalIgnores(["dist/", "coverage/"]),
   js.configs.recommended,
@@ -38,14 +51,14 @@ export default defineConfig(
       // Diagnostics go through the structured logger.
       "no-console": "error",
       "no-param-reassign": ["error", { props: true }],
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector: "ClassDeclaration, ClassExpression",
-          message:
-            "Prefer functions and explicit dependencies. If a class is really the best model, disable this rule with a justification.",
-        },
-      ],
+      "no-restricted-syntax": ["error", noClasses],
+    },
+  },
+  {
+    // The service's module graph; scripts/ may use top-level await.
+    files: ["src/**/*.ts", "index.js"],
+    rules: {
+      "no-restricted-syntax": ["error", noClasses, noTopLevelAwait],
     },
   },
   {

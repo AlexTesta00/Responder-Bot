@@ -10,6 +10,7 @@ La specifica completa (visione, principi, roadmap degli sprint) è in [docs/PROJ
 - `npm run check`: tutti i quality gate (lint, typecheck, test, build). Deve essere verde prima di ogni commit.
 - `npm test`, `npm run test:watch`, `npm run test:coverage`.
 - `npm run format`: applica Prettier.
+- `npm run telegram:webhook -- info`: stato del webhook su Telegram (sola lettura). `-- set <https-url>` lo registra: modifica il bot reale, eseguilo solo quando richiesto.
 
 ## Stack
 
@@ -34,9 +35,18 @@ Node.js ≥ 24, TypeScript 6 in strict mode, Fastify 5, Zod 4, Vitest 5, ESLint 
 - Nessun test contatta Telegram, OpenAI o altri servizi esterni: si usano adapter finti.
 - Le route si testano con `app.inject`, senza aprire porte.
 
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`): lint e typecheck in un job Ubuntu; test e build su Ubuntu, Windows e macOS. Le versioni dei runner sono fissate (niente etichette `-latest`) e si aggiornano deliberatamente.
+
+## Deploy
+
+Hostinger (hosting Node.js gestito da hPanel) pubblica automaticamente il branch `develop` su `https://aboutly.site` a ogni push: **aggiornare `develop` significa andare in produzione**. Si usa solo il dominio principale; i sottodomini di `aboutly.site` sono riservati ad altri usi. Configurazione e diagnostica: [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ## Sicurezza
 
-- Non leggere né stampare i valori di `.env`, e non committarlo mai.
+- Non leggere né stampare i valori di `.env`, e non committarlo mai. Per verificarlo, validalo con `parseEnv` senza stampare i valori.
+- Il bot risponde solo a `TELEGRAM_ALLOWED_USER_ID` e solo in chat private; il webhook richiede il secret in ogni richiesta.
 - I log non devono contenere token, secret, header di autenticazione, screenshot o conversazioni intere.
 - Una nuova variabile d'ambiente va aggiunta allo schema in `src/config/env.ts` e documentata in `.env.example`: un test verifica l'allineamento.
 
@@ -48,4 +58,4 @@ Codice, commenti e messaggi di commit in inglese; documentazione in italiano.
 
 - Branch: `main` ← `develop` ← `sprint/NN-nome`. Si lavora sul branch dello sprint.
 - Commit piccoli e con un solo scopo, in formato Conventional Commits. I commit del piano di sprint hanno il footer `Refs: SNN-CNN`.
-- A fine sprint il lavoro arriva su `main` tramite una pull request che Alex revisiona. Mai merge diretti su `main`.
+- A fine sprint `develop` avanza in fast-forward fino al branch dello sprint (e quindi va in deploy per il test end-to-end), poi si apre la pull request `develop` → `main`, che Alex revisiona e mergia con un merge commit. Mai merge diretti su `main`.
