@@ -34,6 +34,10 @@ Node.js ≥ 24, TypeScript 6 in strict mode, Fastify 5, Zod 4, Vitest 5, ESLint 
 - Nessun test contatta Telegram, OpenAI o altri servizi esterni: si usano adapter finti.
 - Le route si testano con `app.inject`, senza aprire porte.
 
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`): lint e typecheck in un job Ubuntu; test e build su Ubuntu, Windows e macOS. Le versioni dei runner sono fissate (niente etichette `-latest`) e si aggiornano deliberatamente.
+
 ## Sicurezza
 
 - Non leggere né stampare i valori di `.env`, e non committarlo mai.
