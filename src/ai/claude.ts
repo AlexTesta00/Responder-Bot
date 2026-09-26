@@ -142,9 +142,11 @@ const resultOf = <Output, T>(
 /**
  * The tokens each model billed. When the API fell back to another model, the
  * iterations separate the declined attempt from the one that answered.
+ * Attempts declined before writing anything are not billed.
  */
 const usageOf = (message: Message, requested: string): ModelUsage[] => {
   const { usage } = message;
+  const refused = message.stop_reason === "refusal";
   const sampled = (usage.iterations ?? []).flatMap((iteration) =>
     iteration.type === "message" || iteration.type === "fallback_message"
       ? [iteration]
@@ -152,6 +154,9 @@ const usageOf = (message: Message, requested: string): ModelUsage[] => {
   );
   if (sampled.length === 0) {
     const cacheWrite = usage.cache_creation_input_tokens ?? 0;
+    if (refused && usage.output_tokens === 0) {
+      return [];
+    }
     return [
       {
         model: message.model,
@@ -165,7 +170,13 @@ const usageOf = (message: Message, requested: string): ModelUsage[] => {
       },
     ];
   }
-  return sampled.map((iteration) => ({
+  // An attempt that wrote nothing was declined before any output: the API
+  // reports it but does not bill it.
+  const billed = sampled.filter(
+    (iteration, index) =>
+      iteration.output_tokens > 0 || (index === sampled.length - 1 && !refused),
+  );
+  return billed.map((iteration) => ({
     model: iteration.model ?? requested,
     inputTokens: iteration.input_tokens,
     outputTokens: iteration.output_tokens,

@@ -352,6 +352,51 @@ describe("createClaudeEngine", () => {
     );
   });
 
+  it("does not price an attempt declined before writing anything", async () => {
+    const iteration = {
+      cache_creation: null,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      input_tokens: 1_000,
+    };
+    const { engine } = setup(() =>
+      message({
+        model: "claude-sonnet-5",
+        usage: {
+          ...USAGE,
+          iterations: [
+            { ...iteration, type: "message", model: null, output_tokens: 0 },
+            {
+              ...iteration,
+              type: "fallback_message",
+              model: "claude-sonnet-5",
+              output_tokens: 100,
+            },
+          ],
+        },
+      }),
+    );
+
+    const { report } = await engine.analyzeScreenshots([], null, null);
+
+    // Only Sonnet 5: 1000×2 + 100×10.
+    expect(report).toMatchObject({ costMicroUsd: 3_000 });
+  });
+
+  it("does not price a refusal before any output", async () => {
+    const { engine } = setup(() =>
+      message({
+        stopReason: "refusal",
+        usage: { ...USAGE, output_tokens: 0 },
+      }),
+    );
+
+    const { result, report } = await engine.analyzeScreenshots([], null, null);
+
+    expect(result).toStrictEqual({ ok: false, error: { type: "REFUSED" } });
+    expect(report).toMatchObject({ costMicroUsd: 0 });
+  });
+
   it("does not guess the cost of a model without known prices", async () => {
     const { engine } = setup(() => message({ model: "claude-future-9" }));
 
