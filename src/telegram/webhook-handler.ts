@@ -179,7 +179,7 @@ export const createUpdateHandler = ({
   ): Promise<readonly number[]> => {
     const sent: number[] = [];
     for (const [index, text] of messages.entries()) {
-      const delivery = await sendMessage(chatId, text, "HTML");
+      const delivery = await sendMessage(chatId, text, { parseMode: "HTML" });
       if (!delivery.ok) {
         log.error(
           {

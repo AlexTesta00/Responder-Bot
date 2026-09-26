@@ -120,7 +120,7 @@ const GENERATION_FIELDS = {
 
 /** The calls of sendMessage delivering these HTML messages. */
 const htmlCalls = (messages: readonly string[]) =>
-  messages.map((text) => [CHAT, text, "HTML"]);
+  messages.map((text) => [CHAT, text, { parseMode: "HTML" }]);
 
 type MessageOptions = Readonly<{
   updateId?: number;
@@ -520,7 +520,7 @@ describe("suggestions", () => {
     expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
       CHAT,
       escapeHtml(aiProblemReply(OVERLOADED)),
-      "HTML",
+      { parseMode: "HTML" },
     );
     expect(log.warn).toHaveBeenCalledWith(
       {
@@ -551,7 +551,7 @@ describe("suggestions", () => {
     expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
       CHAT,
       escapeHtml(imageProblemReply({ type: "IMAGE_TOO_LARGE" })),
-      "HTML",
+      { parseMode: "HTML" },
     );
     expect(analyzeScreenshots).not.toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalledWith(
