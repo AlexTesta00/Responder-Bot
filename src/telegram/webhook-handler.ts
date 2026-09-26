@@ -5,10 +5,14 @@ import {
 } from "./client.ts";
 import { replyTo } from "./commands.ts";
 import type { TelegramUserId } from "./ids.ts";
+import type { ProcessedUpdates } from "./processed-updates.ts";
 import type { IncomingUpdate } from "./update.ts";
 
 export type IgnoredReason =
-  "UNSUPPORTED_UPDATE" | "NOT_PRIVATE_CHAT" | "UNAUTHORIZED_SENDER";
+  | "UNSUPPORTED_UPDATE"
+  | "NOT_PRIVATE_CHAT"
+  | "UNAUTHORIZED_SENDER"
+  | "DUPLICATE";
 
 export type UpdateOutcome =
   | Readonly<{ type: "REPLIED" }>
@@ -19,6 +23,7 @@ export type UpdateHandler = (update: IncomingUpdate) => Promise<UpdateOutcome>;
 
 export type UpdateHandlerDependencies = Readonly<{
   allowedUserId: TelegramUserId;
+  processedUpdates: ProcessedUpdates;
   sendMessage: TelegramClient["sendMessage"];
 }>;
 
@@ -34,7 +39,11 @@ const ignored = (reason: IgnoredReason): UpdateOutcome => ({
 
 /** Decides what to do with an update and answers the allowed user. */
 export const createUpdateHandler =
-  ({ allowedUserId, sendMessage }: UpdateHandlerDependencies): UpdateHandler =>
+  ({
+    allowedUserId,
+    processedUpdates,
+    sendMessage,
+  }: UpdateHandlerDependencies): UpdateHandler =>
   async (update) => {
     if (update.type === "UNSUPPORTED") {
       return ignored("UNSUPPORTED_UPDATE");
@@ -49,14 +58,20 @@ export const createUpdateHandler =
     if (!isAuthorizedUser(allowedUserId, message.senderId)) {
       return ignored("UNAUTHORIZED_SENDER");
     }
+    // Telegram delivers an update again when it misses our response.
+    if (!processedUpdates.claim(update.updateId)) {
+      return ignored("DUPLICATE");
+    }
 
     const sent = await sendMessage(message.chatId, replyTo(message.content));
+    if (sent.ok) {
+      return { type: "REPLIED" };
+    }
 
-    return sent.ok
-      ? { type: "REPLIED" }
-      : {
-          type: "FAILED",
-          retryable: isRetryable(sent.error),
-          error: sent.error,
-        };
+    const retryable = isRetryable(sent.error);
+    if (retryable) {
+      // Nothing was sent: let Telegram's next delivery try again.
+      processedUpdates.release(update.updateId);
+    }
+    return { type: "FAILED", retryable, error: sent.error };
   };

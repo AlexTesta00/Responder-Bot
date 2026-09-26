@@ -1,10 +1,14 @@
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { buildApp } from "../app.ts";
+import { ok } from "../shared/result.ts";
+import type { TelegramClient } from "../telegram/client.ts";
 import { telegramChatIdSchema, telegramUserIdSchema } from "../telegram/ids.ts";
-import type {
-  UpdateHandler,
-  UpdateOutcome,
+import { createProcessedUpdates } from "../telegram/processed-updates.ts";
+import {
+  createUpdateHandler,
+  type UpdateHandler,
+  type UpdateOutcome,
 } from "../telegram/webhook-handler.ts";
 import { TELEGRAM_WEBHOOK_PATH } from "./telegram-webhook.ts";
 
@@ -152,5 +156,38 @@ describe("POST /telegram/webhook", () => {
     expect(logLines).not.toHaveLength(0);
     expect(logs).not.toContain(SECRET);
     expect(logs).not.toContain("wrong-webhook-secret");
+  });
+});
+
+describe("webhook workflow", () => {
+  it("answers a redelivered update only once", async () => {
+    const sendMessage = vi.fn<TelegramClient["sendMessage"]>(() =>
+      Promise.resolve(ok(undefined)),
+    );
+    const app = await buildApp({
+      logLevel: "silent",
+      telegramWebhook: {
+        secret: SECRET,
+        handleUpdate: createUpdateHandler({
+          allowedUserId: telegramUserIdSchema.parse(42),
+          processedUpdates: createProcessedUpdates(100),
+          sendMessage,
+        }),
+      },
+    });
+    onTestFinished(() => app.close());
+    const deliver = () =>
+      app.inject({
+        method: "POST",
+        url: TELEGRAM_WEBHOOK_PATH,
+        headers: withSecret(SECRET),
+        payload: startUpdate,
+      });
+
+    const first = await deliver();
+    const redelivery = await deliver();
+
+    expect([first.statusCode, redelivery.statusCode]).toStrictEqual([200, 200]);
+    expect(sendMessage).toHaveBeenCalledOnce();
   });
 });

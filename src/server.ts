@@ -6,7 +6,11 @@ import type { FastifyInstance, LogLevel } from "fastify";
 import { buildApp } from "./app.ts";
 import { describeEnvError, parseEnv, type NodeEnv } from "./config/env.ts";
 import { createTelegramClient } from "./telegram/client.ts";
+import { createProcessedUpdates } from "./telegram/processed-updates.ts";
 import { createUpdateHandler } from "./telegram/webhook-handler.ts";
+
+/** How many recent update ids are remembered to recognize redeliveries. */
+const PROCESSED_UPDATES_CAPACITY = 1_000;
 
 /** Verbose while developing, quiet in tests, informative in production. */
 const LOG_LEVEL_BY_ENV = {
@@ -43,6 +47,7 @@ const app = await buildApp({
     secret: env.value.TELEGRAM_WEBHOOK_SECRET,
     handleUpdate: createUpdateHandler({
       allowedUserId: env.value.TELEGRAM_ALLOWED_USER_ID,
+      processedUpdates: createProcessedUpdates(PROCESSED_UPDATES_CAPACITY),
       sendMessage: telegram.sendMessage,
     }),
   },
