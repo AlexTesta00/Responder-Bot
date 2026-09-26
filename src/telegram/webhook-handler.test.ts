@@ -259,7 +259,12 @@ const setupWith = (
   const { schedule, runPending } = manualSchedule();
   const prospects = createInMemoryProspectStore();
   const copilot = {
-    ai: { identifyProspect, analyzeScreenshots, replyToConversation },
+    ai: {
+      identifyProspect,
+      analyzeScreenshots,
+      replyToConversation,
+      suggestAgain: () => Promise.reject(new Error("not expected")),
+    },
     prospects,
     generations: spending,
   };

@@ -103,6 +103,9 @@ const setup = ({
     replyToConversation: vi.fn<AiEngine["replyToConversation"]>(() =>
       Promise.reject(new Error("not expected")),
     ),
+    suggestAgain: vi.fn<AiEngine["suggestAgain"]>(() =>
+      Promise.reject(new Error("not expected")),
+    ),
   };
   const record = vi.fn<GenerationLog["record"]>(() => Promise.resolve());
   const log = {

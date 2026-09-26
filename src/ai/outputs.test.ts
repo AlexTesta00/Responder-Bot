@@ -5,9 +5,11 @@ import { z } from "zod";
 import {
   conversationReplyOutputSchema,
   MAX_SUGGESTION_LENGTH,
+  newSuggestionsOutputSchema,
   prospectIdentityOutputSchema,
   screenshotsOutputSchema,
   toConversationReply,
+  toNewSuggestions,
   toScreenshotsAnalysis,
   type ConversationReplyOutput,
   type ScreenshotsOutput,
@@ -300,6 +302,7 @@ describe("output schemas", () => {
     ["prospect identity", prospectIdentityOutputSchema],
     ["screenshots", screenshotsOutputSchema],
     ["conversation reply", conversationReplyOutputSchema],
+    ["new suggestions", newSuggestionsOutputSchema],
   ])("%s schema is valid for strict structured outputs", (_name, schema) => {
     const nodes = objectNodes(betaZodOutputFormat(schema).schema);
 
@@ -309,6 +312,103 @@ describe("output schemas", () => {
       expect(object.required.toSorted()).toStrictEqual(
         Object.keys(object.properties).toSorted(),
       );
+    }
+  });
+});
+
+describe("toNewSuggestions", () => {
+  const firstMessages = {
+    best: "Ciao Mario!",
+    curiosity: "Come gestisci gli START?",
+    natural: "Bel profilo!",
+  };
+  const newReplies = {
+    best: "Ti mando un esempio?",
+    alternative: "Come lavori oggi?",
+    direct: "Ti preparo un preventivo?",
+  };
+
+  it("reads new first messages", () => {
+    expect(
+      toNewSuggestions("FIRST_MESSAGES")({
+        first_messages: firstMessages,
+        replies: null,
+        note: null,
+      }),
+    ).toStrictEqual({
+      ok: true,
+      value: {
+        suggestions: [
+          { style: "BEST", text: "Ciao Mario!" },
+          { style: "CURIOSITY", text: "Come gestisci gli START?" },
+          { style: "NATURAL", text: "Bel profilo!" },
+        ],
+        note: null,
+      },
+    });
+  });
+
+  it.each(["REPLIES", "FOLLOW_UPS"] as const)(
+    "reads new %s in the shape of replies",
+    (kind) => {
+      expect(
+        toNewSuggestions(kind)({
+          first_messages: null,
+          replies: newReplies,
+          note: null,
+        }),
+      ).toMatchObject({
+        ok: true,
+        value: {
+          suggestions: [
+            { style: "BEST" },
+            { style: "ALTERNATIVE" },
+            { style: "DIRECT" },
+          ],
+        },
+      });
+    },
+  );
+
+  it("keeps the note when nothing should be sent", () => {
+    expect(
+      toNewSuggestions("REPLIES")({
+        first_messages: null,
+        replies: null,
+        note: "Ha chiesto di non scrivergli più.",
+      }),
+    ).toStrictEqual({
+      ok: true,
+      value: { suggestions: [], note: "Ha chiesto di non scrivergli più." },
+    });
+  });
+
+  it("rejects suggestions of another kind", () => {
+    expect(
+      toNewSuggestions("FIRST_MESSAGES")({
+        first_messages: null,
+        replies: newReplies,
+        note: null,
+      }),
+    ).toMatchObject({ ok: false, error: { type: "INVALID_OUTPUT" } });
+    expect(
+      toNewSuggestions("FOLLOW_UPS")({
+        first_messages: firstMessages,
+        replies: null,
+        note: null,
+      }),
+    ).toMatchObject({ ok: false, error: { type: "INVALID_OUTPUT" } });
+  });
+
+  it("rejects empty and overlong suggestions", () => {
+    for (const best of ["  ", "x".repeat(MAX_SUGGESTION_LENGTH + 1)]) {
+      expect(
+        toNewSuggestions("REPLIES")({
+          first_messages: null,
+          replies: { ...newReplies, best },
+          note: null,
+        }),
+      ).toMatchObject({ ok: false, error: { type: "INVALID_OUTPUT" } });
     }
   });
 });

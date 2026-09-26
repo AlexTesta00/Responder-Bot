@@ -7,9 +7,11 @@ import { err, type Result } from "../shared/result.ts";
 import type { AiEngine, AiError, Generation } from "./engine.ts";
 import {
   conversationReplyOutputSchema,
+  newSuggestionsOutputSchema,
   prospectIdentityOutputSchema,
   screenshotsOutputSchema,
   toConversationReply,
+  toNewSuggestions,
   toProspectIdentity,
   toScreenshotsAnalysis,
   type InvalidOutput,
@@ -18,6 +20,7 @@ import { costOf, type ModelUsage } from "./pricing.ts";
 import { promptSignature } from "./prompts/layer.ts";
 import {
   conversationRequest,
+  newSuggestionsRequest,
   PROMPT_LAYERS,
   PROSPECT_IDENTITY_REQUEST,
   screenshotsRequest,
@@ -60,6 +63,9 @@ const MODE_SETTINGS = {
   },
   SCREENSHOTS: ANALYSIS,
   CONVERSATION_REPLY: ANALYSIS,
+  // A button asks for text in the same voice, not a new analysis: the main
+  // model with less reasoning, to answer sooner, as Alex chose.
+  NEW_SUGGESTIONS: { ...ANALYSIS, effort: "medium" },
 } satisfies Record<PromptMode, ModeSettings>;
 
 // The schemas as the SDK adapts them for strict structured outputs; the
@@ -68,6 +74,7 @@ const OUTPUT_SCHEMAS = {
   PROSPECT_IDENTITY: betaZodOutputFormat(prospectIdentityOutputSchema).schema,
   SCREENSHOTS: betaZodOutputFormat(screenshotsOutputSchema).schema,
   CONVERSATION_REPLY: betaZodOutputFormat(conversationReplyOutputSchema).schema,
+  NEW_SUGGESTIONS: betaZodOutputFormat(newSuggestionsOutputSchema).schema,
 } satisfies Record<PromptMode, unknown>;
 
 export type ClaudeEngineOptions = Readonly<{
@@ -291,6 +298,18 @@ export const createClaudeEngine = ({
         [{ type: "text", text: conversationRequest(text, memory, today()) }],
         conversationReplyOutputSchema,
         toConversationReply,
+      ),
+    suggestAgain: (request, memory) =>
+      generate(
+        "NEW_SUGGESTIONS",
+        [
+          {
+            type: "text",
+            text: newSuggestionsRequest(request, memory, today()),
+          },
+        ],
+        newSuggestionsOutputSchema,
+        toNewSuggestions(request.kind),
       ),
   };
 };

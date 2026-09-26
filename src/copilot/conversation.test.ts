@@ -82,6 +82,7 @@ const setup = (prospects: ProspectStore = createInMemoryProspectStore()) => {
       identifyProspect: () => Promise.reject(new Error("not expected")),
       analyzeScreenshots: () => Promise.reject(new Error("not expected")),
       replyToConversation,
+      suggestAgain: () => Promise.reject(new Error("not expected")),
     },
     prospects,
     generations: { record },

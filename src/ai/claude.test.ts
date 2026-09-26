@@ -9,6 +9,7 @@ import { FIRST_MESSAGE_TASK } from "./prompts/first-message.ts";
 import { promptSignature } from "./prompts/layer.ts";
 import {
   conversationRequest,
+  newSuggestionsRequest,
   PROMPT_LAYERS,
   PROSPECT_IDENTITY_REQUEST,
   screenshotsRequest,
@@ -116,6 +117,24 @@ const setup = (respond: () => Promise<Response> = () => message()) => {
 const systemTextOf = (request: RecordedRequest | undefined): string =>
   JSON.stringify(request?.body);
 
+const MEMORY: ProspectMemory = {
+  prospect: {
+    id: "prospect-1",
+    username: "mariofit",
+    displayName: "Mario",
+    businessType: "personal trainer",
+    facts: [],
+    hypotheses: [],
+    conversation: null,
+    summary: "Primo messaggio inviato, nessuna risposta.",
+    objections: ["Teme che un sito costi troppo."],
+    commitments: [{ by: "ALEX", text: "Mandargli un esempio." }],
+    createdAt: new Date("2026-09-20T10:00:00Z"),
+    updatedAt: new Date("2026-09-20T10:00:00Z"),
+  },
+  messages: [{ author: "ALEX", text: "Ciao Mario!" }],
+};
+
 describe("createClaudeEngine", () => {
   it("asks Claude to analyze screenshots with the versioned instructions", async () => {
     const { engine, requests } = setup();
@@ -167,23 +186,7 @@ describe("createClaudeEngine", () => {
 
   it("sends what the bot remembers about the prospect", async () => {
     const { engine, requests } = setup();
-    const memory: ProspectMemory = {
-      prospect: {
-        id: "prospect-1",
-        username: "mariofit",
-        displayName: "Mario",
-        businessType: "personal trainer",
-        facts: [],
-        hypotheses: [],
-        conversation: null,
-        summary: "Primo messaggio inviato, nessuna risposta.",
-        objections: ["Teme che un sito costi troppo."],
-        commitments: [{ by: "ALEX", text: "Mandargli un esempio." }],
-        createdAt: new Date("2026-09-20T10:00:00Z"),
-        updatedAt: new Date("2026-09-20T10:00:00Z"),
-      },
-      messages: [{ author: "ALEX", text: "Ciao Mario!" }],
-    };
+    const memory = MEMORY;
 
     await engine.analyzeScreenshots(
       [{ format: "image/png", bytes: PNG }],
@@ -287,6 +290,66 @@ describe("createClaudeEngine", () => {
       model: "claude-sonnet-5",
       costMicroUsd: 10_500,
     });
+  });
+
+  it("writes new suggestions from the memory, with less reasoning", async () => {
+    const { engine, requests } = setup(() =>
+      message({
+        text: JSON.stringify({
+          first_messages: null,
+          replies: {
+            best: "Ti mando un esempio?",
+            alternative: "Come lavori oggi?",
+            direct: "Ti preparo un preventivo?",
+          },
+          note: null,
+        }),
+      }),
+    );
+    const request = {
+      action: "MORE",
+      kind: "REPLIES",
+      previous: [{ style: "BEST", text: "Dipende: cosa ti serve?" }],
+    } as const;
+
+    const generation = await engine.suggestAgain(request, MEMORY);
+
+    expect(generation.result).toMatchObject({
+      ok: true,
+      value: {
+        suggestions: [
+          { style: "BEST", text: "Ti mando un esempio?" },
+          { style: "ALTERNATIVE" },
+          { style: "DIRECT" },
+        ],
+        note: null,
+      },
+    });
+    expect(generation.report).toMatchObject({
+      mode: "NEW_SUGGESTIONS",
+      prompt: promptSignature(PROMPT_LAYERS.NEW_SUGGESTIONS),
+    });
+    const [sent] = requests;
+    expect(sent?.body).toMatchObject({
+      model: "claude-opus-5",
+      max_tokens: 16_000,
+      fallbacks: "default",
+      output_config: { effort: "medium", format: { type: "json_schema" } },
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: newSuggestionsRequest(request, MEMORY, TODAY),
+            },
+          ],
+        },
+      ],
+    });
+    expect(sent?.headers.get("anthropic-beta")).toContain(
+      "server-side-fallback",
+    );
   });
 
   it("does not guess the cost of a model without known prices", async () => {

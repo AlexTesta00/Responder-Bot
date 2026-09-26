@@ -97,12 +97,34 @@ export type ConversationReplyOutput = z.infer<
   typeof conversationReplyOutputSchema
 >;
 
+/** Output for new suggestions, asked with a button: no analysis. */
+export const newSuggestionsOutputSchema = z.object({
+  first_messages: firstMessagesOutput.nullable(),
+  replies: repliesOutput.nullable(),
+  note: z.string().nullable(),
+});
+
+export type NewSuggestionsOutput = z.infer<typeof newSuggestionsOutputSchema>;
+
 // The same content in the bot's own types.
 
 export type SuggestionStyle =
   "BEST" | "CURIOSITY" | "NATURAL" | "ALTERNATIVE" | "DIRECT";
 
 export type Suggestion = Readonly<{ style: SuggestionStyle; text: string }>;
+
+/**
+ * What a set of suggestions is for: opening a conversation (BEST,
+ * CURIOSITY, NATURAL), replying in one (BEST, ALTERNATIVE, DIRECT), or
+ * following up a message without a reply, shaped like the replies.
+ */
+export type SuggestionKind = "FIRST_MESSAGES" | "REPLIES" | "FOLLOW_UPS";
+
+/** New suggestions written from the memory, with a note when there are none. */
+export type NewSuggestions = Readonly<{
+  suggestions: readonly Suggestion[];
+  note: string | null;
+}>;
 
 /** Who the screenshots are about, as far as they show it. */
 export type ProspectIdentity = Readonly<{
@@ -320,6 +342,29 @@ export const toScreenshotsAnalysis = (
       return ok({ kind: "UNRELATED", note: output.note });
   }
 };
+
+/** Reads the suggestions of the kind asked, and only those. */
+export const toNewSuggestions =
+  (kind: SuggestionKind) =>
+  (output: NewSuggestionsOutput): Result<NewSuggestions, InvalidOutput> => {
+    const firstMessages = kind === "FIRST_MESSAGES";
+    const wanted = firstMessages ? output.first_messages : output.replies;
+    const other = firstMessages ? output.replies : output.first_messages;
+    if (wanted === null && other !== null) {
+      return invalid("suggestions of another kind");
+    }
+    const suggestions =
+      output.first_messages !== null && firstMessages
+        ? suggestionsOf([
+            ["BEST", output.first_messages.best],
+            ["CURIOSITY", output.first_messages.curiosity],
+            ["NATURAL", output.first_messages.natural],
+          ])
+        : replySuggestions(firstMessages ? null : output.replies);
+    return suggestions.ok
+      ? ok({ suggestions: suggestions.value, note: output.note })
+      : suggestions;
+  };
 
 export const toConversationReply = (
   output: ConversationReplyOutput,
