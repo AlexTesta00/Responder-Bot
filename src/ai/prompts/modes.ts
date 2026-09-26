@@ -53,11 +53,13 @@ export const PROMPT_LAYERS: Readonly<
   ],
 };
 
-/** Keeps untrusted text from closing the tag that delimits it. */
+/** Keeps untrusted text from opening or closing the tag that delimits it. */
+// The "<" of anything that looks like the tag becomes "‹": unlike removing
+// the tag, this cannot rebuild one out of nested pieces.
 const withinTag = (tag: string, text: string): string =>
   [
     `<${tag}>`,
-    text.replaceAll(new RegExp(`</?${tag}>`, "gi"), ""),
+    text.replaceAll(new RegExp(`<(?=\\s*/?\\s*${tag}\\b)`, "gi"), "‹"),
     `</${tag}>`,
   ].join("\n");
 
