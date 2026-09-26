@@ -199,13 +199,13 @@ export const createClaudeEngine = ({
         prospectIdentityOutputSchema,
         toProspectIdentity,
       ),
-    analyzeScreenshots: (images, note) =>
+    analyzeScreenshots: (images, note, memory) =>
       generate(
         "SCREENSHOTS",
         // Images first, then the request that refers to them.
         [
           ...images.map(imageBlock),
-          { type: "text", text: screenshotsRequest(note) },
+          { type: "text", text: screenshotsRequest(note, memory) },
         ],
         screenshotsOutputSchema,
         toScreenshotsAnalysis,

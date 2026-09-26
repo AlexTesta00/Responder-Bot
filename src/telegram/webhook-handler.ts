@@ -206,7 +206,7 @@ export const createUpdateHandler = ({
   ): Promise<void> => {
     const analyzed = await whileTyping(chatId, () =>
       withDownloadedImages(images, downloadImage, (downloaded) =>
-        ai.analyzeScreenshots(downloaded, caption),
+        ai.analyzeScreenshots(downloaded, caption, null),
       ),
     );
     if (!analyzed.ok) {

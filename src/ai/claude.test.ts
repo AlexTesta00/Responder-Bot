@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it } from "vitest";
 
+import type { ProspectMemory } from "../prospects/memory.ts";
 import { createClaudeEngine } from "./claude.ts";
 import type { ScreenshotsOutput } from "./outputs.ts";
 import { CONVERSATION_REPLY_TASK } from "./prompts/conversation-reply.ts";
@@ -24,9 +25,11 @@ const profileOutput: ScreenshotsOutput = {
     display_name: "Mario",
     business_type: "personal trainer",
   },
+  messages: null,
   observed_facts: ["La bio invita a scrivere START in DM."],
   hypotheses: [],
   conversation: null,
+  summary: "Personal trainer, invita a scrivere START in DM.",
   first_messages: {
     best: "Ciao Mario, quanti START ti arrivano a settimana?",
     curiosity: "Il programma START lo segui tu uno a uno?",
@@ -107,6 +110,7 @@ describe("createClaudeEngine", () => {
     await engine.analyzeScreenshots(
       [{ format: "image/png", bytes: PNG }],
       "palestra a Riccione",
+      null,
     );
 
     const [request] = requests;
@@ -131,7 +135,10 @@ describe("createClaudeEngine", () => {
                 data: Buffer.from(PNG).toString("base64"),
               },
             },
-            { type: "text", text: screenshotsRequest("palestra a Riccione") },
+            {
+              type: "text",
+              text: screenshotsRequest("palestra a Riccione", null),
+            },
           ],
         },
       ],
@@ -145,11 +152,49 @@ describe("createClaudeEngine", () => {
     );
   });
 
+  it("sends what the bot remembers about the prospect", async () => {
+    const { engine, requests } = setup();
+    const memory: ProspectMemory = {
+      prospect: {
+        id: "prospect-1",
+        username: "mariofit",
+        displayName: "Mario",
+        businessType: "personal trainer",
+        facts: [],
+        hypotheses: [],
+        conversation: null,
+        summary: "Primo messaggio inviato, nessuna risposta.",
+        createdAt: new Date("2026-09-20T10:00:00Z"),
+        updatedAt: new Date("2026-09-20T10:00:00Z"),
+      },
+      messages: [{ author: "ALEX", text: "Ciao Mario!" }],
+    };
+
+    await engine.analyzeScreenshots(
+      [{ format: "image/png", bytes: PNG }],
+      null,
+      memory,
+    );
+
+    expect(requests[0]?.body).toMatchObject({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "image" },
+            { type: "text", text: screenshotsRequest(null, memory) },
+          ],
+        },
+      ],
+    });
+  });
+
   it("turns the answer into an analysis and reports the generation", async () => {
     const { engine } = setup();
 
     const generation = await engine.analyzeScreenshots(
       [{ format: "image/png", bytes: PNG }],
+      null,
       null,
     );
 
@@ -295,7 +340,7 @@ describe("createClaudeEngine", () => {
   ])("reports %s", async (_description, answer, type) => {
     const { engine } = setup(() => message(answer));
 
-    const generation = await engine.analyzeScreenshots([], null);
+    const generation = await engine.analyzeScreenshots([], null, null);
 
     expect(generation.result).toMatchObject({ ok: false, error: { type } });
   });

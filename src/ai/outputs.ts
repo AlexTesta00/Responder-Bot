@@ -11,6 +11,7 @@ import {
   type NextGoal,
 } from "../conversations/domain.ts";
 import { canonicalUsername } from "../inputs/instagram.ts";
+import type { ConversationMessage } from "../prospects/memory.ts";
 import { err, ok, type Result } from "../shared/result.ts";
 
 // Structured outputs requested from the model. Property order matters: the
@@ -29,6 +30,11 @@ const conversationOutput = z.object({
   interest: z.enum(INTEREST_LEVELS),
   next_goal: z.enum(NEXT_GOALS),
   rationale: z.string(),
+});
+
+const messageOutput = z.object({
+  author: z.enum(["ALEX", "PROSPECT"]),
+  text: z.string(),
 });
 
 const firstMessagesOutput = z.object({
@@ -57,9 +63,12 @@ export type ProspectIdentityOutput = z.infer<
 export const screenshotsOutputSchema = z.object({
   kind: z.enum(["PROFILE", "CONVERSATION", "UNRELATED"]),
   prospect: prospectOutput.nullable(),
+  // The transcription comes first: the analysis relies on it.
+  messages: z.array(messageOutput).nullable(),
   observed_facts: z.array(z.string()),
   hypotheses: z.array(z.string()),
   conversation: conversationOutput.nullable(),
+  summary: z.string().nullable(),
   first_messages: firstMessagesOutput.nullable(),
   replies: repliesOutput.nullable(),
   note: z.string().nullable(),
@@ -115,15 +124,20 @@ export type ScreenshotsAnalysis =
       prospect: ProspectSnapshot;
       facts: readonly string[];
       hypotheses: readonly string[];
+      /** What the memory should keep about the prospect. */
+      summary: string | null;
       suggestions: readonly Suggestion[];
       note: string | null;
     }>
   | Readonly<{
       kind: "CONVERSATION";
       prospect: ProspectSnapshot;
+      /** The messages visible in the screenshots, oldest first. */
+      messages: readonly ConversationMessage[];
       facts: readonly string[];
       hypotheses: readonly string[];
       analysis: ConversationAnalysis;
+      summary: string | null;
       /** Empty when no message should be sent, for example DO_NOT_CONTACT. */
       suggestions: readonly Suggestion[];
       note: string | null;
@@ -160,11 +174,27 @@ export const toProspectIdentity = (
 
 const toProspect = (
   prospect: ScreenshotsOutput["prospect"],
-): ProspectSnapshot => ({
-  username: prospect?.username?.replace(/^@/, "") ?? null,
-  displayName: prospect?.display_name ?? null,
-  businessType: prospect?.business_type ?? null,
-});
+): ProspectSnapshot => {
+  const username = prospect?.username ?? null;
+  return {
+    // Compared with the recognized username: both must be canonical.
+    username: username === null ? null : canonicalUsername(username),
+    displayName: prospect?.display_name ?? null,
+    businessType: prospect?.business_type ?? null,
+  };
+};
+
+const toMessages = (
+  messages: ScreenshotsOutput["messages"],
+): readonly ConversationMessage[] =>
+  (messages ?? [])
+    .map((message) => ({ author: message.author, text: message.text.trim() }))
+    .filter((message) => message.text !== "");
+
+const toSummary = (summary: string | null): string | null => {
+  const text = summary?.trim() ?? "";
+  return text === "" ? null : text;
+};
 
 const toAnalysis = (
   conversation: ConversationReplyOutput["conversation"],
@@ -220,6 +250,7 @@ export const toScreenshotsAnalysis = (
             prospect: toProspect(output.prospect),
             facts: output.observed_facts,
             hypotheses: output.hypotheses,
+            summary: toSummary(output.summary),
             suggestions: suggestions.value,
             note: output.note,
           })
@@ -234,9 +265,12 @@ export const toScreenshotsAnalysis = (
         ? ok({
             kind: "CONVERSATION",
             prospect: toProspect(output.prospect),
+            // A missing transcription only costs the memory some messages.
+            messages: toMessages(output.messages),
             facts: output.observed_facts,
             hypotheses: output.hypotheses,
             analysis: toAnalysis(output.conversation),
+            summary: toSummary(output.summary),
             suggestions: suggestions.value,
             note: output.note,
           })

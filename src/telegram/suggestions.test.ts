@@ -31,6 +31,7 @@ const profile: ScreenshotsAnalysis = {
   prospect,
   facts: ["La bio invita a scrivere START in DM."],
   hypotheses: ["Gestire i DM a mano potrebbe richiedere tempo."],
+  summary: null,
   suggestions: [
     { style: "BEST", text: "Ciao Mario, quanti START ricevi?" },
     { style: "CURIOSITY", text: "Lo segui tu uno a uno?" },
@@ -97,8 +98,10 @@ describe("screenshotsMessages", () => {
     const [summary, suggestions] = screenshotsMessages({
       kind: "CONVERSATION",
       prospect,
+      messages: [],
       facts: [],
       hypotheses: [],
+      summary: null,
       analysis,
       suggestions: [
         { style: "BEST", text: "Dipende: cosa ti serve?" },
@@ -123,8 +126,10 @@ describe("screenshotsMessages", () => {
     const messages = screenshotsMessages({
       kind: "CONVERSATION",
       prospect,
+      messages: [],
       facts: [],
       hypotheses: [],
+      summary: null,
       analysis: { ...analysis, intent: "DO_NOT_CONTACT" },
       suggestions: [],
       note: "Ha chiesto di non essere contattato.",

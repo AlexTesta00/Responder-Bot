@@ -1,3 +1,4 @@
+import type { ProspectMemory } from "../../prospects/memory.ts";
 import { CONVERSATION_REPLY_TASK } from "./conversation-reply.ts";
 import { FIRST_MESSAGE_TASK } from "./first-message.ts";
 import { PROSPECT_IDENTITY_TASK } from "./identity.ts";
@@ -42,14 +43,55 @@ const withinTag = (tag: string, text: string): string =>
 export const PROSPECT_IDENTITY_REQUEST =
   "Recognize the prospect in these screenshots.";
 
-/** Alex's request for a batch of screenshots, with his note if he wrote one. */
-export const screenshotsRequest = (note: string | null): string =>
-  note === null
-    ? "Analyze these screenshots."
-    : [
-        "Analyze these screenshots. Alex added this note:",
-        withinTag("alex_note", note),
-      ].join("\n");
+const listed = (title: string, items: readonly string[]): string[] =>
+  items.length === 0 ? [] : [title, ...items.map((item) => `- ${item}`)];
+
+/** What the memory holds about a prospect, as the model reads it. */
+export const memoryContext = ({ prospect, messages }: ProspectMemory): string =>
+  [
+    `Username: @${prospect.username}`,
+    `Name: ${prospect.displayName ?? "unknown"}`,
+    `Business: ${prospect.businessType ?? "unknown"}`,
+    `Last updated: ${prospect.updatedAt.toISOString().slice(0, 10)}`,
+    ...(prospect.conversation === null
+      ? []
+      : [
+          `Latest reading: stage ${prospect.conversation.stage}, intent ${prospect.conversation.intent}, interest ${prospect.conversation.interest}, next goal ${prospect.conversation.nextGoal}`,
+        ]),
+    ...(prospect.summary === null ? [] : [`Summary: ${prospect.summary}`]),
+    ...listed("Facts:", prospect.facts),
+    ...listed("Hypotheses to verify:", prospect.hypotheses),
+    ...(messages.length === 0
+      ? []
+      : [
+          "Latest messages, oldest first:",
+          ...messages.map(
+            (message) =>
+              `${message.author === "ALEX" ? "Alex" : "Prospect"}: ${message.text}`,
+          ),
+        ]),
+  ].join("\n");
+
+/**
+ * Alex's request for a batch of screenshots, with the note Alex may have
+ * written and the memory of the prospect recognized in them, if any.
+ */
+export const screenshotsRequest = (
+  note: string | null,
+  memory: ProspectMemory | null,
+): string =>
+  [
+    "Analyze these screenshots.",
+    ...(note === null
+      ? []
+      : ["Alex added this note:", withinTag("alex_note", note)]),
+    ...(memory === null
+      ? []
+      : [
+          "Alex's memory of the prospect recognized in them:",
+          withinTag("prospect_memory", memoryContext(memory)),
+        ]),
+  ].join("\n");
 
 /** A conversation Alex pasted, delimited as untrusted content. */
 export const conversationRequest = (text: string): string =>

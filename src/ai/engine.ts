@@ -1,4 +1,5 @@
 import type { DownloadedImage } from "../inputs/images.ts";
+import type { ProspectMemory } from "../prospects/memory.ts";
 import type { Result } from "../shared/result.ts";
 import type {
   ConversationReply,
@@ -47,6 +48,8 @@ export type AiEngine = Readonly<{
   analyzeScreenshots: (
     images: readonly DownloadedImage[],
     note: string | null,
+    /** What the bot remembers about the prospect in the screenshots. */
+    memory: ProspectMemory | null,
   ) => Promise<Generation<ScreenshotsAnalysis>>;
   replyToConversation: (text: string) => Promise<Generation<ConversationReply>>;
 }>;

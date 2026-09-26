@@ -55,6 +55,7 @@ const PROFILE: ScreenshotsAnalysis = {
   },
   facts: ["La bio invita a scrivere START in DM."],
   hypotheses: [],
+  summary: null,
   suggestions: [{ style: "BEST", text: "Ciao Mario, quanti START ricevi?" }],
   note: null,
 };
