@@ -17,6 +17,10 @@ export interface ProspectsTable {
   interest: string | null;
   next_goal: string | null;
   summary: string | null;
+  /** JSON array of strings. */
+  objections: string;
+  /** JSON array of { by, text }. */
+  commitments: string;
   created_at: Date;
   updated_at: Date;
 }

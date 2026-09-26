@@ -11,6 +11,7 @@ import {
 } from "../conversations/domain.ts";
 import {
   MAX_STORED_MESSAGES,
+  type Commitment,
   type ConversationMessage,
   type Prospect,
   type ProspectMemory,
@@ -31,6 +32,19 @@ const parseJson = (text: string): unknown => {
 
 const notesSchema = z.string().transform(parseJson).pipe(z.array(z.string()));
 
+const authorSchema = z.enum(["ALEX", "PROSPECT"]);
+
+const commitmentsSchema = z
+  .string()
+  .transform(parseJson)
+  .pipe(
+    z.array(
+      z
+        .object({ by: authorSchema, text: z.string() })
+        .transform((commitment): Commitment => commitment),
+    ),
+  );
+
 const prospectRowSchema = z
   .object({
     id: z.string(),
@@ -44,6 +58,8 @@ const prospectRowSchema = z
     interest: z.enum(INTEREST_LEVELS).nullable(),
     next_goal: z.enum(NEXT_GOALS).nullable(),
     summary: z.string().nullable(),
+    objections: notesSchema,
+    commitments: commitmentsSchema,
     created_at: z.date(),
     updated_at: z.date(),
   })
@@ -67,13 +83,15 @@ const prospectRowSchema = z
             nextGoal: row.next_goal,
           },
     summary: row.summary,
+    objections: row.objections,
+    commitments: row.commitments,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }));
 
 const messagesSchema = z.array(
   z
-    .object({ author: z.enum(["ALEX", "PROSPECT"]), body: z.string() })
+    .object({ author: authorSchema, body: z.string() })
     .transform((row): ConversationMessage => ({
       author: row.author,
       text: row.body,
@@ -124,6 +142,8 @@ export const createMysqlProspectStore = (
         interest: profile.conversation?.interest ?? null,
         next_goal: profile.conversation?.nextGoal ?? null,
         summary: profile.summary,
+        objections: JSON.stringify(profile.objections),
+        commitments: JSON.stringify(profile.commitments),
         updated_at: time,
       };
 

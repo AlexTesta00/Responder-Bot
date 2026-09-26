@@ -45,6 +45,8 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("MySQL", () => {
       hypotheses: [],
       conversation: null,
       summary: null,
+      objections: [],
+      commitments: [],
     };
 
     it("appends the messages of concurrent saves one after the other", async () => {

@@ -15,6 +15,12 @@ export type ConversationMessage = Readonly<{
   text: string;
 }>;
 
+/** Something Alex or the prospect said they would do, not done yet. */
+export type Commitment = Readonly<{
+  by: MessageAuthor;
+  text: string;
+}>;
+
 /** The latest reading of where the conversation stands. */
 export type ConversationState = Readonly<{
   stage: ConversationStage;
@@ -33,6 +39,10 @@ export type ProspectProfile = Readonly<{
   hypotheses: readonly string[];
   conversation: ConversationState | null;
   summary: string | null;
+  /** Objections the prospect raised that are still open. */
+  objections: readonly string[];
+  /** Promises of either side still to keep. */
+  commitments: readonly Commitment[];
 }>;
 
 export type Prospect = ProspectProfile &
@@ -56,6 +66,10 @@ export type Observation = Readonly<{
   hypotheses: readonly string[];
   conversation: ConversationState | null;
   summary: string | null;
+  /** The open objections now, or null when this analysis cannot tell. */
+  objections: readonly string[] | null;
+  /** The open promises now, or null when this analysis cannot tell. */
+  commitments: readonly Commitment[] | null;
   /** The messages visible in the screenshots, oldest first. */
   messages: readonly ConversationMessage[];
 }>;
@@ -74,6 +88,8 @@ export const MAX_STORED_MESSAGES = 50;
 
 const MAX_FACTS = 12;
 const MAX_HYPOTHESES = 8;
+const MAX_OBJECTIONS = 5;
+const MAX_COMMITMENTS = 5;
 
 // Characters, as the database counts them.
 const MAX_NAME_LENGTH = 100;
@@ -173,9 +189,31 @@ const mergeNotes = (
     .slice(0, max);
 };
 
+const currentCommitments = (
+  commitments: readonly Commitment[],
+): readonly Commitment[] => {
+  const kept = new Set<string>();
+  return commitments
+    .map((commitment) => ({
+      by: commitment.by,
+      text: truncate(commitment.text, MAX_NOTE_LENGTH),
+    }))
+    .filter((commitment) => {
+      const key = `${commitment.by}:${comparable(commitment.text)}`;
+      if (commitment.text === "" || kept.has(key)) {
+        return false;
+      }
+      kept.add(key);
+      return true;
+    })
+    .slice(0, MAX_COMMITMENTS);
+};
+
 /**
  * How the memory of a prospect changes after an analysis: what was observed
- * now wins, and what it does not mention is kept from before.
+ * now wins, and what it does not mention is kept from before. Objections and
+ * promises are lists the analysis keeps up to date: when it provides them,
+ * they replace the earlier ones, since some may have been resolved.
  */
 export const remember = (
   username: string,
@@ -205,6 +243,14 @@ export const remember = (
         optionalText(observation.summary, MAX_TEXT_LENGTH) ??
         earlier?.summary ??
         null,
+      objections:
+        observation.objections === null
+          ? (earlier?.objections ?? [])
+          : mergeNotes(observation.objections, [], MAX_OBJECTIONS),
+      commitments:
+        observation.commitments === null
+          ? (earlier?.commitments ?? [])
+          : currentCommitments(observation.commitments),
     },
     newMessages: messagesToAppend(memory?.messages ?? [], observation.messages)
       .map((message) => ({

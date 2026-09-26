@@ -164,6 +164,8 @@ describe("createClaudeEngine", () => {
         hypotheses: [],
         conversation: null,
         summary: "Primo messaggio inviato, nessuna risposta.",
+        objections: [],
+        commitments: [],
         createdAt: new Date("2026-09-20T10:00:00Z"),
         updatedAt: new Date("2026-09-20T10:00:00Z"),
       },

@@ -68,6 +68,8 @@ const profile = (username: string, summary: string): ProspectProfile => ({
   hypotheses: [],
   conversation: null,
   summary,
+  objections: [],
+  commitments: [],
 });
 
 type SetupOptions = Readonly<{

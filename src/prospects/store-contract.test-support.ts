@@ -34,6 +34,11 @@ const MARIO: ProspectProfile = {
     nextGoal: "VALIDATE_PROBLEM",
   },
   summary: "Personal trainer, riceve molti START in DM.",
+  objections: ["Un sito gli sembra una spesa alta per ora."],
+  commitments: [
+    { by: "ALEX", text: "Mandargli un esempio di prenotazione online." },
+    { by: "PROSPECT", text: "Fargli sapere entro venerdì." },
+  ],
 };
 
 const GIULIA: ProspectProfile = {
@@ -44,6 +49,8 @@ const GIULIA: ProspectProfile = {
   hypotheses: [],
   conversation: null,
   summary: null,
+  objections: [],
+  commitments: [],
 };
 
 /** A clock that moves one second at each save, and predictable ids. */

@@ -82,6 +82,8 @@ const MEMORY: ProspectMemory = {
       nextGoal: "VALIDATE_PROBLEM",
     },
     summary: "Ha risposto con interesse al primo messaggio.",
+    objections: [],
+    commitments: [],
     createdAt: new Date("2026-09-20T10:00:00Z"),
     updatedAt: new Date("2026-09-24T18:30:00Z"),
   },

@@ -14,7 +14,7 @@ const TABLE_OPTIONS = sql.raw(
  * Every change to the schema, in the order it runs, which is the order of the
  * names. A migration that has run must never change: add a new one instead.
  */
-const MIGRATIONS: Readonly<Record<string, Migration>> = {
+export const MIGRATIONS: Readonly<Record<string, Migration>> = {
   "0001_prospect_memory": {
     up: async (db) => {
       await sql`
@@ -71,6 +71,25 @@ const MIGRATIONS: Readonly<Record<string, Migration>> = {
           CONSTRAINT generation_runs_prospect_fk FOREIGN KEY (prospect_id)
             REFERENCES prospects (id) ON DELETE SET NULL
         ) ${TABLE_OPTIONS}
+      `.execute(db);
+    },
+  },
+  "0002_objections_and_commitments": {
+    up: async (db) => {
+      // Added as nullable, filled in for existing prospects, then required:
+      // the portable way to give TEXT columns a value on MySQL and MariaDB.
+      await sql`
+        ALTER TABLE prospects
+          ADD COLUMN objections TEXT NULL,
+          ADD COLUMN commitments TEXT NULL
+      `.execute(db);
+      await sql`
+        UPDATE prospects SET objections = '[]', commitments = '[]'
+      `.execute(db);
+      await sql`
+        ALTER TABLE prospects
+          MODIFY objections TEXT NOT NULL,
+          MODIFY commitments TEXT NOT NULL
       `.execute(db);
     },
   },
