@@ -159,8 +159,12 @@ export const createButtonActions = ({
       };
     }
 
-    // First messages make no sense once the conversation has started.
-    const upgraded = kind === "FIRST_MESSAGES" && conversationStarted(memory);
+    // First messages make no sense once the conversation has started. A
+    // follow-up is about the message Alex sent, so it keeps the texts shown.
+    const upgraded =
+      action !== "FOLLOW_UP" &&
+      kind === "FIRST_MESSAGES" &&
+      conversationStarted(memory);
     const written: SuggestionKind =
       action === "FOLLOW_UP" ? "FOLLOW_UPS" : upgraded ? "REPLIES" : kind;
     const shown = upgraded ? [] : suggestionsShown(kind, tapped.suggestions);

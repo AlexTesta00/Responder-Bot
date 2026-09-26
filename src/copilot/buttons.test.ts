@@ -232,6 +232,30 @@ describe("createButtonActions", () => {
     });
   });
 
+  it("follows up the first messages shown, even once the conversation started", async () => {
+    const { tap, suggestAgain } = await setup({
+      conversation: { ...ENGAGED, stage: "OPENING" },
+      messages: [alex("Ciao Mario!")],
+    });
+
+    const answer = await tap(
+      { action: "FOLLOW_UP", kind: "FIRST_MESSAGES" },
+      1_001,
+      SHOWN_FIRST,
+    );
+
+    expect(suggestAgain.mock.calls[0]?.[0]).toStrictEqual({
+      action: "FOLLOW_UP",
+      kind: "FOLLOW_UPS",
+      previous: [
+        { style: "BEST", text: "Ciao Mario!" },
+        { style: "CURIOSITY", text: "Come gestisci gli START?" },
+        { style: "NATURAL", text: "Bel profilo!" },
+      ],
+    });
+    expect(answer).toMatchObject({ kind: "FOLLOW_UPS", upgraded: false });
+  });
+
   it("follows up the first message of a profile", async () => {
     const { tap, suggestAgain } = await setup({
       conversation: null,
