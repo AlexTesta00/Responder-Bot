@@ -1,10 +1,19 @@
 // Process entry point: the imperative shell. It validates the environment,
 // wires the dependencies, starts the HTTP application and closes it
 // gracefully on shutdown signals.
+//
+// No top-level await here or in any module this file imports: Hostinger's
+// LiteSpeed loads the entry file with require(), which cannot load ES modules
+// that use it (ERR_REQUIRE_ASYNC_MODULE).
 import type { FastifyInstance, LogLevel } from "fastify";
 
 import { buildApp } from "./app.ts";
-import { describeEnvError, parseEnv, type NodeEnv } from "./config/env.ts";
+import {
+  describeEnvError,
+  parseEnv,
+  type Env,
+  type NodeEnv,
+} from "./config/env.ts";
 import { createTelegramClient } from "./telegram/client.ts";
 import { createProcessedUpdates } from "./telegram/processed-updates.ts";
 import { createUpdateHandler } from "./telegram/webhook-handler.ts";
@@ -32,6 +41,32 @@ const closeOnSignal =
     );
   };
 
+const start = async (env: Env): Promise<void> => {
+  const telegram = createTelegramClient({ token: env.TELEGRAM_BOT_TOKEN });
+
+  const app = await buildApp({
+    logLevel: LOG_LEVEL_BY_ENV[env.NODE_ENV],
+    telegramWebhook: {
+      secret: env.TELEGRAM_WEBHOOK_SECRET,
+      handleUpdate: createUpdateHandler({
+        allowedUserId: env.TELEGRAM_ALLOWED_USER_ID,
+        processedUpdates: createProcessedUpdates(PROCESSED_UPDATES_CAPACITY),
+        sendMessage: telegram.sendMessage,
+      }),
+    },
+  });
+
+  process.once("SIGINT", closeOnSignal(app));
+  process.once("SIGTERM", closeOnSignal(app));
+
+  try {
+    await app.listen({ host: env.HOST, port: env.PORT });
+  } catch (error) {
+    app.log.fatal({ err: error }, "server failed to start");
+    process.exit(1);
+  }
+};
+
 const env = parseEnv(process.env);
 
 if (!env.ok) {
@@ -39,26 +74,8 @@ if (!env.ok) {
   process.exit(1);
 }
 
-const telegram = createTelegramClient({ token: env.value.TELEGRAM_BOT_TOKEN });
-
-const app = await buildApp({
-  logLevel: LOG_LEVEL_BY_ENV[env.value.NODE_ENV],
-  telegramWebhook: {
-    secret: env.value.TELEGRAM_WEBHOOK_SECRET,
-    handleUpdate: createUpdateHandler({
-      allowedUserId: env.value.TELEGRAM_ALLOWED_USER_ID,
-      processedUpdates: createProcessedUpdates(PROCESSED_UPDATES_CAPACITY),
-      sendMessage: telegram.sendMessage,
-    }),
-  },
-});
-
-process.once("SIGINT", closeOnSignal(app));
-process.once("SIGTERM", closeOnSignal(app));
-
-try {
-  await app.listen({ host: env.value.HOST, port: env.value.PORT });
-} catch (error) {
-  app.log.fatal({ err: error }, "server failed to start");
+start(env.value).catch((error: unknown) => {
+  const reason = error instanceof Error ? error.message : "unknown error";
+  process.stderr.write(`Startup failed: ${reason}\n`);
   process.exit(1);
-}
+});
