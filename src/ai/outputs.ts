@@ -234,6 +234,12 @@ const toAnalysis = (
   rationale: conversation.rationale,
 });
 
+/**
+ * Three longer suggestions would not fit in one Telegram message, at most
+ * 4096 characters; the prompts ask for far shorter ones.
+ */
+export const MAX_SUGGESTION_LENGTH = 1_000;
+
 const suggestionsOf = (
   entries: readonly (readonly [SuggestionStyle, string])[],
 ): Result<readonly Suggestion[], InvalidOutput> => {
@@ -241,9 +247,14 @@ const suggestionsOf = (
     style,
     text: text.trim(),
   }));
-  return suggestions.every((suggestion) => suggestion.text !== "")
+  if (suggestions.some((suggestion) => suggestion.text === "")) {
+    return invalid("empty suggestion");
+  }
+  return suggestions.every(
+    (suggestion) => suggestion.text.length <= MAX_SUGGESTION_LENGTH,
+  )
     ? ok(suggestions)
-    : invalid("empty suggestion");
+    : invalid("suggestion too long");
 };
 
 const replySuggestions = (

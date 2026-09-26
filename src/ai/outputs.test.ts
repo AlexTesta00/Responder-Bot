@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import {
   conversationReplyOutputSchema,
+  MAX_SUGGESTION_LENGTH,
   prospectIdentityOutputSchema,
   screenshotsOutputSchema,
   toConversationReply,
@@ -199,10 +200,31 @@ describe("toScreenshotsAnalysis", () => {
       "an empty suggestion",
       { ...conversationOutput, replies: { ...replies, direct: "  " } },
     ],
+    [
+      "a suggestion too long for a Telegram message",
+      {
+        ...conversationOutput,
+        replies: { ...replies, direct: "x".repeat(1_001) },
+      },
+    ],
   ])("rejects %s", (_description, output: ScreenshotsOutput) => {
     expect(toScreenshotsAnalysis(output)).toMatchObject({
       ok: false,
       error: { type: "INVALID_OUTPUT" },
+    });
+  });
+
+  it("accepts suggestions as long as a Telegram message allows", () => {
+    const direct = "x".repeat(MAX_SUGGESTION_LENGTH);
+
+    expect(
+      toScreenshotsAnalysis({
+        ...conversationOutput,
+        replies: { ...replies, direct },
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: { suggestions: [{}, {}, { style: "DIRECT", text: direct }] },
     });
   });
 });
