@@ -46,7 +46,7 @@ Da fare una volta sola in hPanel.
    | `DATABASE_USER`            | l'utente completo del database |
    | `DATABASE_PASSWORD`        | la password dell'utente        |
 
-   `HOST` e `PORT` non vanno impostate: i default (`0.0.0.0` e `3000`) sono quelli che Hostinger si aspetta; lo stesso vale per `DATABASE_PORT` (`3306`). Anche `ANTHROPIC_MODEL` e `ANTHROPIC_FAST_MODEL` sono facoltative: servono solo per usare modelli diversi da `claude-opus-5` e `claude-haiku-4-5`. Puoi anche usare **Import .env** con il file locale e poi cambiare `NODE_ENV` in `production`.
+   `HOST` e `PORT` non vanno impostate: i default (`0.0.0.0` e `3000`) sono quelli che Hostinger si aspetta; lo stesso vale per `DATABASE_PORT` (`3306`). Anche `ANTHROPIC_MODEL` e `ANTHROPIC_FAST_MODEL` sono facoltative: servono solo per usare modelli diversi da `claude-opus-5` e `claude-haiku-4-5`. `ANTHROPIC_MONTHLY_LIMIT_USD`, facoltativa, è il limite di spesa mensile impostato sulla Console, in dollari (per esempio `20`): ogni risposta dice quanto ne resta. Puoi anche usare **Import .env** con il file locale e poi cambiare `NODE_ENV` in `production`.
 
    La API key si crea nella Claude Developer Platform ([console.anthropic.com](https://console.anthropic.com)), dove si acquista il credito per l'uso delle API: l'abbonamento a Claude non lo include. Conviene impostare lì anche un limite di spesa mensile.
 
@@ -65,10 +65,12 @@ Da fare una volta sola in hPanel.
 4. Manda uno screenshot del profilo Instagram di un'attività: la chat mostra "sta scrivendo…" e, di solito entro un minuto, arrivano il riepilogo del profilo e tre primi messaggi. Il riepilogo dice «🧠 Nuovo prospect: l'ho salvato in memoria».
 5. Manda un altro screenshot dello stesso prospect: il riepilogo dice «🧠 Già in memoria».
 6. Rispondi a uno dei messaggi del bot su quel prospect incollando il testo di un suo messaggio: anche qui «🧠 Già in memoria», con obiezioni e promesse aperte nel riepilogo.
+7. Tocca 📋 Copia BEST e incolla su Instagram. Tocca 🔄, 🙂 e 🎯: compare un avviso in alto, poi un nuovo messaggio in risposta a quello toccato. 🔍 mostra cosa ricorda il bot.
+8. Manda `/credito` e poi `/credito` seguito dal saldo della Console (per esempio `/credito 25,40`): la riga 💳 delle risposte successive scala da lì.
 
 ## Diagnostica
 
-- **`npm run telegram:webhook -- info`** mostra l'ultimo errore di consegna registrato da Telegram. Un `401` indica che il secret in hPanel è diverso da quello nel `.env` locale usato per registrare il webhook. Un errore `5xx` o di connessione indica che l'app non è avviata.
+- **`npm run telegram:webhook -- info`** mostra l'ultimo errore di consegna registrato da Telegram e gli update a cui il webhook è iscritto: devono essere `message, callback_query`. Se i bottoni 🔄 🙂 🎯 💬 🔍 girano senza risposta, manca `callback_query`: ripeti `npm run telegram:webhook -- set https://aboutly.site`. Un `401` indica che il secret in hPanel è diverso da quello nel `.env` locale usato per registrare il webhook. Un errore `5xx` o di connessione indica che l'app non è avviata.
 - **Runtime logs** in hPanel: sono i log JSON dell'app, senza token né testi dei messaggi.
   - Se l'app non parte per variabili mancanti o non valide, i log le elencano per nome.
   - Un update ignorato con `reason: "UNAUTHORIZED_SENDER"` riporta `sender_id`: se è il tuo ID, `TELEGRAM_ALLOWED_USER_ID` è sbagliato.
@@ -83,7 +85,9 @@ Da fare una volta sola in hPanel.
   - `prospect memory unavailable` o `prospect memory not saved` indicano un errore del database durante un'analisi: il bot risponde comunque, senza storico, e lo segnala nel riepilogo.
   - `bot messages not linked to the prospect` indica che la risposta è arrivata ma non è stata collegata al prospect: rispondendo a quei messaggi il bot non saprà di chi si tratta. Si può sempre usare @username nella prima riga.
   - `prospect memory saved` riporta lo `stage` deciso dalle regole di transizione, per esempio `GHOSTED` dopo 2 follow-up senza risposta.
-- **phpMyAdmin**, dalla stessa sezione di hPanel, mostra le tabelle `prospects`, `prospect_messages`, `prospect_stage_changes` (lo storico degli stage), `telegram_messages` (quali messaggi del bot riguardano quale prospect) e `generation_runs`. Per cancellare la memoria di un prospect basta eliminarne la riga in `prospects`: i suoi messaggi vengono eliminati con lei.
+- **Bottoni** nei Runtime logs: `telegram button pressed` riporta `button` e `kind`; `button handled` la risposta (`SUGGESTED`, `PAUSED`, `CARD`, `NOT_LINKED`, `UNAVAILABLE`), e i run `NEW_SUGGESTIONS` la durata della generazione. `button tap not acknowledged` indica che Telegram non ha accettato la conferma del tap: la risposta arriva comunque. `keyboard rejected, answer resent without buttons` indica che Telegram ha rifiutato i bottoni: il testo è arrivato senza.
+- **Costi**: `ai generation completed` riporta anche `cost_micro_usd`, il costo stimato in milionesimi di dollaro; `spending unavailable` indica che spesa e credito non si sono potuti leggere dal database.
+- **phpMyAdmin**, dalla stessa sezione di hPanel, mostra le tabelle `prospects`, `prospect_messages`, `prospect_stage_changes` (lo storico degli stage), `telegram_messages` (quali messaggi del bot riguardano quale prospect), `generation_runs` (con il costo stimato di ogni generazione) e `credit_balances` (i crediti impostati con /credito). Per cancellare la memoria di un prospect basta eliminarne la riga in `prospects`: i suoi messaggi vengono eliminati con lei.
 - Se cambi `TELEGRAM_WEBHOOK_SECRET`, aggiornalo sia in hPanel sia nel `.env` locale, poi ripeti `npm run telegram:webhook -- set https://aboutly.site`.
 
 ## Note tecniche

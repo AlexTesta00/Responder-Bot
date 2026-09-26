@@ -2562,8 +2562,8 @@ Il risultato finale deve essere una conversazione che sembra naturale perché na
 Current development phase:
 
 ```text
-Sprint 06 — Conversation Manager
-(implemented; pull request to main in review, end-to-end test on the
+Sprint 07 — Telegram UX
+(implemented; pull request to main, end-to-end test on the
 deployment that follows the merge)
 ```
 
@@ -2615,8 +2615,8 @@ memory of one prospect never enters another's context, a property
 tested explicitly. Pasted conversations name no prospect and have no
 memory yet.)
 
-Sprint 06 — Conversation Manager: implemented
-(objections and promises in memory, kept up to date by each analysis;
+Sprint 06 — Conversation Manager ✅
+(deployed on https://aboutly.site; objections and promises in memory, kept up to date by each analysis;
 pure transition rules in conversations/transition.ts: DO_NOT_CONTACT
 is final and one kind closing ends a NOT_INTERESTED conversation until
 the prospect writes again, and after 2 follow-ups without a reply, as
@@ -2626,12 +2626,27 @@ context; pasted conversations linked to a prospect by replying to a
 message of the bot or by @username on the first line, as Alex chose.
 The spec's objections/promises/transitions are covered; follow-up
 scheduling and the prospect list are left to the Personal CRM sprint.)
+
+Sprint 07 — Telegram UX: implemented
+(one message per answer, as Alex chose: suggestions on top with a
+copy button each, the analysis in an expandable block, a cost line at
+the bottom; suggestions within 250 characters so each one fits a copy
+button. For a known prospect: 🔄 three more, 🙂 more natural, 🎯 more
+direct and 💬 follow-up, written by the main model with medium effort
+from the prospect's memory, and 🔍 a card of the memory without AI.
+Results arrive as new messages in reply to the tapped one; buttons
+never change the memory and apply the same transition rules, 💬
+counting one more unanswered message as Alex chose. callback_data
+holds only version, action and kind. Added at Alex's request: the
+estimated cost of each answer, the month's spending, what is left of
+the monthly limit and of the credit Alex sets with /credito, since no
+API exposes the Console's credit.)
 ```
 
 Next milestone:
 
 ```text
-Sprint 07 — Telegram UX
+Sprint 08 — Personal CRM
 ```
 
 ## 51. Final project philosophy

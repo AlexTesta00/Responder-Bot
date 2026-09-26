@@ -23,7 +23,7 @@ Il database è MySQL o MariaDB, quello incluso nell'hosting Hostinger, al posto 
 ## Prompt
 
 - Le istruzioni sono layer versionati in `src/ai/prompts/`. Quando cambi il testo di un layer, incrementane la `version`: ogni generazione registra nei log la combinazione di layer e versioni che l'ha prodotta (campo `prompt`).
-- Screenshot, bio e messaggi dei prospect sono dati da analizzare, mai istruzioni: lo stabilisce il layer di sistema, e il testo incollato, le note di Alex e la memoria arrivano al modello racchiusi in tag.
+- Screenshot, bio e messaggi dei prospect sono dati da analizzare, mai istruzioni: lo stabilisce il layer di sistema, e il testo incollato, le note di Alex, la memoria e i suggerimenti già mostrati arrivano al modello racchiusi in tag, dove il testo non può aprire né chiudere il tag che lo delimita.
 - Le istruzioni su come usare e aggiornare la memoria (obiezioni, promesse, riassunto) stanno nel layer `memory`, condiviso da screenshot e testo incollato.
 - L'output del modello si valida con gli schemi Zod di `src/ai/outputs.ts` prima di diventare un valore di dominio.
 
@@ -40,6 +40,20 @@ Il database è MySQL o MariaDB, quello incluso nell'hosting Hostinger, al posto 
 - Il modello legge la conversazione; le regole pure di `src/conversations/transition.ts` decidono cosa il bot può farne. Chi ha chiesto di non ricevere messaggi, chi ha già avuto il saluto finale e chi non ha risposto a 2 follow-up (`MAX_FOLLOW_UPS`, scelta di Alex) non ricevono suggerimenti finché non riscrivono. Queste regole cambiano solo su richiesta di Alex.
 - Ogni analisi, di screenshot o di testo incollato, passa dagli stessi passaggi di `src/copilot/memory.ts`: carica la memoria, applica le transizioni, ricorda lo stato deciso dalle regole, registra i costi.
 - Il testo incollato si collega a un prospect solo se Alex risponde a un messaggio del bot su quel prospect o scrive @username nella prima riga: mai per supposizione.
+
+## Bottoni
+
+- `callback_data` contiene solo versione, azione e tipo dei suggerimenti (per esempio `1:nat:R`): mai id, username o testi. Il prospect si ricava solo dal messaggio toccato, tramite `telegram_messages`; se la memoria non si legge, il bot non genera nulla.
+- Ogni tap riapplica le regole di `src/conversations/transition.ts` alla memoria. 💬 Follow-up conta un messaggio di Alex in più senza risposta (scelta di Alex): mai più permissivo della memoria.
+- I bottoni non scrivono mai la memoria; ogni generazione viene registrata con il suo costo.
+- Nei messaggi del bot `<pre>` è riservato ai suggerimenti: un tap li rilegge dalle entità del messaggio toccato per riscriverli.
+- Il risultato di un tap arriva come nuovo messaggio in risposta a quello toccato, collegato al prospect. Il tap si conferma subito (`answerCallbackQuery`), prima di leggere la memoria o chiamare l'AI, e non viene mai fatto ripetere a Telegram.
+- Il webhook è iscritto a `message` e `callback_query` (`ALLOWED_UPDATES` in `src/telegram/update.ts`).
+
+## Costi
+
+- Il costo di ogni generazione si stima dai token restituiti dall'API e dai prezzi di listino in `src/ai/pricing.ts`: quando Anthropic cambia i prezzi o il bot usa un nuovo modello, la tabella va aggiornata. Un modello senza prezzi non ha stima, mai una supposizione.
+- Nessuna API espone il credito della Console: Alex lo imposta con `/credito` e il bot scala la spesa stimata.
 
 ## Principi di codice
 

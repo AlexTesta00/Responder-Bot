@@ -8,7 +8,7 @@ Visione, principi ingegneristici e roadmap: [docs/PROJECT.md](docs/PROJECT.md). 
 
 ## Stato
 
-**Sprint 06 — Conversation Manager.** Il bot riceve gli update da Telegram tramite webhook, verifica il secret e risponde solo all'utente autorizzato in chat privata. Gli screenshot, anche inviati come album, e il testo di una conversazione vengono analizzati da Claude tramite l'API Anthropic:
+**Sprint 07 — Telegram UX.** Il bot riceve gli update da Telegram tramite webhook, verifica il secret e risponde solo all'utente autorizzato in chat privata. Gli screenshot, anche inviati come album, e il testo di una conversazione vengono analizzati da Claude tramite l'API Anthropic:
 
 - dagli screenshot di un profilo nascono tre primi messaggi (BEST, CURIOSITY, NATURAL);
 - dagli screenshot di una conversazione, o dal suo testo incollato, nascono l'analisi (ultimo messaggio del prospect, stage, intent, interesse, prossimo obiettivo) e tre risposte (BEST, ALTERNATIVE, DIRECT).
@@ -25,6 +25,13 @@ Il bot gestisce la conversazione, non solo i messaggi:
 - tiene lo storico dei cambi di stage di ogni conversazione.
 
 Anche il testo incollato usa la memoria: basta rispondere (in Telegram) a un messaggio del bot su quel prospect, oppure scrivere @username nella prima riga e sotto la conversazione. Senza uno dei due il bot risponde lo stesso, ma non sa di chi è la conversazione e non la ricorda.
+
+Pensato per l'iPhone, dal profilo Instagram al messaggio da incollare servono pochi tocchi:
+
+- ogni risposta è un solo messaggio: in alto i suggerimenti, sotto l'analisi richiudibile e una riga con i costi;
+- sotto ogni suggerimento c'è il tasto 📋 Copia (i suggerimenti restano entro 250 caratteri, il limite del tasto è 256);
+- per un prospect in memoria ci sono anche 🔄 altre 3, 🙂 più naturale, 🎯 più diretto, 💬 follow-up e 🔍 cosa ricorda il bot. Il risultato arriva come nuovo messaggio in risposta a quello toccato; i bottoni non cambiano la memoria e rispettano le stesse regole delle analisi: 💬 conta un messaggio di Alex senza risposta, quindi dopo 2 follow-up il bot si ferma;
+- ogni risposta stima quanto è costata, quanto il bot ha speso nel mese e, con `ANTHROPIC_MONTHLY_LIMIT_USD`, quanto resta del limite mensile. Nessuna API espone il credito della Console di Claude: `/credito 25,40` lo imposta e da lì il bot scala la spesa stimata; `/credito` da solo mostra la situazione.
 
 Claude decide da solo se uno screenshot mostra un profilo o una conversazione, e non suggerisce nulla quando non va scritto nulla. Mentre lavora la chat mostra "sta scrivendo…". Comandi, link e @username Instagram ricevono una risposta immediata. Gli screenshot restano solo in memoria e vengono cancellati subito dopo l'analisi: nel database finiscono solo le informazioni estratte e al massimo gli ultimi 50 messaggi per prospect. Gira su Hostinger all'indirizzo `https://aboutly.site`, con il database MySQL (MariaDB) dell'hosting.
 
@@ -70,22 +77,23 @@ In locale Telegram non può raggiungere il webhook: i messaggi reali arrivano al
 
 Le variabili d'ambiente sono validate all'avvio in `src/config/env.ts`. Se una variabile manca o non è valida, il processo si ferma indicandola per nome, senza mostrarne il valore. `.env.example` documenta tutte le variabili e un test verifica che resti allineato allo schema.
 
-| Variabile                  | Default            | Descrizione                                                                                   |
-| -------------------------- | ------------------ | --------------------------------------------------------------------------------------------- |
-| `NODE_ENV`                 | `development`      | `development`, `test` o `production`; determina il livello di log (`debug`, `silent`, `info`) |
-| `HOST`                     | `0.0.0.0`          | Interfaccia di rete su cui ascolta il server HTTP                                             |
-| `PORT`                     | `3000`             | Porta del server HTTP                                                                         |
-| `TELEGRAM_BOT_TOKEN`       | —                  | Token del bot rilasciato da @BotFather                                                        |
-| `TELEGRAM_WEBHOOK_SECRET`  | —                  | Secret che Telegram invia con ogni update (32-256 caratteri tra lettere, cifre, `_` e `-`)    |
-| `TELEGRAM_ALLOWED_USER_ID` | —                  | ID numerico dell'unico utente autorizzato (lo fornisce @userinfobot)                          |
-| `ANTHROPIC_API_KEY`        | —                  | API key della Claude Developer Platform (`sk-ant-…`)                                          |
-| `ANTHROPIC_MODEL`          | `claude-opus-5`    | Modello Claude usato dal bot                                                                  |
-| `ANTHROPIC_FAST_MODEL`     | `claude-haiku-4-5` | Modello veloce ed economico per i passaggi semplici, come riconoscere il prospect             |
-| `DATABASE_HOST`            | —                  | Host del database MySQL o MariaDB (su Hostinger `127.0.0.1`)                                  |
-| `DATABASE_PORT`            | `3306`             | Porta del database                                                                            |
-| `DATABASE_NAME`            | —                  | Nome del database                                                                             |
-| `DATABASE_USER`            | —                  | Utente del database                                                                           |
-| `DATABASE_PASSWORD`        | —                  | Password dell'utente del database                                                             |
+| Variabile                     | Default            | Descrizione                                                                                    |
+| ----------------------------- | ------------------ | ---------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                    | `development`      | `development`, `test` o `production`; determina il livello di log (`debug`, `silent`, `info`)  |
+| `HOST`                        | `0.0.0.0`          | Interfaccia di rete su cui ascolta il server HTTP                                              |
+| `PORT`                        | `3000`             | Porta del server HTTP                                                                          |
+| `TELEGRAM_BOT_TOKEN`          | —                  | Token del bot rilasciato da @BotFather                                                         |
+| `TELEGRAM_WEBHOOK_SECRET`     | —                  | Secret che Telegram invia con ogni update (32-256 caratteri tra lettere, cifre, `_` e `-`)     |
+| `TELEGRAM_ALLOWED_USER_ID`    | —                  | ID numerico dell'unico utente autorizzato (lo fornisce @userinfobot)                           |
+| `ANTHROPIC_API_KEY`           | —                  | API key della Claude Developer Platform (`sk-ant-…`)                                           |
+| `ANTHROPIC_MODEL`             | `claude-opus-5`    | Modello Claude usato dal bot                                                                   |
+| `ANTHROPIC_FAST_MODEL`        | `claude-haiku-4-5` | Modello veloce ed economico per i passaggi semplici, come riconoscere il prospect              |
+| `ANTHROPIC_MONTHLY_LIMIT_USD` | —                  | Facoltativa: il limite di spesa mensile impostato sulla Console, in dollari (per esempio `20`) |
+| `DATABASE_HOST`               | —                  | Host del database MySQL o MariaDB (su Hostinger `127.0.0.1`)                                   |
+| `DATABASE_PORT`               | `3306`             | Porta del database                                                                             |
+| `DATABASE_NAME`               | —                  | Nome del database                                                                              |
+| `DATABASE_USER`               | —                  | Utente del database                                                                            |
+| `DATABASE_PASSWORD`           | —                  | Password dell'utente del database                                                              |
 
 Per generare il secret:
 
@@ -123,6 +131,8 @@ src/
 │   ├── claude.ts               motore AI con Claude tramite l'API Anthropic
 │   ├── outputs.ts              output strutturati: schemi Zod e conversione nel dominio
 │   ├── runs.ts                 registro delle generazioni: costi e durate, mai il contenuto
+│   ├── pricing.ts              costo stimato di ogni generazione dai token e dai prezzi di listino
+│   ├── spending.ts             spesa del mese e credito residuo stimati
 │   └── prompts/                istruzioni a layer versionati e richieste di ogni modalità
 ├── conversations/
 │   ├── domain.ts               vocabolario delle conversazioni: stage, intent, obiettivi, messaggi, promesse
@@ -130,13 +140,15 @@ src/
 ├── copilot/
 │   ├── memory.ts               passaggi comuni: carica la memoria, applica le transizioni, ricorda, registra i costi
 │   ├── screenshots.ts          caso d'uso: riconosce il prospect negli screenshot, analizza, ricorda
+│   ├── buttons.ts              caso d'uso: bottoni sotto i suggerimenti, dal messaggio toccato alla memoria del prospect
 │   └── conversation.ts         caso d'uso: conversazione incollata, collegata al prospect da risposta o @username
 ├── db/
 │   ├── connection.ts           connessione a MySQL o MariaDB con Kysely e mysql2
 │   ├── migrations.ts           schema del database, applicato in ordine all'avvio
 │   ├── schema.ts               tabelle viste da Kysely
 │   ├── prospect-store.ts       memoria dei prospect su MySQL
-│   └── generation-log.ts       registro delle generazioni su MySQL
+│   ├── generation-log.ts       registro delle generazioni su MySQL
+│   └── spending-ledger.ts      spesa e credito su MySQL
 ├── prospects/
 │   ├── memory.ts               cosa si ricorda di un prospect e come un'analisi la aggiorna
 │   └── store.ts                contratto dell'archivio della memoria e versione in memoria
@@ -148,14 +160,21 @@ src/
 │   ├── health.ts               GET /health
 │   └── telegram-webhook.ts     POST /telegram/webhook: secret, parsing, esito dell'update
 ├── telegram/
-│   ├── client.ts               client della Bot API, download dei file compreso
+│   ├── button-data.ts          dati dei bottoni: versione, azione e tipo dei suggerimenti
+│   ├── button-replies.ts       avvisi dei tap e risposte quando il bot non scrive
+│   ├── client.ts               client della Bot API: tastiere, risposte ai tap, download dei file
+│   ├── costs.ts                riga dei costi e risposta a /credito
 │   ├── files.ts                download degli screenshot con limite di dimensione
 │   ├── ids.ts                  ID utente e chat come tipi distinti
+│   ├── in-flight.ts            bottoni in corso: un doppio tap genera una volta sola
+│   ├── keyboard.ts             tasti Copia e bottoni sotto ogni risposta
 │   ├── media-group.ts          raggruppa le foto di un album
+│   ├── message-length.ts       lunghezza di un messaggio come la conta Telegram
 │   ├── processed-updates.ts    registro degli update già elaborati
+│   ├── prospect-card.ts        scheda 🔍 di un prospect, dalla memoria
 │   ├── replies.ts              testi delle risposte immediate
-│   ├── suggestions.ts          analisi e messaggi suggeriti in HTML, pronti da copiare
-│   ├── update.ts               parsing degli update: testo, foto, immagini come file, didascalie
+│   ├── suggestions.ts          risposta in un solo messaggio: suggerimenti, analisi richiudibile, bottoni
+│   ├── update.ts               parsing degli update: testo, foto, immagini come file, didascalie, tap sui bottoni
 │   └── webhook-handler.ts      caso d'uso: autorizza, deduplica, risponde subito o passa all'AI
 └── shared/
     ├── errors.ts               errori nei log: nome e codici, mai il messaggio
