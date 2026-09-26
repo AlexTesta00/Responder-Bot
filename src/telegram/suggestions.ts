@@ -1,5 +1,4 @@
 import type { AiError } from "../ai/engine.ts";
-import type { MemoryOutcome } from "../copilot/memory.ts";
 import type {
   ConversationAnalysis,
   ConversationReply,
@@ -8,6 +7,9 @@ import type {
   Suggestion,
   SuggestionStyle,
 } from "../ai/outputs.ts";
+import type { MemoryOutcome } from "../copilot/memory.ts";
+import type { Commitment } from "../conversations/domain.ts";
+import { MAX_FOLLOW_UPS, type Pause } from "../conversations/transition.ts";
 
 /** Makes text safe to embed in a Telegram HTML message. */
 export const escapeHtml = (text: string): string =>
@@ -84,6 +86,30 @@ export const memoryLine = (memory: MemoryOutcome): string => {
 const memoryLines = (memory: MemoryOutcome | null): string[] =>
   memory === null ? [] : [memoryLine(memory)];
 
+/** Why the bot suggests nothing now, in place of the suggestions. */
+export const pauseMessage = (pause: Pause): string => {
+  switch (pause) {
+    case "DO_NOT_CONTACT":
+      return "🔒 Ha chiesto di non ricevere altri messaggi: niente suggerimenti finché non ti riscrive.";
+    case "CLOSED":
+      return "👋 Non c'è interesse e il saluto finale è già partito: niente suggerimenti finché non ti riscrive.";
+    case "FOLLOW_UP_LIMIT":
+      return `🤐 Hai già mandato ${String(MAX_FOLLOW_UPS)} follow-up senza risposta: meglio aspettare che risponda.`;
+  }
+};
+
+const commitmentLine = (commitment: Commitment): string =>
+  `${commitment.by === "ALEX" ? "Tu" : "Prospect"}: ${commitment.text}`;
+
+/** Open objections and promises: what the next messages must keep in mind. */
+const openPoints = (
+  objections: readonly string[],
+  commitments: readonly Commitment[],
+): string[] => [
+  ...section("Obiezioni aperte", objections),
+  ...section("Promesse", commitments.map(commitmentLine)),
+];
+
 const analysisLines = (analysis: ConversationAnalysis): string[] => [
   ...(analysis.lastProspectMessage === null
     ? []
@@ -110,10 +136,18 @@ const suggestionsMessage = (
         ]),
       ].join("\n");
 
+const replyOrPause = (
+  title: string,
+  suggestions: readonly Suggestion[],
+  pause: Pause | null,
+): string =>
+  pause === null ? suggestionsMessage(title, suggestions) : pauseMessage(pause);
+
 /** HTML messages presenting the analysis of screenshots, in sending order. */
 export const screenshotsMessages = (
   analysis: ScreenshotsAnalysis,
   memory: MemoryOutcome | null,
+  pause: Pause | null,
 ): readonly string[] => {
   switch (analysis.kind) {
     case "PROFILE":
@@ -125,7 +159,7 @@ export const screenshotsMessages = (
           ...section("Ipotesi da verificare", analysis.hypotheses),
           ...noteLines(analysis.note),
         ].join("\n"),
-        suggestionsMessage("Primi messaggi", analysis.suggestions),
+        replyOrPause("Primi messaggi", analysis.suggestions, pause),
       ];
     case "CONVERSATION":
       return [
@@ -133,11 +167,12 @@ export const screenshotsMessages = (
           heading("💬", "Conversazione", analysis.prospect),
           ...memoryLines(memory),
           ...analysisLines(analysis.analysis),
+          ...openPoints(analysis.objections, analysis.commitments),
           ...section("Cosa ho visto", analysis.facts),
           ...section("Ipotesi da verificare", analysis.hypotheses),
           ...noteLines(analysis.note),
         ].join("\n"),
-        suggestionsMessage("Risposte", analysis.suggestions),
+        replyOrPause("Risposte", analysis.suggestions, pause),
       ];
     case "UNRELATED":
       return [
@@ -152,15 +187,19 @@ export const screenshotsMessages = (
 /** HTML messages presenting the reply to a pasted conversation. */
 export const conversationMessages = (
   reply: ConversationReply,
+  memory: MemoryOutcome | null,
+  pause: Pause | null,
 ): readonly string[] => [
   [
     "💬 <b>Conversazione</b>",
+    ...memoryLines(memory),
     ...analysisLines(reply.analysis),
+    ...openPoints(reply.objections, reply.commitments),
     ...section("Cosa ho visto", reply.facts),
     ...section("Ipotesi da verificare", reply.hypotheses),
     ...noteLines(reply.note),
   ].join("\n"),
-  suggestionsMessage("Risposte", reply.suggestions),
+  replyOrPause("Risposte", reply.suggestions, pause),
 ];
 
 /** Plain-text explanation of a generation that failed. */

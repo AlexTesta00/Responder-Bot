@@ -197,6 +197,7 @@ describe("webhook workflow", () => {
           downloadImage: notExpected,
           analyzeScreenshots: notExpected,
           replyToConversation: notExpected,
+          linkMessages: notExpected,
           schedule: () => () => undefined,
         }),
       },

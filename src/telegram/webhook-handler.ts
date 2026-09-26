@@ -1,6 +1,11 @@
-import type { AiEngine, AiError } from "../ai/engine.ts";
-import { logGeneration } from "../copilot/memory.ts";
+import type { AiError } from "../ai/engine.ts";
+import type {
+  ProspectReference,
+  ReplyToConversation,
+} from "../copilot/conversation.ts";
 import type { AnalyzeScreenshots } from "../copilot/screenshots.ts";
+import type { ProspectStore } from "../prospects/store.ts";
+import { errorFields } from "../shared/errors.ts";
 import { classifyText, type Input } from "../inputs/classify.ts";
 import {
   withDownloadedImages,
@@ -66,8 +71,10 @@ export type UpdateHandlerDependencies = Readonly<{
   downloadImage: DownloadImage;
   /** Screenshots are analyzed with the memory of the prospect they show. */
   analyzeScreenshots: AnalyzeScreenshots;
-  /** A pasted conversation names no prospect: it gets no memory yet. */
-  replyToConversation: AiEngine["replyToConversation"];
+  /** A pasted conversation, with the memory of the prospect Alex named. */
+  replyToConversation: ReplyToConversation;
+  /** Remembers which prospect the messages of the bot are about. */
+  linkMessages: ProspectStore["linkMessages"];
   schedule: Schedule;
 }>;
 
@@ -103,6 +110,23 @@ const inputOf = (content: MessageContent): Input => {
   }
 };
 
+/**
+ * Whose conversation a text is: the @username on its first line or, failing
+ * that, the message of the bot it replies to.
+ */
+const referenceOf = (
+  username: string | null,
+  content: MessageContent,
+  chatId: TelegramChatId,
+): ProspectReference | null => {
+  if (username !== null) {
+    return { type: "USERNAME", username };
+  }
+  return content.type === "TEXT" && content.replyTo !== null
+    ? { type: "REPLY", chatId, messageId: content.replyTo }
+    : null;
+};
+
 /** Decides what to do with an update and answers the allowed user. */
 export const createUpdateHandler = ({
   allowedUserId,
@@ -112,6 +136,7 @@ export const createUpdateHandler = ({
   downloadImage,
   analyzeScreenshots,
   replyToConversation,
+  linkMessages,
   schedule,
 }: UpdateHandlerDependencies): UpdateHandler => {
   // The AI engine answers after Telegram has been acknowledged, so its
@@ -143,42 +168,63 @@ export const createUpdateHandler = ({
     }
   };
 
-  /** Sends HTML messages in order, stopping at the first one that fails. */
+  /**
+   * Sends HTML messages in order, stopping at the first one that fails,
+   * and returns the ids of those sent.
+   */
   const deliver = async (
     chatId: TelegramChatId,
     messages: readonly string[],
     log: Logger,
-  ): Promise<void> => {
+  ): Promise<readonly number[]> => {
+    const sent: number[] = [];
     for (const [index, text] of messages.entries()) {
-      const sent = await sendMessage(chatId, text, "HTML");
-      if (!sent.ok) {
+      const delivery = await sendMessage(chatId, text, "HTML");
+      if (!delivery.ok) {
         log.error(
           {
             message_index: index,
             messages: messages.length,
-            error_type: sent.error.type,
-            telegram_error: sent.error,
+            error_type: delivery.error.type,
+            telegram_error: delivery.error,
           },
           "reply not delivered",
         );
-        return;
+        break;
       }
+      sent.push(delivery.value.messageId);
     }
+    return sent;
   };
 
-  const deliverResult = <T>(
+  /**
+   * Delivers an answer about a prospect, then links its messages to them:
+   * replying to any of these messages continues that prospect's conversation.
+   */
+  const deliverAnswer = async <T>(
     chatId: TelegramChatId,
     result: Result<T, AiError>,
     present: (value: T) => readonly string[],
+    prospectId: string | null,
     log: Logger,
-  ): Promise<void> =>
-    deliver(
+  ): Promise<void> => {
+    const sent = await deliver(
       chatId,
       result.ok
         ? present(result.value)
         : [escapeHtml(aiProblemReply(result.error))],
       log,
     );
+    if (prospectId === null || sent.length === 0) {
+      return;
+    }
+    try {
+      await linkMessages(prospectId, chatId, sent);
+    } catch (error) {
+      // The answer arrived: only replying to it loses the prospect.
+      log.warn(errorFields(error), "bot messages not linked to the prospect");
+    }
+  };
 
   const answerScreenshots = async (
     chatId: TelegramChatId,
@@ -200,11 +246,12 @@ export const createUpdateHandler = ({
       );
       return;
     }
-    const { generation, memory } = analyzed.value;
-    await deliverResult(
+    const { generation, memory, pause, prospectId } = analyzed.value;
+    await deliverAnswer(
       chatId,
       generation.result,
-      (analysis) => screenshotsMessages(analysis, memory),
+      (analysis) => screenshotsMessages(analysis, memory, pause),
+      prospectId,
       log,
     );
   };
@@ -212,13 +259,20 @@ export const createUpdateHandler = ({
   const answerConversation = async (
     chatId: TelegramChatId,
     text: string,
+    reference: ProspectReference | null,
     log: Logger,
   ): Promise<void> => {
-    const generation = await whileTyping(chatId, () =>
-      replyToConversation(text, null),
+    const { generation, memory, pause, prospectId } = await whileTyping(
+      chatId,
+      () => replyToConversation(text, reference, log),
     );
-    logGeneration(generation, log);
-    await deliverResult(chatId, generation.result, conversationMessages, log);
+    await deliverAnswer(
+      chatId,
+      generation.result,
+      (reply) => conversationMessages(reply, memory, pause),
+      prospectId,
+      log,
+    );
   };
 
   const albums = createMediaGroupCollector<AlbumPhoto>({
@@ -289,7 +343,15 @@ export const createUpdateHandler = ({
       return { type: "ACCEPTED", input: input.type };
     }
     if (input.type === "TEXT") {
-      runInBackground(answerConversation(chatId, input.text, log), log);
+      runInBackground(
+        answerConversation(
+          chatId,
+          input.text,
+          referenceOf(input.username, content, chatId),
+          log,
+        ),
+        log,
+      );
       return { type: "ACCEPTED", input: input.type };
     }
 
