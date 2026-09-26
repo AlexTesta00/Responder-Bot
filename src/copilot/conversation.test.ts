@@ -136,6 +136,7 @@ describe("createConversationAnalyst", () => {
 
     expect(replyToConversation).toHaveBeenCalledExactlyOnceWith(PASTED, memory);
     expect(answer).toMatchObject({
+      username: "mariofit",
       memory: { type: "UPDATED", knownMessages: 1 },
       prospectId: memory.prospect.id,
       pause: null,

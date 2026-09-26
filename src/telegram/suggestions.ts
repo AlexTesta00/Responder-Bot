@@ -10,13 +10,31 @@ import type {
 import type { MemoryOutcome } from "../copilot/memory.ts";
 import type { Commitment } from "../conversations/domain.ts";
 import { MAX_FOLLOW_UPS, type Pause } from "../conversations/transition.ts";
+import type { InlineKeyboard } from "./client.ts";
+import { copyRows, isCopyable } from "./keyboard.ts";
+import { fitsInMessage } from "./message-length.ts";
 
 /** Makes text safe to embed in a Telegram HTML message. */
 export const escapeHtml = (text: string): string =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
+/** A message ready to send: Telegram HTML and the buttons under it. */
+export type Presented = Readonly<{
+  html: string;
+  keyboard: InlineKeyboard | null;
+}>;
+
+/** Plain text, escaped, without buttons. */
+export const plainMessage = (text: string): Presented => ({
+  html: escapeHtml(text),
+  keyboard: null,
+});
+
 // Enough to be useful at a glance on a phone.
 const MAX_LISTED_ITEMS = 5;
+
+// Enough to recognize the message the replies answer.
+const MAX_QUOTED_LENGTH = 120;
 
 const LABELS: Readonly<Record<SuggestionStyle, string>> = {
   BEST: "🔥 <b>BEST</b>",
@@ -25,6 +43,11 @@ const LABELS: Readonly<Record<SuggestionStyle, string>> = {
   ALTERNATIVE: "👀 <b>ALTERNATIVE</b>",
   DIRECT: "🎯 <b>DIRECT</b>",
 };
+
+const TOO_LONG_TO_COPY =
+  "✂️ Troppo lungo per il tasto Copia: tieni premuto il testo qui sopra per copiarlo.";
+
+const NOTHING_SUGGESTED = "🚫 Nessun messaggio suggerito.";
 
 const section = (title: string, items: readonly string[]): string[] =>
   items.length === 0
@@ -37,21 +60,10 @@ const section = (title: string, items: readonly string[]): string[] =>
           .map((item) => `• ${escapeHtml(item)}`),
       ];
 
-const heading = (
-  icon: string,
-  title: string,
-  prospect: ProspectSnapshot,
-): string =>
-  [
-    `${icon} <b>${title}</b>`,
-    prospect.username === null ? null : `@${escapeHtml(prospect.username)}`,
-    prospect.businessType === null ? null : escapeHtml(prospect.businessType),
-  ]
-    .filter((part) => part !== null)
-    .join(" · ");
-
-const noteLines = (note: string | null): string[] =>
-  note === null ? [] : ["", `📝 ${escapeHtml(note)}`];
+const quoted = (text: string): string =>
+  text.length <= MAX_QUOTED_LENGTH
+    ? text
+    : `${text.slice(0, MAX_QUOTED_LENGTH).trimEnd()}…`;
 
 /** Tells Alex whether the prospect's history was used and kept. */
 export const memoryLine = (memory: MemoryOutcome): string => {
@@ -83,9 +95,6 @@ export const memoryLine = (memory: MemoryOutcome): string => {
   }
 };
 
-const memoryLines = (memory: MemoryOutcome | null): string[] =>
-  memory === null ? [] : [memoryLine(memory)];
-
 /** Why the bot suggests nothing now, in place of the suggestions. */
 export const pauseMessage = (pause: Pause): string => {
   switch (pause) {
@@ -101,106 +110,228 @@ export const pauseMessage = (pause: Pause): string => {
 const commitmentLine = (commitment: Commitment): string =>
   `${commitment.by === "ALEX" ? "Tu" : "Prospect"}: ${commitment.text}`;
 
-/** Open objections and promises: what the next messages must keep in mind. */
-const openPoints = (
-  objections: readonly string[],
-  commitments: readonly Commitment[],
-): string[] => [
-  ...section("Obiezioni aperte", objections),
-  ...section("Promesse", commitments.map(commitmentLine)),
-];
-
-const analysisLines = (analysis: ConversationAnalysis): string[] => [
-  ...(analysis.lastProspectMessage === null
-    ? []
-    : [
-        `<b>Ultimo messaggio</b>: «${escapeHtml(analysis.lastProspectMessage)}»`,
-      ]),
-  `<b>Stage</b> ${analysis.stage} · <b>Intent</b> ${analysis.intent} · <b>Interesse</b> ${analysis.interest}`,
-  `🎯 <b>Obiettivo</b> ${analysis.nextGoal}: ${escapeHtml(analysis.rationale)}`,
-];
-
-// Each suggestion sits in its own block, easy to copy on a phone.
-const suggestionsMessage = (
-  title: string,
-  suggestions: readonly Suggestion[],
+/** The first line, which also shows in the notification. */
+const heading = (
+  icon: string,
+  fallback: string,
+  username: string | null,
+  businessType: string | null,
 ): string =>
-  suggestions.length === 0
-    ? "🚫 Nessun messaggio suggerito."
-    : [
-        `<b>${title}</b>`,
-        ...suggestions.flatMap((suggestion) => [
-          "",
-          LABELS[suggestion.style],
-          `<pre>${escapeHtml(suggestion.text)}</pre>`,
-        ]),
-      ].join("\n");
+  [
+    `${icon} <b>${username === null ? fallback : `@${escapeHtml(username)}`}</b>`,
+    businessType === null ? null : escapeHtml(businessType),
+  ]
+    .filter((part) => part !== null)
+    .join(" · ");
 
-const replyOrPause = (
-  title: string,
-  suggestions: readonly Suggestion[],
+/** Each suggestion in its own block; <pre> is kept for suggestions only. */
+const suggestionLines = (suggestion: Suggestion): string[] => [
+  "",
+  LABELS[suggestion.style],
+  `<pre>${escapeHtml(suggestion.text)}</pre>`,
+  ...(isCopyable(suggestion.text) ? [] : [TOO_LONG_TO_COPY]),
+];
+
+/** What a long answer leaves out first, to fit in one message. */
+const LEFT_OUT_FIRST = [
+  "HYPOTHESES",
+  "FACTS",
+  "COMMITMENTS",
+  "OBJECTIONS",
+  "NOTE",
+  "RATIONALE",
+] as const;
+
+type Optional = (typeof LEFT_OUT_FIRST)[number];
+
+type Answer = Readonly<{
+  heading: string;
+  /** Memory that could not be used or kept: Alex must see it. */
+  warning: string | null;
+  lastProspectMessage: string | null;
+  suggestions: readonly Suggestion[];
+  pause: Pause | null;
+  analysis: ConversationAnalysis | null;
+  /** The prospect was new, or already known. */
+  memoryNote: string | null;
+  objections: readonly string[];
+  commitments: readonly Commitment[];
+  facts: readonly string[];
+  hypotheses: readonly string[];
+  note: string | null;
+}>;
+
+const answerOf = (
+  heading: string,
+  memory: MemoryOutcome | null,
   pause: Pause | null,
-): string =>
-  pause === null ? suggestionsMessage(title, suggestions) : pauseMessage(pause);
+  details: Omit<Answer, "heading" | "warning" | "memoryNote" | "pause">,
+): Answer => ({
+  heading,
+  warning: memory?.type === "NOT_SAVED" ? memoryLine(memory) : null,
+  memoryNote:
+    memory === null || memory.type === "NOT_SAVED" ? null : memoryLine(memory),
+  pause,
+  ...details,
+});
 
-/** HTML messages presenting the analysis of screenshots, in sending order. */
-export const screenshotsMessages = (
+/**
+ * The answer as one message: the heading, the suggestions or why there are
+ * none, then the analysis in a block Alex can expand, less `leftOut`.
+ */
+const compose = (answer: Answer, leftOut: ReadonlySet<Optional>): string => {
+  const nothingSuggested =
+    answer.pause === null && answer.suggestions.length === 0;
+  const kept = (part: Optional): boolean => !leftOut.has(part);
+  const note =
+    answer.note === null ? [] : ["", `📝 ${escapeHtml(answer.note)}`];
+
+  const top = [
+    answer.heading,
+    ...(answer.warning === null ? [] : [answer.warning]),
+    ...(answer.lastProspectMessage === null
+      ? []
+      : [`↩️ «${escapeHtml(quoted(answer.lastProspectMessage))}»`]),
+  ];
+  const middle =
+    answer.pause !== null
+      ? ["", pauseMessage(answer.pause)]
+      : nothingSuggested
+        ? ["", NOTHING_SUGGESTED, ...note]
+        : answer.suggestions.flatMap(suggestionLines);
+
+  const { analysis } = answer;
+  const details = [
+    ...(analysis === null
+      ? []
+      : [
+          `<b>Stage</b> ${analysis.stage} · <b>Intent</b> ${analysis.intent} · <b>Interesse</b> ${analysis.interest}`,
+          `🎯 <b>Obiettivo</b> ${analysis.nextGoal}` +
+            (kept("RATIONALE") ? `: ${escapeHtml(analysis.rationale)}` : ""),
+        ]),
+    ...(answer.memoryNote === null ? [] : [answer.memoryNote]),
+    ...(kept("OBJECTIONS")
+      ? section("Obiezioni aperte", answer.objections)
+      : []),
+    ...(kept("COMMITMENTS")
+      ? section("Promesse", answer.commitments.map(commitmentLine))
+      : []),
+    ...(kept("FACTS") ? section("Cosa ho visto", answer.facts) : []),
+    ...(kept("HYPOTHESES")
+      ? section("Ipotesi da verificare", answer.hypotheses)
+      : []),
+    ...(!nothingSuggested && kept("NOTE") ? note : []),
+  ];
+  const expandable =
+    details.length === 0
+      ? []
+      : [
+          "",
+          `<blockquote expandable>🔍 <b>Analisi</b>\n${details.join("\n")}</blockquote>`,
+        ];
+
+  return [...top, ...middle, ...expandable].join("\n");
+};
+
+/** The fullest version of the answer that fits in one Telegram message. */
+const fitted = (answer: Answer): string => {
+  const versions = LEFT_OUT_FIRST.map((_part, index) =>
+    compose(answer, new Set(LEFT_OUT_FIRST.slice(0, index))),
+  );
+  const shortest = compose(answer, new Set(LEFT_OUT_FIRST));
+  return versions.find(fitsInMessage) ?? shortest;
+};
+
+const presented = (answer: Answer): Presented => {
+  const rows = answer.pause === null ? copyRows(answer.suggestions) : [];
+  return {
+    html: fitted(answer),
+    keyboard: rows.length === 0 ? null : rows,
+  };
+};
+
+const profileHeading = (
+  icon: string,
+  fallback: string,
+  prospect: ProspectSnapshot,
+) => heading(icon, fallback, prospect.username, prospect.businessType);
+
+/** The message presenting the analysis of screenshots. */
+export const screenshotsAnswer = (
   analysis: ScreenshotsAnalysis,
   memory: MemoryOutcome | null,
   pause: Pause | null,
-): readonly string[] => {
+): Presented => {
   switch (analysis.kind) {
     case "PROFILE":
-      return [
-        [
-          heading("👤", "Profilo", analysis.prospect),
-          ...memoryLines(memory),
-          ...section("Cosa ho visto", analysis.facts),
-          ...section("Ipotesi da verificare", analysis.hypotheses),
-          ...noteLines(analysis.note),
-        ].join("\n"),
-        replyOrPause("Primi messaggi", analysis.suggestions, pause),
-      ];
+      return presented(
+        answerOf(
+          profileHeading("👤", "Profilo", analysis.prospect),
+          memory,
+          pause,
+          {
+            lastProspectMessage: null,
+            suggestions: analysis.suggestions,
+            analysis: null,
+            objections: [],
+            commitments: [],
+            facts: analysis.facts,
+            hypotheses: analysis.hypotheses,
+            note: analysis.note,
+          },
+        ),
+      );
     case "CONVERSATION":
-      return [
-        [
-          heading("💬", "Conversazione", analysis.prospect),
-          ...memoryLines(memory),
-          ...analysisLines(analysis.analysis),
-          ...openPoints(analysis.objections, analysis.commitments),
-          ...section("Cosa ho visto", analysis.facts),
-          ...section("Ipotesi da verificare", analysis.hypotheses),
-          ...noteLines(analysis.note),
-        ].join("\n"),
-        replyOrPause("Risposte", analysis.suggestions, pause),
-      ];
+      return presented(
+        answerOf(
+          profileHeading("💬", "Conversazione", analysis.prospect),
+          memory,
+          pause,
+          {
+            lastProspectMessage: analysis.analysis.lastProspectMessage,
+            suggestions: analysis.suggestions,
+            analysis: analysis.analysis,
+            objections: analysis.objections,
+            commitments: analysis.commitments,
+            facts: analysis.facts,
+            hypotheses: analysis.hypotheses,
+            note: analysis.note,
+          },
+        ),
+      );
     case "UNRELATED":
-      return [
-        [
+      return {
+        html: [
           "🤔 Non sembra un profilo o una conversazione di Instagram.",
-          ...noteLines(analysis.note),
+          ...(analysis.note === null
+            ? []
+            : ["", `📝 ${escapeHtml(analysis.note)}`]),
         ].join("\n"),
-      ];
+        keyboard: null,
+      };
   }
 };
 
-/** HTML messages presenting the reply to a pasted conversation. */
-export const conversationMessages = (
+/** The message presenting the reply to a pasted conversation. */
+export const conversationAnswer = (
   reply: ConversationReply,
+  /** The prospect Alex named, when known. */
+  username: string | null,
   memory: MemoryOutcome | null,
   pause: Pause | null,
-): readonly string[] => [
-  [
-    "💬 <b>Conversazione</b>",
-    ...memoryLines(memory),
-    ...analysisLines(reply.analysis),
-    ...openPoints(reply.objections, reply.commitments),
-    ...section("Cosa ho visto", reply.facts),
-    ...section("Ipotesi da verificare", reply.hypotheses),
-    ...noteLines(reply.note),
-  ].join("\n"),
-  replyOrPause("Risposte", reply.suggestions, pause),
-];
+): Presented =>
+  presented(
+    answerOf(heading("💬", "Conversazione", username, null), memory, pause, {
+      lastProspectMessage: reply.analysis.lastProspectMessage,
+      suggestions: reply.suggestions,
+      analysis: reply.analysis,
+      objections: reply.objections,
+      commitments: reply.commitments,
+      facts: reply.facts,
+      hypotheses: reply.hypotheses,
+      note: reply.note,
+    }),
+  );
 
 /** Plain-text explanation of a generation that failed. */
 export const aiProblemReply = (error: AiError): string => {

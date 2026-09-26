@@ -21,10 +21,11 @@ import { createProcessedUpdates } from "./processed-updates.ts";
 import { imageProblemReply, replyTo, type InstantInput } from "./replies.ts";
 import {
   aiProblemReply,
-  conversationMessages,
+  conversationAnswer,
   escapeHtml,
   pauseMessage,
-  screenshotsMessages,
+  screenshotsAnswer,
+  type Presented,
 } from "./suggestions.ts";
 import type { ChatType, IncomingUpdate, MessageContent } from "./update.ts";
 import { createUpdateHandler } from "./webhook-handler.ts";
@@ -119,8 +120,11 @@ const GENERATION_FIELDS = {
 };
 
 /** The calls of sendMessage delivering these HTML messages. */
-const htmlCalls = (messages: readonly string[]) =>
-  messages.map((text) => [CHAT, text, { parseMode: "HTML" }]);
+const answerCall = ({ html, keyboard }: Presented) => [
+  CHAT,
+  html,
+  keyboard === null ? { parseMode: "HTML" } : { parseMode: "HTML", keyboard },
+];
 
 type MessageOptions = Readonly<{
   updateId?: number;
@@ -427,14 +431,14 @@ describe("suggestions", () => {
 
     expect(outcome).toStrictEqual({ type: "ACCEPTED", input: "SCREENSHOTS" });
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
     expect(downloadImage).toHaveBeenCalledExactlyOnceWith(SCREENSHOT);
     expect(analyzed).toStrictEqual([[{ format: "image/png", bytes: PNG }]]);
     expect(analyzeScreenshots.mock.calls[0]?.[1]).toBe("profilo di Mario");
-    expect(sendMessage.mock.calls).toStrictEqual(
-      htmlCalls(screenshotsMessages(PROFILE, { type: "CREATED" }, null)),
-    );
+    expect(sendMessage.mock.calls).toStrictEqual([
+      answerCall(screenshotsAnswer(PROFILE, { type: "CREATED" }, null)),
+    ]);
     expect(log.info).toHaveBeenCalledWith(
       { ai_mode: "SCREENSHOTS", ...GENERATION_FIELDS },
       "ai generation completed",
@@ -446,7 +450,7 @@ describe("suggestions", () => {
 
     await handleUpdate(screenshotMessage());
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
 
     expect(downloads).toStrictEqual([new Uint8Array(PNG.length)]);
@@ -459,21 +463,22 @@ describe("suggestions", () => {
 
     expect(outcome).toStrictEqual({ type: "ACCEPTED", input: "TEXT" });
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
     expect(replyToConversation).toHaveBeenCalledExactlyOnceWith(
       CONVERSATION,
       null,
     );
-    expect(sendMessage.mock.calls).toStrictEqual(
-      htmlCalls(
-        conversationMessages(
+    expect(sendMessage.mock.calls).toStrictEqual([
+      answerCall(
+        conversationAnswer(
           REPLY,
+          null,
           { type: "NOT_SAVED", reason: "NO_PROSPECT" },
           null,
         ),
       ),
-    );
+    ]);
     expect(log.info).toHaveBeenCalledWith(
       { ai_mode: "CONVERSATION_REPLY", ...GENERATION_FIELDS },
       "ai generation completed",
@@ -500,7 +505,7 @@ describe("suggestions", () => {
 
     answer.resolve(generation("CONVERSATION_REPLY", ok(REPLY)));
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
     runPending();
     expect(sendTyping).toHaveBeenCalledTimes(2);
@@ -560,23 +565,45 @@ describe("suggestions", () => {
     );
   });
 
-  it("stops at the first message it cannot deliver", async () => {
+  it("logs an answer it cannot deliver", async () => {
     const { handleUpdate, sendMessage, log } = setup(err(BLOCKED_BY_USER));
 
     await handleUpdate(textMessage(CONVERSATION));
     await vi.waitFor(() => {
       expect(log.error).toHaveBeenCalledWith(
-        {
-          message_index: 0,
-          messages: 2,
-          error_type: "API_ERROR",
-          telegram_error: BLOCKED_BY_USER,
-        },
+        { error_type: "API_ERROR", telegram_error: BLOCKED_BY_USER },
         "reply not delivered",
       );
     });
 
     expect(sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it("sends the answer again without buttons when Telegram refuses them", async () => {
+    const refused = {
+      type: "API_ERROR",
+      method: "sendMessage",
+      status: 400,
+      description: "Bad Request: BUTTON_DATA_INVALID",
+    } as const;
+    const { handleUpdate, sendMessage, log } = setup(err(refused));
+
+    await handleUpdate(screenshotMessage());
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    const { html } = screenshotsAnswer(PROFILE, { type: "CREATED" }, null);
+    expect(sendMessage.mock.calls[0]?.[2]).toHaveProperty("keyboard");
+    expect(sendMessage.mock.calls[1]).toStrictEqual([
+      CHAT,
+      html,
+      { parseMode: "HTML" },
+    ]);
+    expect(log.warn).toHaveBeenCalledWith(
+      { telegram_error: refused },
+      "keyboard rejected, answer resent without buttons",
+    );
   });
 
   it("logs a crash and stops typing", async () => {
@@ -604,7 +631,7 @@ describe("suggestions", () => {
     const first = await handleUpdate(textMessage(CONVERSATION));
     const redelivery = await handleUpdate(textMessage(CONVERSATION));
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
 
     expect([first, redelivery]).toStrictEqual([
@@ -622,7 +649,7 @@ describe("suggestions", () => {
       screenshotMessage("profilo di Mario", { updateId: 101 }),
     );
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(4);
+      expect(sendMessage).toHaveBeenCalledTimes(2);
     });
 
     const logs = JSON.stringify([
@@ -650,11 +677,11 @@ describe("prospect memory", () => {
 
     await handleUpdate(screenshotMessage());
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
     await handleUpdate(screenshotMessage(null, { updateId: 101 }));
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(4);
+      expect(sendMessage).toHaveBeenCalledTimes(2);
     });
 
     const [first, second] = analyzeScreenshots.mock.calls;
@@ -664,7 +691,7 @@ describe("prospect memory", () => {
       displayName: "Mario",
       facts: PROFILE.facts,
     });
-    expect(sendMessage.mock.calls[2]?.[1]).toContain("🧠 Già in memoria");
+    expect(sendMessage.mock.calls[1]?.[1]).toContain("🧠 Già in memoria");
   });
 
   it("says so when the screenshots do not show a username", async () => {
@@ -685,7 +712,7 @@ describe("prospect memory", () => {
 
     await handleUpdate(screenshotMessage());
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
 
     expect(sendMessage.mock.calls[0]?.[1]).toContain("Non vedo lo username");
@@ -698,23 +725,23 @@ describe("conversations", () => {
 
     await handleUpdate(screenshotMessage());
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
-    // The analysis arrived as messages 1001 and 1002: Alex replies to one.
+    // The analysis arrived as message 1001: Alex replies to it.
     await handleUpdate(
       messageWith(
-        { type: "TEXT", text: CONVERSATION, replyTo: 1_002 },
+        { type: "TEXT", text: CONVERSATION, replyTo: 1_001 },
         { updateId: 101 },
       ),
     );
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(4);
+      expect(sendMessage).toHaveBeenCalledTimes(2);
     });
 
     expect(replyToConversation.mock.calls[0]?.[1]?.prospect).toMatchObject({
       username: "mariofit",
     });
-    expect(sendMessage.mock.calls[2]?.[1]).toContain("🧠 Già in memoria");
+    expect(sendMessage.mock.calls[1]?.[1]).toContain("🧠 Già in memoria");
   });
 
   it("remembers a conversation pasted under the prospect's @username", async () => {
@@ -725,7 +752,7 @@ describe("conversations", () => {
       textMessage(`@giulia.bakery\n${CONVERSATION}`),
     );
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
 
     expect(outcome).toStrictEqual({ type: "ACCEPTED", input: "TEXT" });
@@ -742,7 +769,7 @@ describe("conversations", () => {
 
     await handleUpdate(textMessage(CONVERSATION));
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
 
     expect(sendMessage.mock.calls[0]?.[1]).toContain("@username");
@@ -766,10 +793,13 @@ describe("conversations", () => {
 
     await handleUpdate(textMessage(`@mariofit\n${CONVERSATION}`));
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
 
-    expect(sendMessage.mock.calls[1]?.[1]).toBe(pauseMessage("DO_NOT_CONTACT"));
+    expect(sendMessage.mock.calls[0]?.[1]).toContain(
+      pauseMessage("DO_NOT_CONTACT"),
+    );
+    expect(sendMessage.mock.calls[0]?.[2]).toStrictEqual({ parseMode: "HTML" });
   });
 });
 
@@ -800,7 +830,7 @@ describe("albums", () => {
 
     runPending();
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
 
     expect(downloadImage.mock.calls).toStrictEqual(
@@ -811,9 +841,9 @@ describe("albums", () => {
     const png = { format: "image/png", bytes: PNG };
     expect(analyzed).toStrictEqual([[png, png, png]]);
     expect(analyzeScreenshots.mock.calls[0]?.[1]).toBe("profilo di Mario");
-    expect(sendMessage.mock.calls).toStrictEqual(
-      htmlCalls(screenshotsMessages(PROFILE, { type: "CREATED" }, null)),
-    );
+    expect(sendMessage.mock.calls).toStrictEqual([
+      answerCall(screenshotsAnswer(PROFILE, { type: "CREATED" }, null)),
+    ]);
     expect(log.info).toHaveBeenCalledWith(
       { input: "SCREENSHOTS", images: 3 },
       "telegram album accepted for processing",
@@ -827,7 +857,7 @@ describe("albums", () => {
     const redelivery = await handleUpdate(albumPhoto(101, "first"));
     runPending();
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenCalledOnce();
     });
 
     expect(redelivery).toStrictEqual({ type: "IGNORED", reason: "DUPLICATE" });

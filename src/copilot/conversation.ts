@@ -29,6 +29,8 @@ export type ProspectReference =
 
 export type ConversationAnswer = Readonly<{
   generation: Generation<ConversationReply>;
+  /** The prospect Alex named, when the reference led to one. */
+  username: string | null;
   /** Null when the generation failed: there is nothing to remember. */
   memory: MemoryOutcome | null;
   /** Why no message should be suggested now, whatever the analysis wrote. */
@@ -165,6 +167,7 @@ export const createConversationAnalyst = ({
     await steps.record([runOf(generation, answer.prospectId)], log);
     return {
       generation,
+      username: resolved.type === "FOUND" ? resolved.username : null,
       memory: answer.outcome,
       pause: answer.pause,
       prospectId: answer.prospectId,

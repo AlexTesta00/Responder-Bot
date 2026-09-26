@@ -15,7 +15,9 @@ import {
 import type { Logger } from "../shared/logger.ts";
 import type { Result } from "../shared/result.ts";
 import {
+  isKeyboardRejection,
   isRetryable,
+  type SendOptions,
   type TelegramClient,
   type TelegramError,
 } from "./client.ts";
@@ -25,9 +27,10 @@ import type { ProcessedUpdates } from "./processed-updates.ts";
 import { imageProblemReply, replyTo, type InstantInput } from "./replies.ts";
 import {
   aiProblemReply,
-  conversationMessages,
-  escapeHtml,
-  screenshotsMessages,
+  conversationAnswer,
+  plainMessage,
+  screenshotsAnswer,
+  type Presented,
 } from "./suggestions.ts";
 import type { IncomingUpdate, MessageContent } from "./update.ts";
 
@@ -169,42 +172,47 @@ export const createUpdateHandler = ({
   };
 
   /**
-   * Sends HTML messages in order, stopping at the first one that fails,
-   * and returns the ids of those sent.
+   * Sends an HTML message and returns its id. When Telegram refuses its
+   * buttons, the text still arrives, without them.
    */
   const deliver = async (
     chatId: TelegramChatId,
-    messages: readonly string[],
+    { html, keyboard }: Presented,
     log: Logger,
-  ): Promise<readonly number[]> => {
-    const sent: number[] = [];
-    for (const [index, text] of messages.entries()) {
-      const delivery = await sendMessage(chatId, text, { parseMode: "HTML" });
-      if (!delivery.ok) {
-        log.error(
-          {
-            message_index: index,
-            messages: messages.length,
-            error_type: delivery.error.type,
-            telegram_error: delivery.error,
-          },
-          "reply not delivered",
-        );
-        break;
-      }
-      sent.push(delivery.value.messageId);
+  ): Promise<number | null> => {
+    const options: SendOptions = { parseMode: "HTML" };
+    const first = await sendMessage(
+      chatId,
+      html,
+      keyboard === null ? options : { ...options, keyboard },
+    );
+    const refused =
+      !first.ok && keyboard !== null && isKeyboardRejection(first.error);
+    if (refused) {
+      log.warn(
+        { telegram_error: first.error },
+        "keyboard rejected, answer resent without buttons",
+      );
     }
-    return sent;
+    const delivery = refused ? await sendMessage(chatId, html, options) : first;
+    if (!delivery.ok) {
+      log.error(
+        { error_type: delivery.error.type, telegram_error: delivery.error },
+        "reply not delivered",
+      );
+      return null;
+    }
+    return delivery.value.messageId;
   };
 
   /**
-   * Delivers an answer about a prospect, then links its messages to them:
-   * replying to any of these messages continues that prospect's conversation.
+   * Delivers an answer about a prospect, then links it to them: replying to
+   * it continues that prospect's conversation.
    */
   const deliverAnswer = async <T>(
     chatId: TelegramChatId,
     result: Result<T, AiError>,
-    present: (value: T) => readonly string[],
+    present: (value: T) => Presented,
     prospectId: string | null,
     log: Logger,
   ): Promise<void> => {
@@ -212,14 +220,14 @@ export const createUpdateHandler = ({
       chatId,
       result.ok
         ? present(result.value)
-        : [escapeHtml(aiProblemReply(result.error))],
+        : plainMessage(aiProblemReply(result.error)),
       log,
     );
-    if (prospectId === null || sent.length === 0) {
+    if (prospectId === null || sent === null) {
       return;
     }
     try {
-      await linkMessages(prospectId, chatId, sent);
+      await linkMessages(prospectId, chatId, [sent]);
     } catch (error) {
       // The answer arrived: only replying to it loses the prospect.
       log.warn(errorFields(error), "bot messages not linked to the prospect");
@@ -241,7 +249,7 @@ export const createUpdateHandler = ({
       log.warn({ image_problem: analyzed.error }, "screenshots not processed");
       await deliver(
         chatId,
-        [escapeHtml(imageProblemReply(analyzed.error))],
+        plainMessage(imageProblemReply(analyzed.error)),
         log,
       );
       return;
@@ -250,7 +258,7 @@ export const createUpdateHandler = ({
     await deliverAnswer(
       chatId,
       generation.result,
-      (analysis) => screenshotsMessages(analysis, memory, pause),
+      (analysis) => screenshotsAnswer(analysis, memory, pause),
       prospectId,
       log,
     );
@@ -262,14 +270,14 @@ export const createUpdateHandler = ({
     reference: ProspectReference | null,
     log: Logger,
   ): Promise<void> => {
-    const { generation, memory, pause, prospectId } = await whileTyping(
-      chatId,
-      () => replyToConversation(text, reference, log),
-    );
+    const { generation, username, memory, pause, prospectId } =
+      await whileTyping(chatId, () =>
+        replyToConversation(text, reference, log),
+      );
     await deliverAnswer(
       chatId,
       generation.result,
-      (reply) => conversationMessages(reply, memory, pause),
+      (reply) => conversationAnswer(reply, username, memory, pause),
       prospectId,
       log,
     );
