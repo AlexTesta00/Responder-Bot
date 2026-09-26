@@ -7,7 +7,6 @@ import { runOf, totalCost, type GenerationLog } from "../ai/runs.ts";
 import type { Pause } from "../conversations/transition.ts";
 import type { Observation } from "../prospects/memory.ts";
 import type { ProspectStore } from "../prospects/store.ts";
-import { errorFields } from "../shared/errors.ts";
 import type { Logger } from "../shared/logger.ts";
 import {
   conversationMove,
@@ -15,17 +14,13 @@ import {
   logGeneration,
   moved,
   notSaved,
+  resolveReference,
   type Loaded,
   type MemoryOutcome,
+  type ProspectReference,
+  type Resolved,
   type Stored,
 } from "./memory.ts";
-
-/** How Alex said whose conversation it is. */
-export type ProspectReference =
-  /** The @username written on the first line. */
-  | Readonly<{ type: "USERNAME"; username: string }>
-  /** A reply to a message the bot sent about the prospect. */
-  | Readonly<{ type: "REPLY"; chatId: number; messageId: number }>;
 
 export type ConversationAnswer = Readonly<{
   generation: Generation<ConversationReply>;
@@ -53,11 +48,6 @@ export type ConversationDependencies = Readonly<{
   generations: GenerationLog;
 }>;
 
-type Resolved =
-  | Readonly<{ type: "FOUND"; username: string }>
-  | Readonly<{ type: "UNKNOWN" }>
-  | Readonly<{ type: "UNAVAILABLE" }>;
-
 const observationOf = (reply: ConversationReply): Observation => ({
   displayName: null,
   businessType: null,
@@ -81,30 +71,6 @@ export const createConversationAnalyst = ({
   generations,
 }: ConversationDependencies): ReplyToConversation => {
   const steps = createMemorySteps({ prospects, generations });
-
-  const resolve = async (
-    reference: ProspectReference | null,
-    log: Logger,
-  ): Promise<Resolved> => {
-    if (reference === null) {
-      return { type: "UNKNOWN" };
-    }
-    if (reference.type === "USERNAME") {
-      return { type: "FOUND", username: reference.username };
-    }
-    try {
-      const username = await prospects.prospectOfMessage(
-        reference.chatId,
-        reference.messageId,
-      );
-      return username === null
-        ? { type: "UNKNOWN" }
-        : { type: "FOUND", username };
-    } catch (error) {
-      log.error(errorFields(error), "prospect of the reply unavailable");
-      return { type: "UNAVAILABLE" };
-    }
-  };
 
   const loadResolved = async (
     resolved: Resolved,
@@ -145,7 +111,7 @@ export const createConversationAnalyst = ({
   };
 
   return async (text, reference, log) => {
-    const resolved = await resolve(reference, log);
+    const resolved = await resolveReference(prospects, reference, log);
     const loaded = await loadResolved(resolved, log);
 
     const generation = await ai.replyToConversation(

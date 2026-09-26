@@ -1,9 +1,7 @@
 import type { AiError } from "../ai/engine.ts";
 import type { SpendingLedger } from "../ai/spending.ts";
-import type {
-  ProspectReference,
-  ReplyToConversation,
-} from "../copilot/conversation.ts";
+import type { ReplyToConversation } from "../copilot/conversation.ts";
+import type { ProspectReference } from "../copilot/memory.ts";
 import type { AnalyzeScreenshots } from "../copilot/screenshots.ts";
 import type { ProspectStore } from "../prospects/store.ts";
 import { errorFields } from "../shared/errors.ts";

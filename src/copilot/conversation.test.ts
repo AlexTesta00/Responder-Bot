@@ -11,10 +11,8 @@ import {
 } from "../prospects/store.ts";
 import type { Logger } from "../shared/logger.ts";
 import { err, ok } from "../shared/result.ts";
-import {
-  createConversationAnalyst,
-  type ProspectReference,
-} from "./conversation.ts";
+import { createConversationAnalyst } from "./conversation.ts";
+import type { ProspectReference } from "./memory.ts";
 
 const PASTED = "Mario: Quanto costa un sito come il tuo?";
 
