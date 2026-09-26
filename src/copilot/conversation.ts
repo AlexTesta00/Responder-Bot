@@ -3,7 +3,7 @@
 // remember.
 import type { AiEngine, Generation } from "../ai/engine.ts";
 import type { ConversationReply } from "../ai/outputs.ts";
-import { runOf, type GenerationLog } from "../ai/runs.ts";
+import { runOf, totalCost, type GenerationLog } from "../ai/runs.ts";
 import type { Pause } from "../conversations/transition.ts";
 import type { Observation } from "../prospects/memory.ts";
 import type { ProspectStore } from "../prospects/store.ts";
@@ -37,6 +37,8 @@ export type ConversationAnswer = Readonly<{
   pause: Pause | null;
   /** The prospect the answer is about, when known. */
   prospectId: string | null;
+  /** Estimated cost of the generation, in millionths of a dollar. */
+  costMicroUsd: number | null;
 }>;
 
 export type ReplyToConversation = (
@@ -164,13 +166,15 @@ export const createConversationAnalyst = ({
         )
       : { outcome: null, prospectId: knownId, pause: null };
 
-    await steps.record([runOf(generation, answer.prospectId)], log);
+    const runs = [runOf(generation, answer.prospectId)];
+    await steps.record(runs, log);
     return {
       generation,
       username: resolved.type === "FOUND" ? resolved.username : null,
       memory: answer.outcome,
       pause: answer.pause,
       prospectId: answer.prospectId,
+      costMicroUsd: totalCost(runs),
     };
   };
 };

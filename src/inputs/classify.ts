@@ -3,9 +3,17 @@ import { usernameFromLinks, usernameFromMention } from "./instagram.ts";
 
 export type Command = "start" | "help";
 
+/** "/credito" alone shows the costs; with an amount it sets the credit. */
+export type CreditRequest =
+  | Readonly<{ type: "SHOW" }>
+  /** The credit read on the Claude Console, in millionths of a dollar. */
+  | Readonly<{ type: "SET"; amountMicroUsd: number }>
+  | Readonly<{ type: "INVALID" }>;
+
 /** What a text message is, from the bot's point of view. */
 export type TextInput =
   | Readonly<{ type: "COMMAND"; command: Command }>
+  | Readonly<{ type: "CREDIT"; request: CreditRequest }>
   | Readonly<{ type: "UNKNOWN_COMMAND" }>
   | Readonly<{ type: "INSTAGRAM_PROFILE"; username: string }>
   | Readonly<{ type: "LINK"; url: string }>
@@ -33,6 +41,23 @@ const commandName = (text: string): string | undefined =>
 const isCommand = (name: string | undefined): name is Command =>
   name === "start" || name === "help";
 
+/** Credits up to a million dollars, as "25", "25,40", "25.4" or "$25". */
+const creditRequestOf = (argument: string): CreditRequest => {
+  if (argument === "") {
+    return { type: "SHOW" };
+  }
+  const amount = /^\$?\s*(\d{1,6})(?:[.,](\d{1,2}))?\s*\$?$/.exec(argument);
+  if (amount === null) {
+    return { type: "INVALID" };
+  }
+  const [, dollars = "0", cents = "0"] = amount;
+  return {
+    type: "SET",
+    amountMicroUsd:
+      Number(dollars) * 1_000_000 + Number(cents.padEnd(2, "0")) * 10_000,
+  };
+};
+
 const isWebLink = (text: string): boolean =>
   !/\s/.test(text) &&
   URL.canParse(text) &&
@@ -43,6 +68,10 @@ export const classifyText = (text: string): TextInput => {
 
   if (trimmed.startsWith("/")) {
     const name = commandName(trimmed);
+    if (name === "credito") {
+      const argument = trimmed.replace(/^\/\S+/, "").trim();
+      return { type: "CREDIT", request: creditRequestOf(argument) };
+    }
     return isCommand(name)
       ? { type: "COMMAND", command: name }
       : { type: "UNKNOWN_COMMAND" };

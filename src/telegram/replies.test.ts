@@ -6,8 +6,8 @@ import { imageProblemReply, replyTo, type InstantInput } from "./replies.ts";
 /** The reply to a text the bot answers at once. */
 const replyToText = (text: string): string => {
   const input = classifyText(text);
-  if (input.type === "TEXT") {
-    expect.unreachable(`${text} goes to the AI engine`);
+  if (input.type === "TEXT" || input.type === "CREDIT") {
+    expect.unreachable(`${text} is not answered from the input alone`);
   }
   return replyTo(input satisfies InstantInput);
 };
@@ -26,6 +26,7 @@ describe("replyTo", () => {
 
     expect(reply).toContain("/start");
     expect(reply).toContain("/help");
+    expect(reply).toContain("/credito 25,40");
   });
 
   it("points unknown commands to /help", () => {

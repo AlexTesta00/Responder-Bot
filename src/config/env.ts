@@ -37,6 +37,15 @@ const envShape = {
     ),
   ANTHROPIC_MODEL: z.string().trim().min(1).default("claude-opus-5"),
   ANTHROPIC_FAST_MODEL: z.string().trim().min(1).default("claude-haiku-4-5"),
+  // The monthly spend limit set on the Claude Console, in dollars.
+  ANTHROPIC_MONTHLY_LIMIT_USD: z.preprocess(
+    unlessEmpty,
+    z.coerce
+      .number({ error: "Expected an amount in dollars, such as 20 or 20.50" })
+      .positive()
+      .max(1_000_000)
+      .optional(),
+  ),
   // MySQL or MariaDB, such as the database included in Hostinger's plans.
   DATABASE_HOST: z.preprocess(unlessEmpty, z.string().trim().min(1).optional()),
   DATABASE_PORT: z.preprocess(
@@ -111,6 +120,12 @@ export const databaseConfigOf = (env: Env): DatabaseConfig | null => {
     ? null
     : { host, port, database, user, password };
 };
+
+/** The monthly spend limit in millionths of a dollar, when it is set. */
+export const monthlyLimitOf = (env: Env): number | null =>
+  env.ANTHROPIC_MONTHLY_LIMIT_USD === undefined
+    ? null
+    : Math.round(env.ANTHROPIC_MONTHLY_LIMIT_USD * 1_000_000);
 
 export type EnvIssue = Readonly<{
   variable: string;

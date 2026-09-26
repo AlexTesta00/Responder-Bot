@@ -198,6 +198,8 @@ describe("webhook workflow", () => {
           analyzeScreenshots: notExpected,
           replyToConversation: notExpected,
           linkMessages: notExpected,
+          spending: { spending: notExpected, setCredit: notExpected },
+          monthlyLimitMicroUsd: null,
           schedule: () => () => undefined,
         }),
       },

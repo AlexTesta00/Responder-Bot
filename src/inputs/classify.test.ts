@@ -14,7 +14,25 @@ describe("classifyText", () => {
     expect(classifyText(text)).toStrictEqual({ type: "COMMAND", command });
   });
 
-  it.each(["/", "/startup", "/unknown", "/ciao come va"])(
+  it.each([
+    ["/credito", { type: "SHOW" }],
+    ["/credito@AlexOutreachBot", { type: "SHOW" }],
+    ["/credito 25", { type: "SET", amountMicroUsd: 25_000_000 }],
+    ["/credito 25,40", { type: "SET", amountMicroUsd: 25_400_000 }],
+    ["/credito 25.4", { type: "SET", amountMicroUsd: 25_400_000 }],
+    ["/credito $ 7,05", { type: "SET", amountMicroUsd: 7_050_000 }],
+    ["/credito 0", { type: "SET", amountMicroUsd: 0 }],
+    ["/CREDITO 18 $", { type: "SET", amountMicroUsd: 18_000_000 }],
+    ["/credito venti", { type: "INVALID" }],
+    ["/credito 25,405", { type: "INVALID" }],
+    ["/credito 1.234,56", { type: "INVALID" }],
+    ["/credito -5", { type: "INVALID" }],
+    ["/credito 1000000", { type: "INVALID" }],
+  ])("reads the credit in %j", (text, request) => {
+    expect(classifyText(text)).toStrictEqual({ type: "CREDIT", request });
+  });
+
+  it.each(["/", "/startup", "/unknown", "/ciao come va", "/creditocard"])(
     "marks %j as an unknown command",
     (text) => {
       expect(classifyText(text)).toStrictEqual({ type: "UNKNOWN_COMMAND" });

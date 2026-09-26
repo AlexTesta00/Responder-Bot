@@ -1,10 +1,13 @@
 import type { Input } from "../inputs/classify.ts";
 import type { ImageDownloadError } from "../inputs/images.ts";
 
-/** Inputs answered at once; screenshots and texts go to the AI engine. */
+/**
+ * Inputs answered at once, from the input alone: screenshots and texts go
+ * to the AI engine, and the credit needs the costs recorded.
+ */
 export type InstantInput = Exclude<
   Input,
-  Readonly<{ type: "SCREENSHOTS" | "TEXT" }>
+  Readonly<{ type: "SCREENSHOTS" | "TEXT" | "CREDIT" }>
 >;
 
 const START = [
@@ -23,6 +26,7 @@ const HELP = [
   "Comandi disponibili:",
   "/start – presentazione del bot",
   "/help – questo elenco",
+  "/credito – quanto hai speso questo mese e il credito che resta; con il saldo della Console, per esempio /credito 25,40, lo aggiorna",
   "",
   "Oltre ai comandi puoi mandarmi screenshot di profili e conversazioni (anche più di uno insieme), il testo di una conversazione e link o @username di profili Instagram.",
 ].join("\n");

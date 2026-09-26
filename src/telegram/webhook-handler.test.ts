@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { AiEngine, AiError, Generation } from "../ai/engine.ts";
+import type { GenerationLog } from "../ai/runs.ts";
 import type { ConversationReply, ScreenshotsAnalysis } from "../ai/outputs.ts";
 import type { PromptMode } from "../ai/prompts/modes.ts";
-import { discardGenerationRuns } from "../ai/runs.ts";
+import { createInMemorySpending, type SpendingLedger } from "../ai/spending.ts";
 import { createConversationAnalyst } from "../copilot/conversation.ts";
 import { createScreenshotsAnalyst } from "../copilot/screenshots.ts";
 import type { DownloadedImage, DownloadImage } from "../inputs/images.ts";
@@ -119,6 +120,14 @@ const GENERATION_FIELDS = {
   stop_reason: "end_turn",
 };
 
+/** Under an answer with one generation: 21_650 millionths of a dollar. */
+const ONE_RUN_COST =
+  "💳 Questa analisi ~0,02 $ · mese ~0,02 $, restano ~19,98 $ di 20,00 $";
+
+/** Under the first analysis of screenshots: two generations. */
+const TWO_RUNS_COST =
+  "💳 Questa analisi ~0,04 $ · mese ~0,04 $, restano ~19,96 $ di 20,00 $";
+
 /** The calls of sendMessage delivering these HTML messages. */
 const answerCall = ({ html, keyboard }: Presented) => [
   CHAT,
@@ -198,7 +207,13 @@ const manualSchedule = () => {
 type SendResult = Awaited<ReturnType<TelegramClient["sendMessage"]>>;
 
 /** sendMessage returns `results` on consecutive calls, then succeeds. */
-const setup = (...results: readonly SendResult[]) => {
+const setup = (...results: readonly SendResult[]) =>
+  setupWith(createInMemorySpending(), ...results);
+
+const setupWith = (
+  spending: SpendingLedger & GenerationLog,
+  ...results: readonly SendResult[]
+) => {
   // Each message the bot sends gets the next id, as on Telegram.
   let lastMessageId = 1_000;
   const sendMessage = vi.fn<TelegramClient["sendMessage"]>(() => {
@@ -246,7 +261,7 @@ const setup = (...results: readonly SendResult[]) => {
   const copilot = {
     ai: { identifyProspect, analyzeScreenshots, replyToConversation },
     prospects,
-    generations: discardGenerationRuns,
+    generations: spending,
   };
   const handler = createUpdateHandler({
     allowedUserId: ALEX,
@@ -258,6 +273,8 @@ const setup = (...results: readonly SendResult[]) => {
     analyzeScreenshots: createScreenshotsAnalyst(copilot),
     replyToConversation: createConversationAnalyst(copilot),
     linkMessages: prospects.linkMessages,
+    spending,
+    monthlyLimitMicroUsd: 20_000_000,
     schedule,
   });
   const handleUpdate = (update: IncomingUpdate) =>
@@ -437,7 +454,9 @@ describe("suggestions", () => {
     expect(analyzed).toStrictEqual([[{ format: "image/png", bytes: PNG }]]);
     expect(analyzeScreenshots.mock.calls[0]?.[1]).toBe("profilo di Mario");
     expect(sendMessage.mock.calls).toStrictEqual([
-      answerCall(screenshotsAnswer(PROFILE, { type: "CREATED" }, null)),
+      answerCall(
+        screenshotsAnswer(PROFILE, { type: "CREATED" }, null, TWO_RUNS_COST),
+      ),
     ]);
     expect(log.info).toHaveBeenCalledWith(
       { ai_mode: "SCREENSHOTS", ...GENERATION_FIELDS },
@@ -476,6 +495,7 @@ describe("suggestions", () => {
           null,
           { type: "NOT_SAVED", reason: "NO_PROSPECT" },
           null,
+          ONE_RUN_COST,
         ),
       ),
     ]);
@@ -524,7 +544,7 @@ describe("suggestions", () => {
 
     expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
       CHAT,
-      escapeHtml(aiProblemReply(OVERLOADED)),
+      `${escapeHtml(aiProblemReply(OVERLOADED))}\n\n${ONE_RUN_COST}`,
       { parseMode: "HTML" },
     );
     expect(log.warn).toHaveBeenCalledWith(
@@ -593,7 +613,12 @@ describe("suggestions", () => {
       expect(sendMessage).toHaveBeenCalledTimes(2);
     });
 
-    const { html } = screenshotsAnswer(PROFILE, { type: "CREATED" }, null);
+    const { html } = screenshotsAnswer(
+      PROFILE,
+      { type: "CREATED" },
+      null,
+      TWO_RUNS_COST,
+    );
     expect(sendMessage.mock.calls[0]?.[2]).toHaveProperty("keyboard");
     expect(sendMessage.mock.calls[1]).toStrictEqual([
       CHAT,
@@ -842,7 +867,9 @@ describe("albums", () => {
     expect(analyzed).toStrictEqual([[png, png, png]]);
     expect(analyzeScreenshots.mock.calls[0]?.[1]).toBe("profilo di Mario");
     expect(sendMessage.mock.calls).toStrictEqual([
-      answerCall(screenshotsAnswer(PROFILE, { type: "CREATED" }, null)),
+      answerCall(
+        screenshotsAnswer(PROFILE, { type: "CREATED" }, null, TWO_RUNS_COST),
+      ),
     ]);
     expect(log.info).toHaveBeenCalledWith(
       { input: "SCREENSHOTS", images: 3 },
@@ -865,5 +892,103 @@ describe("albums", () => {
       fileId: "first",
       fileSize: null,
     });
+  });
+});
+
+describe("costs", () => {
+  it("tells under each answer what it cost and what is left", async () => {
+    const { handleUpdate, sendMessage } = setup();
+
+    await handleUpdate(screenshotMessage());
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+    await handleUpdate(textMessage(CONVERSATION, { updateId: 101 }));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    expect(sendMessage.mock.calls[0]?.[1]).toMatch(
+      /\n💳 Questa analisi ~0,04 \$ · mese ~0,04 \$, restano ~19,96 \$ di 20,00 \$$/,
+    );
+    expect(sendMessage.mock.calls[1]?.[1]).toMatch(
+      /\n💳 Questa analisi ~0,02 \$ · mese ~0,06 \$, restano ~19,94 \$ di 20,00 \$$/,
+    );
+  });
+
+  it("still tells what the answer cost when the month cannot be read", async () => {
+    const memory = createInMemorySpending();
+    const { handleUpdate, sendMessage, log } = setupWith({
+      ...memory,
+      spending: () => Promise.reject(new Error("ECONNREFUSED")),
+    });
+
+    await handleUpdate(textMessage(CONVERSATION));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+
+    expect(sendMessage.mock.calls[0]?.[1]).toMatch(
+      /\n💳 Questa analisi ~0,02 \$$/,
+    );
+    expect(log.warn).toHaveBeenCalledWith(
+      { error_name: "Error", error_code: null, errno: null, sql_state: null },
+      "spending unavailable",
+    );
+  });
+
+  it("sets the credit Alex read on the Console and reports it", async () => {
+    const { handleUpdate, sendMessage } = setup();
+
+    const outcome = await handleUpdate(textMessage("/credito 25,40"));
+
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: "CREDIT" });
+    const [call] = sendMessage.mock.calls;
+    expect(call?.[1]).toContain("✅ Credito impostato a 25,40 $");
+    expect(call?.[1]).toContain("Credito: ~25,40 $");
+    expect(call?.[2]).toStrictEqual({ parseMode: "HTML" });
+  });
+
+  it("counts down the credit with each answer", async () => {
+    const { handleUpdate, sendMessage } = setup();
+
+    await handleUpdate(textMessage("/credito 25"));
+    await handleUpdate(textMessage(CONVERSATION, { updateId: 101 }));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+    await handleUpdate(textMessage("/credito", { updateId: 102 }));
+
+    expect(sendMessage.mock.calls[1]?.[1]).toContain("credito ~24,98 $");
+    expect(sendMessage.mock.calls[2]?.[1]).toContain(
+      "Questo mese: ~0,02 $, restano ~19,98 $ di 20,00 $",
+    );
+  });
+
+  it("explains how to write the credit", async () => {
+    const { handleUpdate, sendMessage } = setup();
+
+    await handleUpdate(textMessage("/credito venti"));
+
+    expect(sendMessage.mock.calls[0]?.[1]).toContain("/credito 25,40");
+  });
+
+  it("says so when the costs cannot be read", async () => {
+    const memory = createInMemorySpending();
+    const { handleUpdate, sendMessage, log } = setupWith({
+      ...memory,
+      setCredit: () => Promise.reject(new Error("ECONNREFUSED")),
+    });
+
+    const outcome = await handleUpdate(textMessage("/credito 25"));
+
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: "CREDIT" });
+    expect(sendMessage.mock.calls[0]?.[1]).toContain(
+      "il database non risponde",
+    );
+    expect(log.error).toHaveBeenCalledWith(
+      { error_name: "Error", error_code: null, errno: null, sql_state: null },
+      "spending unavailable",
+    );
   });
 });

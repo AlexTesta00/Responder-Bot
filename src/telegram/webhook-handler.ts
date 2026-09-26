@@ -1,4 +1,5 @@
 import type { AiError } from "../ai/engine.ts";
+import type { SpendingLedger } from "../ai/spending.ts";
 import type {
   ProspectReference,
   ReplyToConversation,
@@ -6,7 +7,11 @@ import type {
 import type { AnalyzeScreenshots } from "../copilot/screenshots.ts";
 import type { ProspectStore } from "../prospects/store.ts";
 import { errorFields } from "../shared/errors.ts";
-import { classifyText, type Input } from "../inputs/classify.ts";
+import {
+  classifyText,
+  type CreditRequest,
+  type Input,
+} from "../inputs/classify.ts";
 import {
   withDownloadedImages,
   type DownloadImage,
@@ -21,15 +26,24 @@ import {
   type TelegramClient,
   type TelegramError,
 } from "./client.ts";
+import {
+  costLine,
+  creditSetReply,
+  INVALID_CREDIT_REPLY,
+  SPENDING_UNAVAILABLE_REPLY,
+  spendingReport,
+} from "./costs.ts";
 import type { TelegramChatId, TelegramUserId } from "./ids.ts";
 import { createMediaGroupCollector, type Schedule } from "./media-group.ts";
 import type { ProcessedUpdates } from "./processed-updates.ts";
-import { imageProblemReply, replyTo, type InstantInput } from "./replies.ts";
+import { imageProblemReply, replyTo } from "./replies.ts";
 import {
   aiProblemReply,
   conversationAnswer,
+  escapeHtml,
   plainMessage,
   screenshotsAnswer,
+  type Footer,
   type Presented,
 } from "./suggestions.ts";
 import type { IncomingUpdate, MessageContent } from "./update.ts";
@@ -44,7 +58,13 @@ const ALBUM_MAX_ITEMS = 10;
 export const TYPING_REFRESH_MS = 4_000;
 
 /** Inputs answered by the AI engine, which takes too long to wait for. */
-export type AiInput = Exclude<Input, InstantInput>;
+export type AiInput = Extract<
+  Input,
+  Readonly<{ type: "SCREENSHOTS" | "TEXT" }>
+>;
+
+/** Inputs answered while Telegram waits, the instant ones and the credit. */
+export type RepliedInput = Exclude<Input, AiInput>;
 
 export type IgnoredReason =
   | "UNSUPPORTED_UPDATE"
@@ -53,7 +73,7 @@ export type IgnoredReason =
   | "DUPLICATE";
 
 export type UpdateOutcome =
-  | Readonly<{ type: "REPLIED"; input: InstantInput["type"] }>
+  | Readonly<{ type: "REPLIED"; input: RepliedInput["type"] }>
   /** Handed to the AI engine: the answer follows in the background. */
   | Readonly<{ type: "ACCEPTED"; input: AiInput["type"] }>
   /** An album photo, answered together with the rest of its album. */
@@ -78,6 +98,10 @@ export type UpdateHandlerDependencies = Readonly<{
   replyToConversation: ReplyToConversation;
   /** Remembers which prospect the messages of the bot are about. */
   linkMessages: ProspectStore["linkMessages"];
+  /** What the analyses cost, and the credit Alex set. */
+  spending: SpendingLedger;
+  /** The monthly spend limit set on the Console, in millionths of a dollar. */
+  monthlyLimitMicroUsd: number | null;
   schedule: Schedule;
 }>;
 
@@ -140,6 +164,8 @@ export const createUpdateHandler = ({
   analyzeScreenshots,
   replyToConversation,
   linkMessages,
+  spending,
+  monthlyLimitMicroUsd,
   schedule,
 }: UpdateHandlerDependencies): UpdateHandler => {
   // The AI engine answers after Telegram has been acknowledged, so its
@@ -168,6 +194,51 @@ export const createUpdateHandler = ({
       return await task();
     } finally {
       cancel();
+    }
+  };
+
+  /**
+   * What an answer cost and what is left, under the answer. Without the
+   * month and the credit, the line still tells what the answer cost.
+   */
+  const costFooter = async (
+    costMicroUsd: number | null,
+    log: Logger,
+  ): Promise<Footer> => {
+    const current = await spending.spending().catch((error: unknown) => {
+      log.warn(errorFields(error), "spending unavailable");
+      return null;
+    });
+    return costLine({
+      costMicroUsd,
+      spending: current,
+      monthlyLimitMicroUsd,
+    });
+  };
+
+  /** The reply to /credito: sets the credit if asked, then reports. */
+  const creditReply = async (
+    request: CreditRequest,
+    log: Logger,
+  ): Promise<string> => {
+    if (request.type === "INVALID") {
+      return escapeHtml(INVALID_CREDIT_REPLY);
+    }
+    try {
+      if (request.type === "SET") {
+        await spending.setCredit(request.amountMicroUsd);
+        log.info({}, "credit set");
+      }
+      const report = spendingReport(
+        await spending.spending(),
+        monthlyLimitMicroUsd,
+      );
+      return request.type === "SET"
+        ? `${creditSetReply(request.amountMicroUsd)}\n\n${report}`
+        : report;
+    } catch (error) {
+      log.error(errorFields(error), "spending unavailable");
+      return escapeHtml(SPENDING_UNAVAILABLE_REPLY);
     }
   };
 
@@ -212,15 +283,20 @@ export const createUpdateHandler = ({
   const deliverAnswer = async <T>(
     chatId: TelegramChatId,
     result: Result<T, AiError>,
-    present: (value: T) => Presented,
-    prospectId: string | null,
+    present: (value: T, footer: Footer) => Presented,
+    answer: Readonly<{
+      prospectId: string | null;
+      costMicroUsd: number | null;
+    }>,
     log: Logger,
   ): Promise<void> => {
+    const { prospectId } = answer;
+    const footer = await costFooter(answer.costMicroUsd, log);
     const sent = await deliver(
       chatId,
       result.ok
-        ? present(result.value)
-        : plainMessage(aiProblemReply(result.error)),
+        ? present(result.value, footer)
+        : plainMessage(aiProblemReply(result.error), footer),
       log,
     );
     if (prospectId === null || sent === null) {
@@ -254,12 +330,12 @@ export const createUpdateHandler = ({
       );
       return;
     }
-    const { generation, memory, pause, prospectId } = analyzed.value;
+    const { generation, memory, pause } = analyzed.value;
     await deliverAnswer(
       chatId,
       generation.result,
-      (analysis) => screenshotsAnswer(analysis, memory, pause),
-      prospectId,
+      (analysis, footer) => screenshotsAnswer(analysis, memory, pause, footer),
+      analyzed.value,
       log,
     );
   };
@@ -270,15 +346,16 @@ export const createUpdateHandler = ({
     reference: ProspectReference | null,
     log: Logger,
   ): Promise<void> => {
-    const { generation, username, memory, pause, prospectId } =
-      await whileTyping(chatId, () =>
-        replyToConversation(text, reference, log),
-      );
+    const answer = await whileTyping(chatId, () =>
+      replyToConversation(text, reference, log),
+    );
+    const { generation, username, memory, pause } = answer;
     await deliverAnswer(
       chatId,
       generation.result,
-      (reply) => conversationAnswer(reply, username, memory, pause),
-      prospectId,
+      (reply, footer) =>
+        conversationAnswer(reply, username, memory, pause, footer),
+      answer,
       log,
     );
   };
@@ -363,7 +440,12 @@ export const createUpdateHandler = ({
       return { type: "ACCEPTED", input: input.type };
     }
 
-    const sent = await sendMessage(chatId, replyTo(input));
+    const sent =
+      input.type === "CREDIT"
+        ? await sendMessage(chatId, await creditReply(input.request, log), {
+            parseMode: "HTML",
+          })
+        : await sendMessage(chatId, replyTo(input));
     if (sent.ok) {
       return { type: "REPLIED", input: input.type };
     }

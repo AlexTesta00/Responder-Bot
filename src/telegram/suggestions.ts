@@ -24,9 +24,18 @@ export type Presented = Readonly<{
   keyboard: InlineKeyboard | null;
 }>;
 
+/** A last line in HTML, such as what the answer cost. */
+export type Footer = string | null;
+
+const footerLines = (footer: Footer): string[] =>
+  footer === null ? [] : ["", footer];
+
 /** Plain text, escaped, without buttons. */
-export const plainMessage = (text: string): Presented => ({
-  html: escapeHtml(text),
+export const plainMessage = (
+  text: string,
+  footer: Footer = null,
+): Presented => ({
+  html: [escapeHtml(text), ...footerLines(footer)].join("\n"),
   keyboard: null,
 });
 
@@ -159,6 +168,7 @@ type Answer = Readonly<{
   facts: readonly string[];
   hypotheses: readonly string[];
   note: string | null;
+  footer: Footer;
 }>;
 
 const answerOf = (
@@ -230,7 +240,9 @@ const compose = (answer: Answer, leftOut: ReadonlySet<Optional>): string => {
           `<blockquote expandable>🔍 <b>Analisi</b>\n${details.join("\n")}</blockquote>`,
         ];
 
-  return [...top, ...middle, ...expandable].join("\n");
+  return [...top, ...middle, ...expandable, ...footerLines(answer.footer)].join(
+    "\n",
+  );
 };
 
 /** The fullest version of the answer that fits in one Telegram message. */
@@ -261,6 +273,7 @@ export const screenshotsAnswer = (
   analysis: ScreenshotsAnalysis,
   memory: MemoryOutcome | null,
   pause: Pause | null,
+  footer: Footer = null,
 ): Presented => {
   switch (analysis.kind) {
     case "PROFILE":
@@ -278,6 +291,7 @@ export const screenshotsAnswer = (
             facts: analysis.facts,
             hypotheses: analysis.hypotheses,
             note: analysis.note,
+            footer,
           },
         ),
       );
@@ -296,6 +310,7 @@ export const screenshotsAnswer = (
             facts: analysis.facts,
             hypotheses: analysis.hypotheses,
             note: analysis.note,
+            footer,
           },
         ),
       );
@@ -306,6 +321,7 @@ export const screenshotsAnswer = (
           ...(analysis.note === null
             ? []
             : ["", `📝 ${escapeHtml(analysis.note)}`]),
+          ...footerLines(footer),
         ].join("\n"),
         keyboard: null,
       };
@@ -319,6 +335,7 @@ export const conversationAnswer = (
   username: string | null,
   memory: MemoryOutcome | null,
   pause: Pause | null,
+  footer: Footer = null,
 ): Presented =>
   presented(
     answerOf(heading("💬", "Conversazione", username, null), memory, pause, {
@@ -330,6 +347,7 @@ export const conversationAnswer = (
       facts: reply.facts,
       hypotheses: reply.hypotheses,
       note: reply.note,
+      footer,
     }),
   );
 

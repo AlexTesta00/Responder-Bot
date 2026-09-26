@@ -7,13 +7,16 @@
 // that use it (ERR_REQUIRE_ASYNC_MODULE).
 import Anthropic from "@anthropic-ai/sdk";
 import type { FastifyInstance, LogLevel } from "fastify";
+import type { Kysely } from "kysely";
 
 import { createClaudeEngine } from "./ai/claude.ts";
-import { discardGenerationRuns } from "./ai/runs.ts";
+import type { GenerationLog } from "./ai/runs.ts";
+import { createInMemorySpending, type SpendingLedger } from "./ai/spending.ts";
 import { buildApp } from "./app.ts";
 import {
   databaseConfigOf,
   describeEnvError,
+  monthlyLimitOf,
   parseEnv,
   type Env,
   type NodeEnv,
@@ -24,6 +27,8 @@ import { createDatabase } from "./db/connection.ts";
 import { createMysqlGenerationLog } from "./db/generation-log.ts";
 import { migrateToLatest } from "./db/migrations.ts";
 import { createMysqlProspectStore } from "./db/prospect-store.ts";
+import type { Database } from "./db/schema.ts";
+import { createMysqlSpendingLedger } from "./db/spending-ledger.ts";
 import { createInMemoryProspectStore } from "./prospects/store.ts";
 import { errorFields } from "./shared/errors.ts";
 import { createTelegramClient } from "./telegram/client.ts";
@@ -64,6 +69,21 @@ const closeOnSignal =
     );
   };
 
+/** Where the costs of the generations are recorded and added up. */
+const costsOf = (
+  database: Kysely<Database> | null,
+): Readonly<{ generations: GenerationLog; spending: SpendingLedger }> => {
+  if (database === null) {
+    // Without a database, the costs last until the process stops.
+    const memory = createInMemorySpending();
+    return { generations: memory, spending: memory };
+  }
+  return {
+    generations: createMysqlGenerationLog(database),
+    spending: createMysqlSpendingLedger(database),
+  };
+};
+
 const start = async (env: Env): Promise<void> => {
   const telegram = createTelegramClient({ token: env.TELEGRAM_BOT_TOKEN });
   const claude = new Anthropic({
@@ -83,10 +103,7 @@ const start = async (env: Env): Promise<void> => {
     database === null
       ? createInMemoryProspectStore()
       : createMysqlProspectStore(database);
-  const generations =
-    database === null
-      ? discardGenerationRuns
-      : createMysqlGenerationLog(database);
+  const { generations, spending } = costsOf(database);
 
   const app = await buildApp({
     logLevel: LOG_LEVEL_BY_ENV[env.NODE_ENV],
@@ -109,6 +126,8 @@ const start = async (env: Env): Promise<void> => {
           generations,
         }),
         linkMessages: prospects.linkMessages,
+        spending,
+        monthlyLimitMicroUsd: monthlyLimitOf(env),
         schedule: scheduleWithTimers,
       }),
     },

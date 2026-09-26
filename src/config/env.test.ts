@@ -7,6 +7,7 @@ import {
   databaseConfigOf,
   describeEnvError,
   ENV_VARIABLES,
+  monthlyLimitOf,
   parseEnv,
   type Env,
 } from "./env.ts";
@@ -109,6 +110,28 @@ describe("parseEnv", () => {
       },
     });
   });
+
+  it("reads the monthly spend limit, in dollars", () => {
+    const env = parsed({ ...REQUIRED, ANTHROPIC_MONTHLY_LIMIT_USD: "20.50" });
+
+    expect(env.ANTHROPIC_MONTHLY_LIMIT_USD).toBe(20.5);
+    expect(monthlyLimitOf(env)).toBe(20_500_000);
+    expect(
+      monthlyLimitOf(parsed({ ...REQUIRED, ANTHROPIC_MONTHLY_LIMIT_USD: "" })),
+    ).toBeNull();
+  });
+
+  it.each(["20,50", "0", "-5", "venti"])(
+    "rejects the monthly limit %j",
+    (limit) => {
+      expect(
+        parseEnv({ ...REQUIRED, ANTHROPIC_MONTHLY_LIMIT_USD: limit }),
+      ).toMatchObject({
+        ok: false,
+        error: { issues: [{ variable: "ANTHROPIC_MONTHLY_LIMIT_USD" }] },
+      });
+    },
+  );
 
   it("requires the Telegram and Anthropic credentials", () => {
     expect(parseEnv({})).toMatchObject({
