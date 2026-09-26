@@ -9,6 +9,7 @@ import { promptSignature } from "./prompts/layer.ts";
 import {
   conversationRequest,
   PROMPT_LAYERS,
+  PROSPECT_IDENTITY_REQUEST,
   screenshotsRequest,
 } from "./prompts/modes.ts";
 import { SYSTEM_POLICY } from "./prompts/system.ts";
@@ -90,6 +91,7 @@ const setup = (respond: () => Promise<Response> = () => message()) => {
   const engine = createClaudeEngine({
     client: new Anthropic({ apiKey: API_KEY, fetch: fetchFn, maxRetries: 0 }),
     model: "claude-opus-5",
+    fastModel: "claude-haiku-4-5",
     now: () => times.shift() ?? 0,
   });
   return { engine, requests };
@@ -214,6 +216,63 @@ describe("createClaudeEngine", () => {
       JSON.stringify(FIRST_MESSAGE_TASK.text).slice(1, -1),
     );
   });
+
+  it("recognizes the prospect with the fast model", async () => {
+    const { engine, requests } = setup(() =>
+      message({
+        text: JSON.stringify({ username: "@MarioFit", display_name: "Mario" }),
+      }),
+    );
+
+    const generation = await engine.identifyProspect([
+      { format: "image/png", bytes: PNG },
+    ]);
+
+    expect(generation.result).toStrictEqual({
+      ok: true,
+      value: { username: "mariofit", displayName: "Mario" },
+    });
+    expect(generation.report).toMatchObject({
+      mode: "PROSPECT_IDENTITY",
+      prompt: promptSignature(PROMPT_LAYERS.PROSPECT_IDENTITY),
+    });
+    const [request] = requests;
+    expect(request?.body).toMatchObject({
+      model: "claude-haiku-4-5",
+      max_tokens: 1_024,
+      output_config: { format: { type: "json_schema" } },
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "image" },
+            { type: "text", text: PROSPECT_IDENTITY_REQUEST },
+          ],
+        },
+      ],
+    });
+    // The quick look needs neither the effort of an analysis nor its fallback.
+    expect(request?.body).not.toHaveProperty("fallbacks");
+    expect(request?.body).not.toHaveProperty("output_config.effort");
+    expect(request?.headers.get("anthropic-beta")).toBeNull();
+  });
+
+  it.each([
+    [{ username: "Mario Rossi", display_name: " " }, null, null],
+    [{ username: null, display_name: "Mario" }, null, "Mario"],
+  ])(
+    "treats %j as no visible username",
+    async (output, username, displayName) => {
+      const { engine } = setup(() => message({ text: JSON.stringify(output) }));
+
+      const generation = await engine.identifyProspect([]);
+
+      expect(generation.result).toStrictEqual({
+        ok: true,
+        value: { username, displayName },
+      });
+    },
+  );
 
   it.each([
     ["a refusal", { text: "", stopReason: "refusal" }, "REFUSED"],

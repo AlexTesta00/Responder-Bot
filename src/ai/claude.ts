@@ -7,8 +7,10 @@ import { err, type Result } from "../shared/result.ts";
 import type { AiEngine, AiError, Generation } from "./engine.ts";
 import {
   conversationReplyOutputSchema,
+  prospectIdentityOutputSchema,
   screenshotsOutputSchema,
   toConversationReply,
+  toProspectIdentity,
   toScreenshotsAnalysis,
   type InvalidOutput,
 } from "./outputs.ts";
@@ -16,6 +18,7 @@ import { promptSignature } from "./prompts/layer.ts";
 import {
   conversationRequest,
   PROMPT_LAYERS,
+  PROSPECT_IDENTITY_REQUEST,
   screenshotsRequest,
   type PromptMode,
 } from "./prompts/modes.ts";
@@ -26,6 +29,9 @@ type Message = Anthropic.Beta.Messages.BetaMessage;
 // Room for the model's adaptive thinking as well as its answer.
 const MAX_TOKENS = 16_000;
 
+// Recognizing the prospect only returns a username and a name.
+const IDENTITY_MAX_TOKENS = 1_024;
+
 // If the model declines a request, the API re-runs it on the fallback model
 // Anthropic recommends for that kind of refusal.
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
@@ -33,13 +39,17 @@ const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 // The schemas as the SDK adapts them for strict structured outputs; the
 // answers are then validated against the original Zod schemas.
 const OUTPUT_SCHEMAS = {
+  PROSPECT_IDENTITY: betaZodOutputFormat(prospectIdentityOutputSchema).schema,
   SCREENSHOTS: betaZodOutputFormat(screenshotsOutputSchema).schema,
   CONVERSATION_REPLY: betaZodOutputFormat(conversationReplyOutputSchema).schema,
 } satisfies Record<PromptMode, unknown>;
 
 export type ClaudeEngineOptions = Readonly<{
   client: Anthropic;
+  /** The model that analyzes conversations and writes the suggestions. */
   model: string;
+  /** A small, fast model for simple steps, such as recognizing a prospect. */
+  fastModel: string;
   /** Clock for measuring durations, in milliseconds. */
   now?: () => number;
 }>;
@@ -114,6 +124,7 @@ const errorOf = (error: unknown): AiError => {
 export const createClaudeEngine = ({
   client,
   model,
+  fastModel,
   now = () => performance.now(),
 }: ClaudeEngineOptions): AiEngine => {
   const generate = async <Output, T>(
@@ -123,6 +134,12 @@ export const createClaudeEngine = ({
     toDomain: (output: Output) => Result<T, InvalidOutput>,
   ): Promise<Generation<T>> => {
     const layers = PROMPT_LAYERS[mode];
+    // Only the analysis needs the large model, its effort and its fallback.
+    const quick = mode === "PROSPECT_IDENTITY";
+    const format = {
+      type: "json_schema",
+      schema: OUTPUT_SCHEMAS[mode],
+    } as const;
     const started = now();
     const report = {
       mode,
@@ -136,10 +153,11 @@ export const createClaudeEngine = ({
 
     try {
       const message = await client.beta.messages.create({
-        model,
-        max_tokens: MAX_TOKENS,
-        betas: [FALLBACK_BETA],
-        fallbacks: "default",
+        model: quick ? fastModel : model,
+        max_tokens: quick ? IDENTITY_MAX_TOKENS : MAX_TOKENS,
+        ...(quick
+          ? {}
+          : { betas: [FALLBACK_BETA], fallbacks: "default" as const }),
         system: [
           {
             type: "text",
@@ -148,10 +166,7 @@ export const createClaudeEngine = ({
           },
         ],
         messages: [{ role: "user", content: [...content] }],
-        output_config: {
-          effort: "high",
-          format: { type: "json_schema", schema: OUTPUT_SCHEMAS[mode] },
-        },
+        output_config: quick ? { format } : { effort: "high", format },
       });
       return {
         result: resultOf(message, schema, toDomain),
@@ -174,6 +189,16 @@ export const createClaudeEngine = ({
   };
 
   return {
+    identifyProspect: (images) =>
+      generate(
+        "PROSPECT_IDENTITY",
+        [
+          ...images.map(imageBlock),
+          { type: "text", text: PROSPECT_IDENTITY_REQUEST },
+        ],
+        prospectIdentityOutputSchema,
+        toProspectIdentity,
+      ),
     analyzeScreenshots: (images, note) =>
       generate(
         "SCREENSHOTS",

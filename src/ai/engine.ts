@@ -3,6 +3,7 @@ import type { Result } from "../shared/result.ts";
 import type {
   ConversationReply,
   InvalidOutput,
+  ProspectIdentity,
   ScreenshotsAnalysis,
 } from "./outputs.ts";
 import type { PromptMode } from "./prompts/modes.ts";
@@ -39,6 +40,10 @@ export type Generation<T> = Readonly<{
 
 /** The intelligence of the bot, independent of the provider behind it. */
 export type AiEngine = Readonly<{
+  /** A quick, inexpensive look to know whose screenshots they are. */
+  identifyProspect: (
+    images: readonly DownloadedImage[],
+  ) => Promise<Generation<ProspectIdentity>>;
   analyzeScreenshots: (
     images: readonly DownloadedImage[],
     note: string | null,

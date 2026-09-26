@@ -1,10 +1,12 @@
 import { CONVERSATION_REPLY_TASK } from "./conversation-reply.ts";
 import { FIRST_MESSAGE_TASK } from "./first-message.ts";
+import { PROSPECT_IDENTITY_TASK } from "./identity.ts";
 import type { PromptLayer } from "./layer.ts";
 import { SCREENSHOTS_TASK } from "./screenshots.ts";
 import { COMMUNICATION_PRINCIPLES, SYSTEM_POLICY } from "./system.ts";
 
-export type PromptMode = "SCREENSHOTS" | "CONVERSATION_REPLY";
+export type PromptMode =
+  "PROSPECT_IDENTITY" | "SCREENSHOTS" | "CONVERSATION_REPLY";
 
 /**
  * The instruction layers of each mode, from the most stable to the most
@@ -13,6 +15,8 @@ export type PromptMode = "SCREENSHOTS" | "CONVERSATION_REPLY";
 export const PROMPT_LAYERS: Readonly<
   Record<PromptMode, readonly PromptLayer[]>
 > = {
+  // Recognizing the prospect writes no message: no communication principles.
+  PROSPECT_IDENTITY: [SYSTEM_POLICY, PROSPECT_IDENTITY_TASK],
   SCREENSHOTS: [
     SYSTEM_POLICY,
     COMMUNICATION_PRINCIPLES,
@@ -34,6 +38,9 @@ const withinTag = (tag: string, text: string): string =>
     text.replaceAll(new RegExp(`</?${tag}>`, "gi"), ""),
     `</${tag}>`,
   ].join("\n");
+
+export const PROSPECT_IDENTITY_REQUEST =
+  "Recognize the prospect in these screenshots.";
 
 /** Alex's request for a batch of screenshots, with his note if he wrote one. */
 export const screenshotsRequest = (note: string | null): string =>

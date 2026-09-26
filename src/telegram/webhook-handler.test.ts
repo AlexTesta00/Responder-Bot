@@ -219,7 +219,11 @@ const setup = (...results: readonly SendResult[]) => {
     sendMessage,
     sendTyping,
     downloadImage,
-    ai: { analyzeScreenshots, replyToConversation },
+    ai: {
+      identifyProspect: () => Promise.reject(new Error("not expected")),
+      analyzeScreenshots,
+      replyToConversation,
+    },
     schedule,
   });
   const handleUpdate = (update: IncomingUpdate) =>

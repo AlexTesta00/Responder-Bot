@@ -196,6 +196,7 @@ describe("webhook workflow", () => {
           sendTyping: notExpected,
           downloadImage: notExpected,
           ai: {
+            identifyProspect: notExpected,
             analyzeScreenshots: notExpected,
             replyToConversation: notExpected,
           },

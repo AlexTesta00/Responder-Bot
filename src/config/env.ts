@@ -36,6 +36,7 @@ const envShape = {
       "Expected an API key from the Claude Developer Platform",
     ),
   ANTHROPIC_MODEL: z.string().trim().min(1).default("claude-opus-5"),
+  ANTHROPIC_FAST_MODEL: z.string().trim().min(1).default("claude-haiku-4-5"),
   // MySQL or MariaDB, such as the database included in Hostinger's plans.
   DATABASE_HOST: z.preprocess(unlessEmpty, z.string().trim().min(1).optional()),
   DATABASE_PORT: z.preprocess(

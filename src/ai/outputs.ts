@@ -10,6 +10,7 @@ import {
   type InterestLevel,
   type NextGoal,
 } from "../conversations/domain.ts";
+import { canonicalUsername } from "../inputs/instagram.ts";
 import { err, ok, type Result } from "../shared/result.ts";
 
 // Structured outputs requested from the model. Property order matters: the
@@ -41,6 +42,16 @@ const repliesOutput = z.object({
   alternative: z.string(),
   direct: z.string(),
 });
+
+/** Output of the quick look that recognizes the prospect first. */
+export const prospectIdentityOutputSchema = z.object({
+  username: z.string().nullable(),
+  display_name: z.string().nullable(),
+});
+
+export type ProspectIdentityOutput = z.infer<
+  typeof prospectIdentityOutputSchema
+>;
 
 /** Output for a batch of screenshots, whatever they show. */
 export const screenshotsOutputSchema = z.object({
@@ -75,6 +86,13 @@ export type SuggestionStyle =
   "BEST" | "CURIOSITY" | "NATURAL" | "ALTERNATIVE" | "DIRECT";
 
 export type Suggestion = Readonly<{ style: SuggestionStyle; text: string }>;
+
+/** Who the screenshots are about, as far as they show it. */
+export type ProspectIdentity = Readonly<{
+  /** Canonical username, or null when none is visible. */
+  username: string | null;
+  displayName: string | null;
+}>;
 
 export type ProspectSnapshot = Readonly<{
   username: string | null;
@@ -127,6 +145,18 @@ export type InvalidOutput = Readonly<{
 
 const invalid = (reason: string): Result<never, InvalidOutput> =>
   err({ type: "INVALID_OUTPUT", reason });
+
+/** A username that cannot exist on Instagram counts as not visible. */
+export const toProspectIdentity = (
+  output: ProspectIdentityOutput,
+): Result<ProspectIdentity, InvalidOutput> => {
+  const displayName = output.display_name?.trim() ?? "";
+  return ok({
+    username:
+      output.username === null ? null : canonicalUsername(output.username),
+    displayName: displayName === "" ? null : displayName,
+  });
+};
 
 const toProspect = (
   prospect: ScreenshotsOutput["prospect"],

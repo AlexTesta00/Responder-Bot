@@ -72,7 +72,11 @@ const start = async (env: Env): Promise<void> => {
         sendMessage: telegram.sendMessage,
         sendTyping: telegram.sendTyping,
         downloadImage: createImageDownloader(telegram, MAX_IMAGE_BYTES),
-        ai: createClaudeEngine({ client: claude, model: env.ANTHROPIC_MODEL }),
+        ai: createClaudeEngine({
+          client: claude,
+          model: env.ANTHROPIC_MODEL,
+          fastModel: env.ANTHROPIC_FAST_MODEL,
+        }),
         schedule: scheduleWithTimers,
       }),
     },

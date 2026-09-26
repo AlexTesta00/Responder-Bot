@@ -24,6 +24,7 @@ const PARSED_REQUIRED = {
   TELEGRAM_ALLOWED_USER_ID: 42,
   ANTHROPIC_API_KEY: "sk-ant-test-key_value",
   ANTHROPIC_MODEL: "claude-opus-5",
+  ANTHROPIC_FAST_MODEL: "claude-haiku-4-5",
   DATABASE_PORT: 3306,
 };
 
@@ -93,12 +94,19 @@ describe("parseEnv", () => {
     );
   });
 
-  it("reads the Claude model to use", () => {
+  it("reads the Claude models to use", () => {
     expect(
-      parseEnv({ ...REQUIRED, ANTHROPIC_MODEL: "claude-sonnet-5" }),
+      parseEnv({
+        ...REQUIRED,
+        ANTHROPIC_MODEL: "claude-sonnet-5",
+        ANTHROPIC_FAST_MODEL: "claude-sonnet-5",
+      }),
     ).toMatchObject({
       ok: true,
-      value: { ANTHROPIC_MODEL: "claude-sonnet-5" },
+      value: {
+        ANTHROPIC_MODEL: "claude-sonnet-5",
+        ANTHROPIC_FAST_MODEL: "claude-sonnet-5",
+      },
     });
   });
 

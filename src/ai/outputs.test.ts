@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import {
   conversationReplyOutputSchema,
+  prospectIdentityOutputSchema,
   screenshotsOutputSchema,
   toConversationReply,
   toScreenshotsAnalysis,
@@ -200,12 +201,13 @@ describe("output schemas", () => {
   };
 
   it.each([
+    ["prospect identity", prospectIdentityOutputSchema],
     ["screenshots", screenshotsOutputSchema],
     ["conversation reply", conversationReplyOutputSchema],
   ])("%s schema is valid for strict structured outputs", (_name, schema) => {
     const nodes = objectNodes(betaZodOutputFormat(schema).schema);
 
-    expect(nodes.length).toBeGreaterThan(1);
+    expect(nodes).not.toHaveLength(0);
     for (const node of nodes) {
       const object = strictObject.parse(node);
       expect(object.required.toSorted()).toStrictEqual(

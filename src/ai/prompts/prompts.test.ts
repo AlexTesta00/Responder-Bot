@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { CONVERSATION_REPLY_TASK } from "./conversation-reply.ts";
 import { FIRST_MESSAGE_TASK } from "./first-message.ts";
+import { PROSPECT_IDENTITY_TASK } from "./identity.ts";
 import { promptSignature } from "./layer.ts";
 import {
   conversationRequest,
@@ -13,14 +14,25 @@ import { COMMUNICATION_PRINCIPLES, SYSTEM_POLICY } from "./system.ts";
 
 describe("prompt layers", () => {
   it.each(Object.entries(PROMPT_LAYERS))(
-    "%s starts with the system policy and the communication principles",
+    "%s starts with the system policy",
     (_mode, layers) => {
-      expect(layers.slice(0, 2)).toStrictEqual([
-        SYSTEM_POLICY,
-        COMMUNICATION_PRINCIPLES,
-      ]);
+      expect(layers[0]).toStrictEqual(SYSTEM_POLICY);
     },
   );
+
+  it.each(["SCREENSHOTS", "CONVERSATION_REPLY"] as const)(
+    "%s writes messages following the communication principles",
+    (mode) => {
+      expect(PROMPT_LAYERS[mode][1]).toStrictEqual(COMMUNICATION_PRINCIPLES);
+    },
+  );
+
+  it("only recognizes the prospect in the quick look", () => {
+    expect(PROMPT_LAYERS.PROSPECT_IDENTITY).toStrictEqual([
+      SYSTEM_POLICY,
+      PROSPECT_IDENTITY_TASK,
+    ]);
+  });
 
   it("gives screenshots both tasks, to follow whatever they show", () => {
     expect(PROMPT_LAYERS.SCREENSHOTS).toStrictEqual([
