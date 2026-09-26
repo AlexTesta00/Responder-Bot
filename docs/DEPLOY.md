@@ -24,9 +24,9 @@ Da fare una volta sola in hPanel.
    | Package manager  | npm                      |
    | Build command    | `npm run build`          |
    | Output directory | `dist`                   |
-   | Entry file       | `server.js`              |
+   | Entry file       | `index.js`               |
 
-   L'app deve partire da `dist/server.js`. Se hPanel interpreta l'entry file dalla radice del progetto, usa `dist/server.js`.
+   hPanel accetta come entry file solo file presenti nel repository, mentre `dist/` nasce durante la build. Per questo `index.js`, nella radice del repository, si limita a caricare il server compilato in `dist/server.js`.
 
 4. Variabili d'ambiente, da impostare prima del primo deploy:
 

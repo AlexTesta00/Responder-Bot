@@ -85,6 +85,7 @@ src/
 │   └── webhook-handler.ts      caso d'uso: autorizza, deduplica e risponde
 └── shared/result.ts            tipo Result per gli errori attesi
 scripts/telegram-webhook.ts     registrazione e stato del webhook
+index.js                        entry file per Hostinger: carica il server compilato in dist/
 ```
 
 I test stanno accanto al codice che verificano (`*.test.ts`).
