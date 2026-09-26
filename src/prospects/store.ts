@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import type { StageChange } from "../conversations/domain.ts";
 import {
   MAX_STORED_MESSAGES,
   type MemoryUpdate,
@@ -15,9 +16,12 @@ export type ProspectStore = Readonly<{
   load: (username: string) => Promise<ProspectMemory | null>;
   /**
    * Stores the prospect as the update describes it, creating it the first
-   * time; appends the new messages and keeps only the latest ones.
+   * time; appends the new messages and keeps only the latest ones. A new
+   * stage is recorded in the history.
    */
   save: (update: MemoryUpdate) => Promise<ProspectMemory>;
+  /** Every change of stage recorded by `save`, oldest first. */
+  stageHistory: (username: string) => Promise<readonly StageChange[]>;
 }>;
 
 /** Time and identifiers, injected so tests can predict them. */
@@ -32,12 +36,21 @@ export const createInMemoryProspectStore = ({
   newId = randomUUID,
 }: StoreDependencies = {}): ProspectStore => {
   const memories = new Map<string, ProspectMemory>();
+  const histories = new Map<string, readonly StageChange[]>();
 
   return {
     load: (username) => Promise.resolve(memories.get(username) ?? null),
     save: ({ profile, newMessages }) => {
       const time = now();
       const earlier = memories.get(profile.username);
+      const from = earlier?.prospect.conversation?.stage ?? null;
+      const to = profile.conversation?.stage ?? null;
+      if (to !== null && to !== from) {
+        histories.set(profile.username, [
+          ...(histories.get(profile.username) ?? []),
+          { from, to, at: time },
+        ]);
+      }
       const memory: ProspectMemory = {
         prospect: {
           ...profile,
@@ -52,5 +65,6 @@ export const createInMemoryProspectStore = ({
       memories.set(profile.username, memory);
       return Promise.resolve(memory);
     },
+    stageHistory: (username) => Promise.resolve(histories.get(username) ?? []),
   };
 };

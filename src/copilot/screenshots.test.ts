@@ -238,6 +238,7 @@ describe("createScreenshotsAnalyst", () => {
     const broken: ProspectStore = {
       load: () => Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1")),
       save: () => Promise.reject(new Error("not expected")),
+      stageHistory: () => Promise.resolve([]),
     };
     const { ai, analyze, log } = setup({ prospects: broken });
 
@@ -260,6 +261,7 @@ describe("createScreenshotsAnalyst", () => {
     const readOnly: ProspectStore = {
       load: () => Promise.resolve(null),
       save: () => Promise.reject(new Error("ER_LOCK_DEADLOCK")),
+      stageHistory: () => Promise.resolve([]),
     };
     const { analyze, log } = setup({ prospects: readOnly });
 

@@ -93,6 +93,23 @@ export const MIGRATIONS: Readonly<Record<string, Migration>> = {
       `.execute(db);
     },
   },
+  "0003_stage_changes": {
+    up: async (db) => {
+      await sql`
+        CREATE TABLE prospect_stage_changes (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          prospect_id CHAR(36) CHARACTER SET ascii NOT NULL,
+          from_stage VARCHAR(40) CHARACTER SET ascii NULL,
+          to_stage VARCHAR(40) CHARACTER SET ascii NOT NULL,
+          changed_at DATETIME(3) NOT NULL,
+          PRIMARY KEY (id),
+          KEY prospect_stage_changes_prospect (prospect_id, changed_at),
+          CONSTRAINT prospect_stage_changes_prospect_fk FOREIGN KEY (prospect_id)
+            REFERENCES prospects (id) ON DELETE CASCADE
+        ) ${TABLE_OPTIONS}
+      `.execute(db);
+    },
+  },
 };
 
 export type MigrationFailure = Readonly<{

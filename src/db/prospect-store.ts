@@ -10,6 +10,7 @@ import {
   NEXT_GOALS,
   type Commitment,
   type ConversationMessage,
+  type StageChange,
 } from "../conversations/domain.ts";
 import {
   MAX_STORED_MESSAGES,
@@ -98,6 +99,20 @@ const messagesSchema = z.array(
     })),
 );
 
+const stageChangesSchema = z.array(
+  z
+    .object({
+      from_stage: z.enum(CONVERSATION_STAGES).nullable(),
+      to_stage: z.enum(CONVERSATION_STAGES),
+      changed_at: z.date(),
+    })
+    .transform((row): StageChange => ({
+      from: row.from_stage,
+      to: row.to_stage,
+      at: row.changed_at,
+    })),
+);
+
 const loadMemory = async (
   db: Kysely<Database>,
   username: string,
@@ -150,7 +165,7 @@ export const createMysqlProspectStore = (
       // Locking the row makes concurrent saves of a prospect take turns.
       const existing = await trx
         .selectFrom("prospects")
-        .select("id")
+        .select(["id", "stage"])
         .where("platform", "=", PLATFORM)
         .where("username", "=", profile.username)
         .forUpdate()
@@ -172,6 +187,20 @@ export const createMysqlProspectStore = (
           .updateTable("prospects")
           .set(columns)
           .where("id", "=", id)
+          .execute();
+      }
+
+      const stage = profile.conversation?.stage ?? null;
+      const earlierStage = existing?.stage ?? null;
+      if (stage !== null && stage !== earlierStage) {
+        await trx
+          .insertInto("prospect_stage_changes")
+          .values({
+            prospect_id: id,
+            from_stage: earlierStage,
+            to_stage: stage,
+            changed_at: time,
+          })
           .execute();
       }
 
@@ -212,4 +241,23 @@ export const createMysqlProspectStore = (
       }
       return memory;
     }),
+  stageHistory: async (username) =>
+    stageChangesSchema.parse(
+      await db
+        .selectFrom("prospect_stage_changes")
+        .innerJoin(
+          "prospects",
+          "prospects.id",
+          "prospect_stage_changes.prospect_id",
+        )
+        .select([
+          "prospect_stage_changes.from_stage",
+          "prospect_stage_changes.to_stage",
+          "prospect_stage_changes.changed_at",
+        ])
+        .where("prospects.platform", "=", PLATFORM)
+        .where("prospects.username", "=", username)
+        .orderBy("prospect_stage_changes.id")
+        .execute(),
+    ),
 });

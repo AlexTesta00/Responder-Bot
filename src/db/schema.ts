@@ -1,6 +1,7 @@
 // The tables as Kysely sees them. Values read from the database are still
 // validated before they become domain values: the types below only describe
 // what the queries are allowed to write and select.
+import type { Generated } from "kysely";
 
 export interface ProspectsTable {
   id: string;
@@ -34,6 +35,14 @@ export interface ProspectMessagesTable {
   created_at: Date;
 }
 
+export interface ProspectStageChangesTable {
+  id: Generated<number>;
+  prospect_id: string;
+  from_stage: string | null;
+  to_stage: string;
+  changed_at: Date;
+}
+
 export interface GenerationRunsTable {
   id: string;
   prospect_id: string | null;
@@ -53,5 +62,6 @@ export interface GenerationRunsTable {
 export interface Database {
   prospects: ProspectsTable;
   prospect_messages: ProspectMessagesTable;
+  prospect_stage_changes: ProspectStageChangesTable;
   generation_runs: GenerationRunsTable;
 }

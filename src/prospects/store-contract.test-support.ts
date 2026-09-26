@@ -174,6 +174,32 @@ export const describeProspectStore = (name: string, open: OpenStore): void => {
       ]);
     });
 
+    it("records every change of stage, and only those", async () => {
+      const valued = {
+        ...MARIO,
+        conversation: {
+          stage: "VALUE",
+          intent: "CURIOUS",
+          interest: "HIGH",
+          nextGoal: "PROPOSE_CALL",
+        },
+      } as const;
+      const store = await save(
+        { profile: { ...MARIO, conversation: null }, newMessages: [] },
+        { profile: MARIO, newMessages: [] },
+        { profile: MARIO, newMessages: [] },
+        { profile: valued, newMessages: [] },
+        { profile: GIULIA, newMessages: [] },
+      );
+
+      expect(await store.stageHistory("mariofit")).toStrictEqual([
+        { from: null, to: "DISCOVERY", at: at(2) },
+        { from: "DISCOVERY", to: "VALUE", at: at(4) },
+      ]);
+      expect(await store.stageHistory("giulia.bakery")).toStrictEqual([]);
+      expect(await store.stageHistory("nobody")).toStrictEqual([]);
+    });
+
     it("keeps emojis and accents", async () => {
       const store = await save({
         profile: { ...GIULIA, displayName: "Giulia 🎂 Pasticcerìa" },

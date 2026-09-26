@@ -24,7 +24,11 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
     const db = await freshDatabase();
 
     expect(await migrateToLatest(db)).toStrictEqual(
-      ok(["0001_prospect_memory", "0002_objections_and_commitments"]),
+      ok([
+        "0001_prospect_memory",
+        "0002_objections_and_commitments",
+        "0003_stage_changes",
+      ]),
     );
     expect(await migrateToLatest(db)).toStrictEqual(ok([]));
 
@@ -32,6 +36,7 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
     expect(tables.map((table) => table.name).toSorted()).toStrictEqual([
       "generation_runs",
       "prospect_messages",
+      "prospect_stage_changes",
       "prospects",
     ]);
   });
@@ -87,7 +92,7 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
     `.execute(db);
 
     expect(await migrateToLatest(db)).toStrictEqual(
-      ok(["0002_objections_and_commitments"]),
+      ok(["0002_objections_and_commitments", "0003_stage_changes"]),
     );
     expect(
       await db

@@ -86,6 +86,14 @@ export const INTEREST_LEVELS = ["UNKNOWN", "LOW", "MEDIUM", "HIGH"] as const;
 
 export type InterestLevel = (typeof INTEREST_LEVELS)[number];
 
+/** A move of the conversation from one stage to another. */
+export type StageChange = Readonly<{
+  /** Null for the first stage a prospect gets. */
+  from: ConversationStage | null;
+  to: ConversationStage;
+  at: Date;
+}>;
+
 /** Where the conversation stands, as the latest analysis read it. */
 export type ConversationState = Readonly<{
   stage: ConversationStage;
