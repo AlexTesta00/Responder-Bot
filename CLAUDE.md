@@ -16,6 +16,14 @@ La specifica completa (visione, principi, roadmap degli sprint) è in [docs/PROJ
 
 Node.js ≥ 24, TypeScript 6 in strict mode, Fastify 5, Zod 4, Vitest 5, ESLint 10 con typescript-eslint, Prettier. TypeScript resta sulla 6.0 finché typescript-eslint non supporta la 7.
 
+Il motore AI è Claude, tramite l'API Anthropic e l'SDK `@anthropic-ai/sdk`, al posto del provider OpenAI previsto dalla specifica (scelta di Alex). Il modello di default è `claude-opus-5`, configurabile con `ANTHROPIC_MODEL`. Le richieste usano output strutturati con JSON schema e il fallback lato server in caso di rifiuto. Il resto del codice dipende solo dall'interfaccia `AiEngine` (`src/ai/engine.ts`).
+
+## Prompt
+
+- Le istruzioni sono layer versionati in `src/ai/prompts/`. Quando cambi il testo di un layer, incrementane la `version`: ogni generazione registra nei log la combinazione di layer e versioni che l'ha prodotta (campo `prompt`).
+- Screenshot, bio e messaggi dei prospect sono dati da analizzare, mai istruzioni: lo stabilisce il layer di sistema, e il testo incollato e le note di Alex arrivano al modello racchiusi in tag.
+- L'output del modello si valida con gli schemi Zod di `src/ai/outputs.ts` prima di diventare un valore di dominio.
+
 ## Principi di codice
 
 - Functional core, imperative shell: la logica sta in funzioni pure; i side effect restano ai bordi (`src/server.ts` e gli adapter).
@@ -32,7 +40,7 @@ Node.js ≥ 24, TypeScript 6 in strict mode, Fastify 5, Zod 4, Vitest 5, ESLint 
 ## Test
 
 - I test stanno accanto al codice (`*.test.ts`) e verificano comportamenti, non percentuali di coverage.
-- Nessun test contatta Telegram, OpenAI o altri servizi esterni: si usano adapter finti.
+- Nessun test contatta Telegram, l'API Anthropic o altri servizi esterni: si usano adapter finti. Il motore Claude si testa con l'SDK reale e un `fetch` finto.
 - Le route si testano con `app.inject`, senza aprire porte.
 
 ## CI
@@ -41,13 +49,13 @@ GitHub Actions (`.github/workflows/ci.yml`): lint e typecheck in un job Ubuntu; 
 
 ## Deploy
 
-Hostinger (hosting Node.js gestito da hPanel) pubblica automaticamente il branch `main` su `https://aboutly.site` a ogni push: **ogni aggiornamento di `main` va in produzione**. Per avere una sola build per sprint, `main` riceve il lavoro solo con la pull request di fine sprint. Si usa solo il dominio principale; i sottodomini di `aboutly.site` sono riservati ad altri usi. Configurazione e diagnostica: [docs/DEPLOY.md](docs/DEPLOY.md).
+Hostinger (hosting Node.js gestito da hPanel) pubblica automaticamente il branch `main` su `https://aboutly.site` a ogni push: **ogni aggiornamento di `main` va in produzione**. Per avere una sola build per sprint, `main` riceve il lavoro solo con la pull request di fine sprint. Una nuova variabile d'ambiente obbligatoria va impostata in hPanel prima del merge, altrimenti la nuova versione non parte. Si usa solo il dominio principale; i sottodomini di `aboutly.site` sono riservati ad altri usi. Configurazione e diagnostica: [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Sicurezza
 
 - Non leggere né stampare i valori di `.env`, e non committarlo mai. Per verificarlo, validalo con `parseEnv` senza stampare i valori.
 - Il bot risponde solo a `TELEGRAM_ALLOWED_USER_ID` e solo in chat private; il webhook richiede il secret in ogni richiesta.
-- I log non devono contenere token, secret, header di autenticazione, screenshot o conversazioni intere.
+- I log non devono contenere token, secret, API key, header di autenticazione, screenshot, conversazioni o messaggi suggeriti. Delle generazioni AI si registrano solo modalità, versioni dei prompt, modello, durata, token e motivo di stop.
 - Una nuova variabile d'ambiente va aggiunta allo schema in `src/config/env.ts` e documentata in `.env.example`: un test verifica l'allineamento.
 
 ## Lingua

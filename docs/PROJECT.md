@@ -2562,7 +2562,7 @@ Il risultato finale deve essere una conversazione che sembra naturale perché na
 Current development phase:
 
 ```text
-Sprint 03 — Multimodal Input
+Sprint 04 — AI Engine
 (implemented; pull request to main in review, end-to-end test on the
 deployment that follows the merge)
 ```
@@ -2581,15 +2581,22 @@ Sprint 01 — Foundation ✅
 Sprint 02 — Telegram Core ✅
 (deployed early on Hostinger at https://aboutly.site, webhook verified end-to-end)
 
-Sprint 03 — Multimodal Input: implemented
-(screenshot type, profile or conversation, is left to the AI engine:
-no manual labelling)
+Sprint 03 — Multimodal Input ✅
+(verified end-to-end on https://aboutly.site; screenshot type, profile
+or conversation, is left to the AI engine: no manual labelling)
+
+Sprint 04 — AI Engine: implemented
+(Claude through the Anthropic API instead of OpenAI, chosen by Alex;
+default model claude-opus-5. The modes map to two requests:
+SCREENSHOTS covers FIRST_MESSAGE, ANALYZE and REPLY_SCREENSHOT, since
+Claude tells profiles and conversations apart by itself;
+CONVERSATION_REPLY covers pasted conversations and FOLLOW_UP)
 ```
 
 Next milestone:
 
 ```text
-Sprint 04 — AI Engine
+Sprint 05 — Prospect Memory
 ```
 
 ## 51. Final project philosophy
