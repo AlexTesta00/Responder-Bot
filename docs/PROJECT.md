@@ -2562,8 +2562,9 @@ Il risultato finale deve essere una conversazione che sembra naturale perché na
 Current development phase:
 
 ```text
-Sprint 04 follow-up — suggestions steered towards Alex's services
-(pull request to main in review)
+Sprint 05 — Prospect Memory
+(implemented; pull request to main in review, end-to-end test on the
+deployment that follows the merge)
 ```
 
 Current completed work:
@@ -2592,19 +2593,33 @@ FIRST_MESSAGE, ANALYZE and REPLY_SCREENSHOT, since Claude tells
 profiles and conversations apart by itself; CONVERSATION_REPLY covers
 pasted conversations and FOLLOW_UP)
 
-Sprint 04 follow-up — sales-oriented suggestions: implemented
-(chosen by Alex after the first tests: the first message hooks onto
+Sprint 04 follow-up — sales-oriented suggestions ✅
+(deployed on https://aboutly.site; chosen by Alex after the first
+tests: the first message hooks onto
 something specific and hints at what Alex does, aiming for a reply;
 the offer comes once the prospect answers, with a concrete next step:
 an example, a call or a quote. Services: websites, landing pages and
 e-commerce; online bookings and automations; custom software and apps;
 IT support)
+
+Sprint 05 — Prospect Memory: implemented
+(MySQL, the MariaDB included in Hostinger's plans, instead of
+PostgreSQL, chosen by Alex; Kysely on mysql2 as data-access layer, with
+plain SQL migrations applied at startup. Tables: prospects,
+prospect_messages, generation_runs. With a single Instagram
+conversation per prospect, the conversation state and its summary live
+on the prospect row: separate conversations and conversation_summaries
+tables are not needed yet. A quick look with a small model reads the
+username before the analysis, so the right memory is loaded; the
+memory of one prospect never enters another's context, a property
+tested explicitly. Pasted conversations name no prospect and have no
+memory yet.)
 ```
 
 Next milestone:
 
 ```text
-Sprint 05 — Prospect Memory
+Sprint 06 — Conversation Manager
 ```
 
 ## 51. Final project philosophy
