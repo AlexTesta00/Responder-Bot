@@ -40,12 +40,13 @@ Il database è MySQL o MariaDB, quello incluso nell'hosting Hostinger, al posto 
 - Il modello legge la conversazione; le regole pure di `src/conversations/transition.ts` decidono cosa il bot può farne. Chi ha chiesto di non ricevere messaggi, chi ha già avuto il saluto finale e chi non ha risposto a 2 follow-up (`MAX_FOLLOW_UPS`, scelta di Alex) non ricevono suggerimenti finché non riscrivono. Queste regole cambiano solo su richiesta di Alex.
 - Ogni analisi, di screenshot o di testo incollato, passa dagli stessi passaggi di `src/copilot/memory.ts`: carica la memoria, applica le transizioni, ricorda lo stato deciso dalle regole, registra i costi.
 - Il testo incollato si collega a un prospect solo se Alex risponde a un messaggio del bot su quel prospect o scrive @username nella prima riga: mai per supposizione.
+- I messaggi di Alex senza risposta sono quelli visti dalle analisi più quelli segnati come inviati (`src/followups/contact.ts`): nessuno contato due volte, mai meno di quanto mostrano gli screenshot. Le regole di transizione valgono su questo conteggio, anche per chi ha ricevuto messaggi dopo la sola analisi del profilo.
 
 ## Bottoni
 
 - `callback_data` contiene solo versione, azione e tipo dei suggerimenti (per esempio `1:nat:R`): mai id, username o testi. Il prospect si ricava solo dal messaggio toccato, tramite `telegram_messages`; se la memoria non si legge, il bot non genera nulla.
-- Ogni tap riapplica le regole di `src/conversations/transition.ts` alla memoria. 💬 Follow-up conta un messaggio di Alex in più senza risposta (scelta di Alex): mai più permissivo della memoria.
-- I bottoni non scrivono mai la memoria; ogni generazione viene registrata con il suo costo.
+- Ogni tap riapplica le regole di `src/conversations/transition.ts` alla memoria, contando anche i messaggi che Alex ha segnato come inviati. 💬 Follow-up segna come inviato il messaggio toccato prima di applicare le regole (scelta di Alex): mai più permissivo della memoria.
+- I bottoni non toccano la memoria delle analisi: registrano solo gli invii che Alex dichiara, in `prospect_sends`. Ogni generazione viene registrata con il suo costo.
 - Nei messaggi del bot `<pre>` è riservato ai suggerimenti: un tap li rilegge dalle entità del messaggio toccato per riscriverli.
 - Il risultato di un tap arriva come nuovo messaggio in risposta a quello toccato, collegato al prospect. Il tap si conferma subito (`answerCallbackQuery`), prima di leggere la memoria o chiamare l'AI, e non viene mai fatto ripetere a Telegram.
 - Il webhook è iscritto a `message` e `callback_query` (`ALLOWED_UPDATES` in `src/telegram/update.ts`).

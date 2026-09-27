@@ -13,7 +13,7 @@ import { runOf, totalCost, type GenerationLog } from "../ai/runs.ts";
 import type { StageChange } from "../conversations/domain.ts";
 import type { Pause } from "../conversations/transition.ts";
 import type { ProspectMemory } from "../prospects/memory.ts";
-import type { ProspectStore } from "../prospects/store.ts";
+import type { ProspectStore, SendOutcome } from "../prospects/store.ts";
 import { errorFields } from "../shared/errors.ts";
 import type { Logger } from "../shared/logger.ts";
 import {
@@ -53,6 +53,8 @@ export type ButtonAnswer =
       upgraded: boolean;
       /** The suggestions to rewrite could not be read back. */
       previousLost: boolean;
+      /** 💬 has just marked the tapped message as sent. */
+      declared: boolean;
       costMicroUsd: number | null;
     }>
   /** The transition rules say Alex should not write now. */
@@ -126,7 +128,51 @@ export const createButtonActions = ({
     }
   };
 
+  /**
+   * 💬 says that Alex sent one of the suggestions of the tapped message:
+   * it is marked as sent before the rules count it. Null when it cannot be
+   * marked, and the follow-up limit could not be known.
+   */
+  const declare = async (
+    kind: SuggestionKind,
+    tapped: TappedMessage,
+    log: Logger,
+  ): Promise<SendOutcome["type"] | null> => {
+    try {
+      const outcome = await prospects.recordSend({
+        chatId: tapped.chatId,
+        messageId: tapped.messageId,
+        kind,
+        style: null,
+        text: null,
+      });
+      log.info(
+        {
+          ...(outcome.type === "NOT_LINKED"
+            ? {}
+            : { prospect_id: outcome.prospectId }),
+          kind,
+          outcome: outcome.type,
+        },
+        "send recorded",
+      );
+      return outcome.type;
+    } catch (error) {
+      log.error(errorFields(error), "send not recorded");
+      return null;
+    }
+  };
+
   return async ({ action, kind }, tapped, log) => {
+    const declared =
+      action === "FOLLOW_UP" ? await declare(kind, tapped, log) : "NONE";
+    if (declared === null) {
+      return { type: "UNAVAILABLE" };
+    }
+    if (declared === "NOT_LINKED") {
+      return { type: "NOT_LINKED" };
+    }
+
     // Fail closed: without the memory, neither the context nor the pauses
     // are known, so nothing is written.
     const resolved = await resolveReference(
@@ -155,7 +201,7 @@ export const createButtonActions = ({
         type: "CARD",
         memory,
         history: await historyOf(username, log),
-        pause: pauseOf(memory, 0),
+        pause: pauseOf(memory),
       };
     }
 
@@ -170,8 +216,8 @@ export const createButtonActions = ({
     const shown = upgraded ? [] : suggestionsShown(kind, tapped.suggestions);
     const rewriting = action === "NATURAL" || action === "DIRECT";
 
-    // Follow-ups count one more message of Alex without a reply.
-    const pause = pauseOf(memory, written === "FOLLOW_UPS" ? 1 : 0);
+    // The memory counts what Alex marked as sent, 💬 included.
+    const pause = pauseOf(memory);
     if (pause !== null) {
       return { type: "PAUSED", pause, username, prospectId };
     }
@@ -192,6 +238,7 @@ export const createButtonActions = ({
       prospectId,
       upgraded,
       previousLost: rewriting && !upgraded && shown === null,
+      declared: declared === "RECORDED",
       costMicroUsd: totalCost(runs),
     };
   };

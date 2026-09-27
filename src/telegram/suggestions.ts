@@ -414,6 +414,8 @@ export type NewSuggestionsView = Readonly<{
   upgraded: boolean;
   /** The suggestions to rewrite could not be read back. */
   previousLost: boolean;
+  /** 💬 has just marked the message Alex tapped as sent. */
+  declared: boolean;
 }>;
 
 const ACTION_ICONS: Readonly<Record<SuggestionAction, string>> = {
@@ -448,6 +450,8 @@ const RESULT_TITLES: Readonly<
   },
 };
 
+const DECLARED = "✅ Ho segnato come inviato il messaggio di prima.";
+
 const UPGRADED =
   "ℹ️ La conversazione è già iniziata: ti propongo risposte invece di primi messaggi.";
 
@@ -464,6 +468,7 @@ export const newSuggestionsAnswer = (
   const compose = (withNote: boolean): string =>
     [
       `${ACTION_ICONS[view.action]} <b>@${escapeHtml(view.username)}</b> · ${RESULT_TITLES[view.action][view.kind]}`,
+      ...(view.declared ? [DECLARED] : []),
       ...(view.upgraded ? [UPGRADED] : []),
       ...(view.previousLost ? [PREVIOUS_LOST] : []),
       ...(nothingSuggested

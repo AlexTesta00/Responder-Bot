@@ -1,7 +1,8 @@
 // What the bot remembers about a prospect, shown by the 🔍 button: built
 // from the memory, without the AI and at no cost.
 import type { StageChange } from "../conversations/domain.ts";
-import { unansweredMessages, type Pause } from "../conversations/transition.ts";
+import type { Pause } from "../conversations/transition.ts";
+import { contactOfMemory } from "../followups/contact.ts";
 import type { ProspectMemory } from "../prospects/memory.ts";
 import { fitsInMessage } from "./message-length.ts";
 import {
@@ -32,8 +33,10 @@ const LEFT_OUT_FIRST = ["HISTORY", "HYPOTHESES", "FACTS", "SUMMARY"] as const;
 
 type Optional = (typeof LEFT_OUT_FIRST)[number];
 
-const counts = ({ prospect, messages }: ProspectMemory): string => {
-  const unanswered = unansweredMessages(messages);
+const counts = (memory: ProspectMemory): string => {
+  const { prospect, messages } = memory;
+  // With the messages Alex marked as sent.
+  const { unanswered } = contactOfMemory(memory);
   return [
     messages.length === 1
       ? "💬 1 messaggio in memoria"

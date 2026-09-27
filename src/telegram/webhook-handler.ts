@@ -447,6 +447,7 @@ export const createUpdateHandler = ({
                   username: answer.username,
                   upgraded: answer.upgraded,
                   previousLost: answer.previousLost,
+                  declared: answer.declared,
                 },
                 footer,
               )

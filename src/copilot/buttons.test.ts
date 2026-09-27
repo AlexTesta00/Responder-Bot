@@ -84,7 +84,15 @@ const setup = async (
     messages?: readonly ConversationMessage[];
   }> = {},
 ) => {
-  const prospects = createInMemoryProspectStore();
+  // One second more at each reading, so that a send always follows the
+  // analysis it comes after.
+  let seconds = 0;
+  const prospects = createInMemoryProspectStore({
+    now: () => {
+      seconds += 1;
+      return new Date(Date.UTC(2026, 8, 27, 8, 0, seconds));
+    },
+  });
   const marioMemory = await prospects.save({
     profile: profile(
       "mariofit",
@@ -163,6 +171,7 @@ describe("createButtonActions", () => {
       prospectId: marioMemory.prospect.id,
       upgraded: false,
       previousLost: false,
+      declared: false,
       costMicroUsd: 7_000,
     });
     expect(record).toHaveBeenCalledExactlyOnceWith({
@@ -336,7 +345,7 @@ describe("createButtonActions", () => {
     },
   );
 
-  it("counts the message a follow-up follows, as Alex chose", async () => {
+  it("marks as sent the message 💬 follows up, before the rules count it", async () => {
     const twoUnanswered = [them("Ci penso"), alex("Ciao!"), alex("Ci sei?")];
     const replies = await setup({ messages: twoUnanswered });
     const followUps = await setup({ messages: twoUnanswered });
@@ -347,6 +356,36 @@ describe("createButtonActions", () => {
     expect(
       await followUps.tap({ action: "FOLLOW_UP", kind: "REPLIES" }),
     ).toMatchObject({ type: "PAUSED", pause: "FOLLOW_UP_LIMIT" });
+    expect(
+      (await followUps.prospects.load("mariofit"))?.contact.sends,
+    ).toMatchObject([{ kind: "REPLIES", style: null, text: null }]);
+  });
+
+  it("counts a message 💬 marked only once", async () => {
+    const { tap, prospects } = await setup({
+      messages: [them("Ci penso"), alex("Ciao!")],
+    });
+
+    const first = await tap({ action: "FOLLOW_UP", kind: "REPLIES" });
+    const second = await tap({ action: "FOLLOW_UP", kind: "REPLIES" });
+
+    expect(first).toMatchObject({ type: "SUGGESTED", declared: true });
+    expect(second).toMatchObject({ type: "SUGGESTED", declared: false });
+    expect((await prospects.load("mariofit"))?.contact.sends).toHaveLength(1);
+  });
+
+  it("writes nothing when 💬 cannot mark the message as sent", async () => {
+    const store = createInMemoryProspectStore();
+    const broken: ProspectStore = {
+      ...store,
+      recordSend: () => Promise.reject(new Error("ECONNREFUSED")),
+    };
+    const { tap, suggestAgain } = actions(broken);
+
+    expect(await tap({ action: "FOLLOW_UP", kind: "REPLIES" })).toStrictEqual({
+      type: "UNAVAILABLE",
+    });
+    expect(suggestAgain).not.toHaveBeenCalled();
   });
 
   it("shows the memory without the AI, even when Alex should not write", async () => {
@@ -436,20 +475,36 @@ describe("pauseOf", () => {
         messages: [],
       };
 
-      expect(pauseOf(memory, 0)).toBe(
+      expect(pauseOf(memory)).toBe(
         conversationMove(memory, nothingNew)?.pause ?? null,
       );
     },
   );
 
-  it("counts one more unanswered message when asked", async () => {
-    const memory = await memoryWith(ENGAGED, [
-      them("Ci penso"),
-      alex("a"),
-      alex("b"),
-    ]);
+  it("counts the messages Alex marked as sent", async () => {
+    let seconds = 0;
+    const store = createInMemoryProspectStore({
+      now: () => {
+        seconds += 1;
+        return new Date(Date.UTC(2026, 8, 27, 8, 0, seconds));
+      },
+    });
+    const memory = await store.save({
+      profile: profile("mariofit", ENGAGED),
+      newMessages: [them("Ci penso"), alex("a"), alex("b")],
+    });
+    await store.linkMessages(memory.prospect.id, 42, [1_001]);
 
-    expect(pauseOf(memory, 0)).toBeNull();
-    expect(pauseOf(memory, 1)).toBe("FOLLOW_UP_LIMIT");
+    expect(pauseOf(memory)).toBeNull();
+
+    await store.recordSend({
+      chatId: 42,
+      messageId: 1_001,
+      kind: "FOLLOW_UPS",
+      style: "BEST",
+      text: null,
+    });
+    const marked = await store.load("mariofit");
+    expect(marked === null ? null : pauseOf(marked)).toBe("FOLLOW_UP_LIMIT");
   });
 });

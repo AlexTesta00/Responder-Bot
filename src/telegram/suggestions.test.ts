@@ -572,7 +572,21 @@ describe("newSuggestionsAnswer", () => {
     username: "mariofit",
     upgraded: false,
     previousLost: false,
+    declared: false,
   } as const;
+
+  it("says that 💬 marked the message Alex tapped as sent", () => {
+    const { html } = newSuggestionsAnswer(
+      NEW,
+      { ...view, action: "FOLLOW_UP", kind: "FOLLOW_UPS", declared: true },
+      null,
+    );
+
+    expect(html.split("\n").slice(0, 2)).toStrictEqual([
+      "💬 <b>@mariofit</b> · follow-up",
+      "✅ Ho segnato come inviato il messaggio di prima.",
+    ]);
+  });
 
   it("presents the new suggestions with the same buttons", () => {
     const { html, keyboard } = newSuggestionsAnswer(NEW, view, "💳 ~0,02 $");
