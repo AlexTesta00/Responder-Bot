@@ -102,6 +102,12 @@ export const describeProspectStore = (name: string, open: OpenStore): void => {
           updatedAt: at(1),
         },
         messages,
+        contact: {
+          lastProspectMessageAt: at(1),
+          lastAlexMessageAt: at(1),
+          lastMessageAt: at(1),
+          sends: [],
+        },
       };
       expect(saved).toStrictEqual(expected);
       expect(await store.load("mariofit")).toStrictEqual(expected);
@@ -166,6 +172,12 @@ export const describeProspectStore = (name: string, open: OpenStore): void => {
           updatedAt: at(2),
         },
         messages: [alex("Ciao Giulia!")],
+        contact: {
+          lastProspectMessageAt: null,
+          lastAlexMessageAt: at(2),
+          lastMessageAt: at(2),
+          sends: [],
+        },
       });
       expect(mario?.prospect.id).toBe("00000000-0000-4000-8000-000000000001");
       expect(mario?.messages).toStrictEqual([
@@ -213,6 +225,34 @@ export const describeProspectStore = (name: string, open: OpenStore): void => {
       expect(await store.prospectOfMessage(42, 1_003)).toBe("giulia.bakery");
       expect(await store.prospectOfMessage(42, 1_004)).toBeNull();
       expect(await store.prospectOfMessage(7, 1_001)).toBeNull();
+    });
+
+    it("remembers when each side last wrote, as the bot saw it", async () => {
+      const store = await save(
+        { profile: MARIO, newMessages: [alex("Ciao Mario!")] },
+        { profile: MARIO, newMessages: [prospect("Ciao, dimmi pure")] },
+        { profile: MARIO, newMessages: [alex("Ti mando un esempio")] },
+        // Nothing new: an analysis of the same chat, or of the profile.
+        { profile: MARIO, newMessages: [] },
+      );
+
+      expect((await store.load("mariofit"))?.contact).toStrictEqual({
+        lastProspectMessageAt: at(2),
+        lastAlexMessageAt: at(3),
+        lastMessageAt: at(3),
+        sends: [],
+      });
+    });
+
+    it("knows no contact with a prospect only seen in the profile", async () => {
+      const store = await save({ profile: MARIO, newMessages: [] });
+
+      expect((await store.load("mariofit"))?.contact).toStrictEqual({
+        lastProspectMessageAt: null,
+        lastAlexMessageAt: null,
+        lastMessageAt: null,
+        sends: [],
+      });
     });
 
     it("keeps emojis and accents", async () => {

@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { describe, expect, it } from "vitest";
 
+import { memoryOf } from "../prospects/memory.test-support.ts";
 import type { ProspectMemory } from "../prospects/memory.ts";
 import { createClaudeEngine } from "./claude.ts";
 import type { ScreenshotsOutput } from "./outputs.ts";
@@ -117,7 +118,7 @@ const setup = (respond: () => Promise<Response> = () => message()) => {
 const systemTextOf = (request: RecordedRequest | undefined): string =>
   JSON.stringify(request?.body);
 
-const MEMORY: ProspectMemory = {
+const MEMORY: ProspectMemory = memoryOf({
   prospect: {
     id: "prospect-1",
     username: "mariofit",
@@ -133,7 +134,7 @@ const MEMORY: ProspectMemory = {
     updatedAt: new Date("2026-09-20T10:00:00Z"),
   },
   messages: [{ author: "ALEX", text: "Ciao Mario!" }],
-};
+});
 
 describe("createClaudeEngine", () => {
   it("asks Claude to analyze screenshots with the versioned instructions", async () => {

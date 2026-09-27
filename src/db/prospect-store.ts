@@ -13,9 +13,11 @@ import {
   type StageChange,
 } from "../conversations/domain.ts";
 import {
+  contactFactsOf,
   MAX_STORED_MESSAGES,
   type Prospect,
   type ProspectMemory,
+  type StoredAt,
 } from "../prospects/memory.ts";
 import type { ProspectStore, StoreDependencies } from "../prospects/store.ts";
 import type { Database } from "./schema.ts";
@@ -92,11 +94,13 @@ const prospectRowSchema = z
 
 const messagesSchema = z.array(
   z
-    .object({ author: authorSchema, body: z.string() })
-    .transform((row): ConversationMessage => ({
-      author: row.author,
-      text: row.body,
-    })),
+    .object({ author: authorSchema, body: z.string(), created_at: z.date() })
+    .transform(
+      (row): Readonly<{ message: ConversationMessage; stored: StoredAt }> => ({
+        message: { author: row.author, text: row.body },
+        stored: { author: row.author, at: row.created_at },
+      }),
+    ),
 );
 
 const stageChangesSchema = z.array(
@@ -130,12 +134,20 @@ const loadMemory = async (
   const prospect = prospectRowSchema.parse(row);
   const latest = await db
     .selectFrom("prospect_messages")
-    .select(["author", "body"])
+    .select(["author", "body", "created_at"])
     .where("prospect_id", "=", prospect.id)
     .orderBy("seq", "desc")
     .limit(MAX_STORED_MESSAGES)
     .execute();
-  return { prospect, messages: messagesSchema.parse(latest).toReversed() };
+  const rows = messagesSchema.parse(latest).toReversed();
+  return {
+    prospect,
+    messages: rows.map(({ message }) => message),
+    contact: contactFactsOf(
+      rows.map(({ stored }) => stored),
+      [],
+    ),
+  };
 };
 
 /** Prospect memory in MySQL or MariaDB. */

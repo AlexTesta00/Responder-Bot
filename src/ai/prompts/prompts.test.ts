@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { memoryOf } from "../../prospects/memory.test-support.ts";
 import type { ProspectMemory } from "../../prospects/memory.ts";
 import { CONVERSATION_REPLY_TASK } from "./conversation-reply.ts";
 import { FIRST_MESSAGE_TASK } from "./first-message.ts";
@@ -96,7 +97,7 @@ describe("prompt layers", () => {
   });
 });
 
-const MEMORY: ProspectMemory = {
+const MEMORY: ProspectMemory = memoryOf({
   prospect: {
     id: "prospect-1",
     username: "mariofit",
@@ -123,7 +124,7 @@ const MEMORY: ProspectMemory = {
     { author: "PROSPECT", text: "Una trentina a settimana" },
     { author: "ALEX", text: "Ti mando un esempio?" },
   ],
-};
+});
 
 const TODAY = new Date("2026-09-30T08:00:00Z");
 
@@ -175,7 +176,7 @@ describe("memoryContext", () => {
   it("leaves out what the memory does not hold yet", () => {
     expect(
       memoryContext(
-        {
+        memoryOf({
           prospect: {
             ...MEMORY.prospect,
             displayName: null,
@@ -187,7 +188,7 @@ describe("memoryContext", () => {
             commitments: [],
           },
           messages: [],
-        },
+        }),
         TODAY,
       ),
     ).toBe(

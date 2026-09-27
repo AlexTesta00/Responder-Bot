@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto";
 
-import type { StageChange } from "../conversations/domain.ts";
+import type {
+  ConversationMessage,
+  StageChange,
+} from "../conversations/domain.ts";
 import {
+  contactFactsOf,
   MAX_STORED_MESSAGES,
   type MemoryUpdate,
+  type Prospect,
   type ProspectMemory,
 } from "./memory.ts";
 
@@ -41,12 +46,25 @@ export type StoreDependencies = Readonly<{
   newId?: () => string;
 }>;
 
+type Stored = Readonly<{ message: ConversationMessage; at: Date }>;
+
+type Remembered = Readonly<{ prospect: Prospect; stored: readonly Stored[] }>;
+
+const memoryOf = ({ prospect, stored }: Remembered): ProspectMemory => ({
+  prospect,
+  messages: stored.map(({ message }) => message),
+  contact: contactFactsOf(
+    stored.map(({ message, at }) => ({ author: message.author, at })),
+    [],
+  ),
+});
+
 /** Memory that lasts as long as the process: for development only. */
 export const createInMemoryProspectStore = ({
   now = () => new Date(),
   newId = randomUUID,
 }: StoreDependencies = {}): ProspectStore => {
-  const memories = new Map<string, ProspectMemory>();
+  const memories = new Map<string, Remembered>();
   const histories = new Map<string, readonly StageChange[]>();
   // Chat and message id of each message of the bot, to its prospect's id.
   const links = new Map<string, string>();
@@ -54,7 +72,12 @@ export const createInMemoryProspectStore = ({
     `${String(chatId)}:${String(messageId)}`;
 
   return {
-    load: (username) => Promise.resolve(memories.get(username) ?? null),
+    load: (username) => {
+      const remembered = memories.get(username);
+      return Promise.resolve(
+        remembered === undefined ? null : memoryOf(remembered),
+      );
+    },
     save: ({ profile, newMessages }) => {
       const time = now();
       const earlier = memories.get(profile.username);
@@ -66,19 +89,20 @@ export const createInMemoryProspectStore = ({
           { from, to, at: time },
         ]);
       }
-      const memory: ProspectMemory = {
+      const remembered: Remembered = {
         prospect: {
           ...profile,
           id: earlier?.prospect.id ?? newId(),
           createdAt: earlier?.prospect.createdAt ?? time,
           updatedAt: time,
         },
-        messages: [...(earlier?.messages ?? []), ...newMessages].slice(
-          -MAX_STORED_MESSAGES,
-        ),
+        stored: [
+          ...(earlier?.stored ?? []),
+          ...newMessages.map((message) => ({ message, at: time })),
+        ].slice(-MAX_STORED_MESSAGES),
       };
-      memories.set(profile.username, memory);
-      return Promise.resolve(memory);
+      memories.set(profile.username, remembered);
+      return Promise.resolve(memoryOf(remembered));
     },
     stageHistory: (username) => Promise.resolve(histories.get(username) ?? []),
     linkMessages: (prospectId, chatId, messageIds) => {

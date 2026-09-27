@@ -4,6 +4,7 @@ import type {
   ConversationMessage,
   ConversationState,
 } from "../conversations/domain.ts";
+import { memoryOf } from "../prospects/memory.test-support.ts";
 import type { Observation, ProspectMemory } from "../prospects/memory.ts";
 import { conversationMove, moved } from "./memory.ts";
 
@@ -20,26 +21,27 @@ const DISCOVERY: ConversationState = {
   nextGoal: "VALIDATE_PROBLEM",
 };
 
-const memoryOf = (
+const memoryWith = (
   conversation: ConversationState | null,
   messages: readonly ConversationMessage[],
-): ProspectMemory => ({
-  prospect: {
-    id: "prospect-1",
-    username: "mariofit",
-    displayName: null,
-    businessType: null,
-    facts: [],
-    hypotheses: [],
-    conversation,
-    summary: null,
-    objections: [],
-    commitments: [],
-    createdAt: new Date("2026-09-20T10:00:00Z"),
-    updatedAt: new Date("2026-09-20T10:00:00Z"),
-  },
-  messages,
-});
+): ProspectMemory =>
+  memoryOf({
+    prospect: {
+      id: "prospect-1",
+      username: "mariofit",
+      displayName: null,
+      businessType: null,
+      facts: [],
+      hypotheses: [],
+      conversation,
+      summary: null,
+      objections: [],
+      commitments: [],
+      createdAt: new Date("2026-09-20T10:00:00Z"),
+      updatedAt: new Date("2026-09-20T10:00:00Z"),
+    },
+    messages,
+  });
 
 const observation = (
   conversation: ConversationState | null,
@@ -71,7 +73,7 @@ describe("conversationMove", () => {
     const stopped = { ...DISCOVERY, stage: "DO_NOT_CONTACT" } as const;
 
     expect(
-      conversationMove(memoryOf(stopped, []), observation(null, [])),
+      conversationMove(memoryWith(stopped, []), observation(null, [])),
     ).toStrictEqual({ state: stopped, pause: "DO_NOT_CONTACT" });
   });
 
@@ -80,7 +82,7 @@ describe("conversationMove", () => {
 
     // The same two messages again, plus two follow-ups: three unanswered.
     const move = conversationMove(
-      memoryOf(DISCOVERY, stored),
+      memoryWith(DISCOVERY, stored),
       observation(DISCOVERY, [
         ...stored,
         alex("Ci sei?"),
@@ -99,7 +101,7 @@ describe("conversationMove", () => {
 
     expect(
       conversationMove(
-        memoryOf(stopped, [prospect("Non scrivermi più")]),
+        memoryWith(stopped, [prospect("Non scrivermi più")]),
         observation(DISCOVERY, [prospect("Scusa, ci ho ripensato")]),
       ),
     ).toStrictEqual({ state: DISCOVERY, pause: null });

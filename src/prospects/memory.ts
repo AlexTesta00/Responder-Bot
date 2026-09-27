@@ -1,9 +1,11 @@
 // What the bot remembers about each prospect, and how a new analysis updates
 // it. Pure functions: storing the result is the job of a ProspectStore.
+import type { SuggestionKind, SuggestionStyle } from "../ai/outputs.ts";
 import type {
   Commitment,
   ConversationMessage,
   ConversationState,
+  MessageAuthor,
 } from "../conversations/domain.ts";
 
 /** Everything remembered about a prospect, except the messages. */
@@ -29,11 +31,62 @@ export type Prospect = ProspectProfile &
     updatedAt: Date;
   }>;
 
+/** A message Alex marked as sent, among the suggestions the bot showed. */
+export type Send = Readonly<{
+  kind: SuggestionKind;
+  /** Null when Alex did not say which suggestion it was. */
+  style: SuggestionStyle | null;
+  /** What was sent, when the bot could read it back. */
+  text: string | null;
+  sentAt: Date;
+}>;
+
+/**
+ * When the bot saw each side write, and what Alex marked as sent. The times
+ * are those at which the bot stored the messages: the real messages were
+ * sent then or earlier.
+ */
+export type ContactFacts = Readonly<{
+  lastProspectMessageAt: Date | null;
+  lastAlexMessageAt: Date | null;
+  /** When an analysis last added messages. */
+  lastMessageAt: Date | null;
+  /** What Alex marked as sent after the prospect's latest message, oldest first. */
+  sends: readonly Send[];
+}>;
+
 /** A prospect with the latest messages of the conversation, oldest first. */
 export type ProspectMemory = Readonly<{
   prospect: Prospect;
   messages: readonly ConversationMessage[];
+  contact: ContactFacts;
 }>;
+
+/** Who wrote a stored message, and when the bot stored it. */
+export type StoredAt = Readonly<{ author: MessageAuthor; at: Date }>;
+
+const latest = (times: readonly Date[]): Date | null =>
+  times.reduce<Date | null>(
+    (last, time) =>
+      last === null || time.getTime() > last.getTime() ? time : last,
+    null,
+  );
+
+export const contactFactsOf = (
+  stored: readonly StoredAt[],
+  sends: readonly Send[],
+): ContactFacts => {
+  const by = (author: MessageAuthor): Date | null =>
+    latest(
+      stored.filter((message) => message.author === author).map(({ at }) => at),
+    );
+  return {
+    lastProspectMessageAt: by("PROSPECT"),
+    lastAlexMessageAt: by("ALEX"),
+    lastMessageAt: latest(stored.map(({ at }) => at)),
+    sends,
+  };
+};
 
 /** What one analysis learned about a prospect. */
 export type Observation = Readonly<{

@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import { memoryOf } from "../prospects/memory.test-support.ts";
 import type { ProspectMemory } from "../prospects/memory.ts";
 import { telegramLength } from "./message-length.ts";
 import { prospectCard } from "./prospect-card.ts";
 
-const MEMORY: ProspectMemory = {
+const MEMORY: ProspectMemory = memoryOf({
   prospect: {
     id: "prospect-1",
     username: "mariofit",
@@ -28,7 +29,7 @@ const MEMORY: ProspectMemory = {
     { author: "PROSPECT", text: "Quanto costa?" },
     { author: "ALEX", text: "Dipende: cosa ti serve?" },
   ],
-};
+});
 
 const HISTORY = [
   { from: null, to: "OPENING", at: new Date("2026-09-20T10:00:00Z") },
@@ -69,10 +70,10 @@ describe("prospectCard", () => {
 
   it("says why Alex should not write, and when there is only a profile", () => {
     const card = prospectCard(
-      {
+      memoryOf({
         prospect: { ...MEMORY.prospect, conversation: null },
         messages: [],
-      },
+      }),
       [],
       "DO_NOT_CONTACT",
     );
