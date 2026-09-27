@@ -184,6 +184,8 @@ const buttonParams = (button: InlineButton): Record<string, unknown> => {
 /**
  * The body of sendMessage: options appear only when they are given. Texts
  * are made well-formed, since Telegram refuses a lone half of an emoji.
+ * Link previews are off: lists link to Instagram profiles, which should
+ * neither fill the chat nor be fetched by Telegram.
  */
 const messageParams = (
   chatId: TelegramChatId,
@@ -192,6 +194,7 @@ const messageParams = (
 ): Record<string, unknown> => ({
   chat_id: chatId,
   text: text.toWellFormed(),
+  link_preview_options: { is_disabled: true },
   ...(parseMode === undefined ? {} : { parse_mode: parseMode }),
   ...(keyboard === undefined
     ? {}

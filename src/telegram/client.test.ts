@@ -60,7 +60,11 @@ describe("createTelegramClient", () => {
       {
         url: `https://api.telegram.org/bot${TOKEN}/sendMessage`,
         method: "POST",
-        body: { chat_id: 42, text: "Ciao!" },
+        body: {
+          chat_id: 42,
+          text: "Ciao!",
+          link_preview_options: { is_disabled: true },
+        },
       },
     ]);
   });
@@ -76,6 +80,7 @@ describe("createTelegramClient", () => {
     expect(requests[0]?.body).toStrictEqual({
       chat_id: 42,
       text: "<b>Ciao</b>",
+      link_preview_options: { is_disabled: true },
       parse_mode: "HTML",
     });
   });
@@ -129,6 +134,7 @@ describe("createTelegramClient", () => {
     expect(requests[0]?.body).toStrictEqual({
       chat_id: 42,
       text: "Proposte",
+      link_preview_options: { is_disabled: true },
       parse_mode: "HTML",
       reply_markup: {
         inline_keyboard: [
