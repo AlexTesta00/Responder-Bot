@@ -7,6 +7,7 @@ import type {
   ConversationState,
   MessageAuthor,
 } from "../conversations/domain.ts";
+import { unansweredMessages } from "../conversations/transition.ts";
 
 /** Everything remembered about a prospect, except the messages. */
 export type ProspectProfile = Readonly<{
@@ -61,6 +62,30 @@ export type ProspectMemory = Readonly<{
   messages: readonly ConversationMessage[];
   contact: ContactFacts;
 }>;
+
+/**
+ * A prospect as the lists see it: the facts of the contact, as the memory
+ * gives them, without the messages themselves.
+ */
+export type ProspectOverview = Readonly<{
+  prospect: Prospect;
+  /** How many messages the memory holds: the latest ones only. */
+  storedMessages: number;
+  /** Alex's messages at the end of the stored conversation. */
+  storedUnanswered: number;
+  contact: ContactFacts;
+}>;
+
+export const overviewOf = ({
+  prospect,
+  messages,
+  contact,
+}: ProspectMemory): ProspectOverview => ({
+  prospect,
+  storedMessages: messages.length,
+  storedUnanswered: unansweredMessages(messages),
+  contact,
+});
 
 /**
  * Sends kept for each prospect; only those after the prospect's latest

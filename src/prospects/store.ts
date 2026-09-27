@@ -10,10 +10,12 @@ import {
   MAX_LOADED_SENDS,
   MAX_STORED_MESSAGES,
   MAX_STORED_SENDS,
+  overviewOf,
   storedSendText,
   type MemoryUpdate,
   type Prospect,
   type ProspectMemory,
+  type ProspectOverview,
   type Send,
 } from "./memory.ts";
 
@@ -89,6 +91,11 @@ export type ProspectStore = Readonly<{
    * prospect that message is about, and keeps only the latest sends.
    */
   recordSend: (send: SendRecord) => Promise<SendOutcome>;
+  /**
+   * Every prospect, in no particular order, with the facts of the contact
+   * as `load` gives them: what the lists need, without the messages.
+   */
+  overview: () => Promise<readonly ProspectOverview[]>;
 }>;
 
 /** Time and identifiers, injected so tests can predict them. */
@@ -240,5 +247,11 @@ export const createInMemoryProspectStore = ({
         sentAt,
       });
     },
+    overview: () =>
+      Promise.resolve(
+        [...memories.values()].map((remembered) =>
+          overviewOf(withSends(remembered)),
+        ),
+      ),
   };
 };

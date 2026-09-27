@@ -3,7 +3,12 @@ import { randomUUID } from "node:crypto";
 import type { Kysely } from "kysely";
 import { z } from "zod";
 
-import { SUGGESTION_KINDS, SUGGESTION_STYLES } from "../ai/outputs.ts";
+import {
+  SUGGESTION_KINDS,
+  SUGGESTION_STYLES,
+  type SuggestionKind,
+  type SuggestionStyle,
+} from "../ai/outputs.ts";
 import {
   CONVERSATION_INTENTS,
   CONVERSATION_STAGES,
@@ -21,10 +26,15 @@ import {
   storedSendText,
   type Prospect,
   type ProspectMemory,
+  type ProspectOverview,
   type Send,
   type StoredAt,
 } from "../prospects/memory.ts";
-import type { ProspectStore, StoreDependencies } from "../prospects/store.ts";
+import {
+  sendsToLoad,
+  type ProspectStore,
+  type StoreDependencies,
+} from "../prospects/store.ts";
 import type { Database } from "./schema.ts";
 
 /** Prospects come from Instagram; the column leaves room for other channels. */
@@ -108,20 +118,33 @@ const messagesSchema = z.array(
     ),
 );
 
-const sendsSchema = z.array(
+const sendColumns = {
+  kind: z.enum(SUGGESTION_KINDS),
+  style: z.enum(SUGGESTION_STYLES).nullable(),
+  body: z.string().nullable(),
+  sent_at: z.date(),
+};
+
+const sendOf = (
+  row: Readonly<{
+    kind: SuggestionKind;
+    style: SuggestionStyle | null;
+    body: string | null;
+    sent_at: Date;
+  }>,
+): Send => ({
+  kind: row.kind,
+  style: row.style,
+  text: row.body,
+  sentAt: row.sent_at,
+});
+
+const sendsSchema = z.array(z.object(sendColumns).transform(sendOf));
+
+const prospectSendsSchema = z.array(
   z
-    .object({
-      kind: z.enum(SUGGESTION_KINDS),
-      style: z.enum(SUGGESTION_STYLES).nullable(),
-      body: z.string().nullable(),
-      sent_at: z.date(),
-    })
-    .transform((row): Send => ({
-      kind: row.kind,
-      style: row.style,
-      text: row.body,
-      sentAt: row.sent_at,
-    })),
+    .object({ prospect_id: z.string(), ...sendColumns })
+    .transform((row) => ({ prospectId: row.prospect_id, send: sendOf(row) })),
 );
 
 const linkedSchema = z.object({ id: z.string(), username: z.string() });
@@ -131,13 +154,44 @@ const existingSendSchema = z.object({
   sent_at: z.date(),
 });
 
-// MySQL may return BIGINT columns as strings.
-const idSchema = z.object({
-  id: z
-    .union([z.number(), z.string().regex(/^\d+$/)])
-    .transform(Number)
-    .pipe(z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)),
-});
+// MySQL may return BIGINT columns and counts as strings.
+const countSchema = z
+  .union([z.number(), z.string().regex(/^\d+$/)])
+  .transform(Number)
+  .pipe(z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
+
+const idSchema = z.object({ id: countSchema });
+
+// The latest of DATETIME values, as a date or, from some engines, as text.
+const latestTimeSchema = z.union([
+  z.date(),
+  z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,3})?$/)
+    .transform((text) => new Date(`${text.replace(" ", "T")}Z`))
+    .pipe(z.date()),
+]);
+
+/** Each prospect's messages by author: how many, the last one and when. */
+const messageTotalsSchema = z.array(
+  z
+    .object({
+      prospect_id: z.string(),
+      author: authorSchema,
+      messages: countSchema,
+      last_seq: countSchema,
+      last_at: latestTimeSchema,
+    })
+    .transform((row) => ({
+      prospectId: row.prospect_id,
+      author: row.author,
+      messages: row.messages,
+      lastSeq: row.last_seq,
+      lastAt: row.last_at,
+    })),
+);
+
+type MessageTotals = z.output<typeof messageTotalsSchema>[number];
 
 /** A second send for the same message of the bot: ER_DUP_ENTRY. */
 const isDuplicate = (error: unknown): boolean =>
@@ -199,6 +253,100 @@ const loadMemory = async (
     messages: rows.map(({ message }) => message),
     contact: contactFactsOf(times, sendsSchema.parse(sends).toReversed()),
   };
+};
+
+/**
+ * A prospect's overview from the totals of its messages by author and the
+ * sends after its latest message, oldest first.
+ */
+const overviewFrom = (
+  prospect: Prospect,
+  totals: readonly MessageTotals[],
+  sends: readonly Send[],
+): ProspectOverview => {
+  const fromProspect = totals.find(({ author }) => author === "PROSPECT");
+  const fromAlex = totals.find(({ author }) => author === "ALEX");
+  const latest = totals.map(({ author, lastAt }) => ({ author, at: lastAt }));
+  const { lastProspectMessageAt } = contactFactsOf(latest, []);
+  return {
+    prospect,
+    storedMessages: totals.reduce((sum, { messages }) => sum + messages, 0),
+    // The kept messages are numbered without gaps: those after the
+    // prospect's latest one are all Alex's.
+    storedUnanswered:
+      fromAlex === undefined
+        ? 0
+        : fromProspect === undefined
+          ? fromAlex.messages
+          : Math.max(0, fromAlex.lastSeq - fromProspect.lastSeq),
+    contact: contactFactsOf(latest, sendsToLoad(sends, lastProspectMessageAt)),
+  };
+};
+
+/** Every prospect's overview, in three queries whatever their number. */
+const overview = async (
+  db: Kysely<Database>,
+): Promise<readonly ProspectOverview[]> => {
+  const prospects = z
+    .array(prospectRowSchema)
+    .parse(
+      await db
+        .selectFrom("prospects")
+        .selectAll()
+        .where("platform", "=", PLATFORM)
+        .execute(),
+    );
+  const totals = messageTotalsSchema.parse(
+    await db
+      .selectFrom("prospect_messages")
+      .select((eb) => [
+        "prospect_id",
+        "author",
+        eb.fn.countAll().as("messages"),
+        eb.fn.max("seq").as("last_seq"),
+        eb.fn.max("created_at").as("last_at"),
+      ])
+      .groupBy(["prospect_id", "author"])
+      .execute(),
+  );
+  // Only the sends after each prospect's latest message, or all of them.
+  const sends = prospectSendsSchema.parse(
+    await db
+      .selectFrom("prospect_sends as s")
+      .leftJoin(
+        (eb) =>
+          eb
+            .selectFrom("prospect_messages")
+            .select((inner) => [
+              "prospect_id",
+              inner.fn.max("created_at").as("last_prospect_at"),
+            ])
+            .where("author", "=", "PROSPECT")
+            .groupBy("prospect_id")
+            .as("lp"),
+        (join) => join.onRef("lp.prospect_id", "=", "s.prospect_id"),
+      )
+      .select(["s.prospect_id", "s.kind", "s.style", "s.body", "s.sent_at"])
+      .where((eb) =>
+        eb.or([
+          eb("lp.last_prospect_at", "is", null),
+          eb("s.sent_at", ">", eb.ref("lp.last_prospect_at")),
+        ]),
+      )
+      .orderBy("s.prospect_id")
+      .orderBy("s.sent_at")
+      .orderBy("s.id")
+      .execute(),
+  );
+  const totalsOf = Map.groupBy(totals, ({ prospectId }) => prospectId);
+  const sendsOf = Map.groupBy(sends, ({ prospectId }) => prospectId);
+  return prospects.map((prospect) =>
+    overviewFrom(
+      prospect,
+      totalsOf.get(prospect.id) ?? [],
+      (sendsOf.get(prospect.id) ?? []).map(({ send }) => send),
+    ),
+  );
 };
 
 /** Prospect memory in MySQL or MariaDB. */
@@ -429,4 +577,5 @@ export const createMysqlProspectStore = (
     }
     return { type: "RECORDED", prospectId, username, sentAt };
   },
+  overview: () => overview(db),
 });
