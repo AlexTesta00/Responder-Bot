@@ -9,7 +9,7 @@ import type {
 } from "../ai/outputs.ts";
 import type { PromptMode } from "../ai/prompts/modes.ts";
 import { createInMemorySpending, type SpendingLedger } from "../ai/spending.ts";
-import { createButtonActions } from "../copilot/buttons.ts";
+import { createButtonActions, createCardWriting } from "../copilot/buttons.ts";
 import { createSendMarking } from "../copilot/sends.ts";
 import { createConversationAnalyst } from "../copilot/conversation.ts";
 import { createScreenshotsAnalyst } from "../copilot/screenshots.ts";
@@ -301,6 +301,7 @@ const setupWith = (
     analyzeScreenshots: createScreenshotsAnalyst(copilot),
     replyToConversation: createConversationAnalyst(copilot),
     pressButton: createButtonActions(copilot),
+    writeFromCard: createCardWriting({ ...copilot, now: () => new Date() }),
     markSent: createSendMarking({ prospects, now: () => new Date() }),
     now: () => new Date(),
     answerCallbackQuery,
@@ -1300,9 +1301,14 @@ describe("buttons", () => {
     );
     expect(suggestAgain).not.toHaveBeenCalled();
     const [, html, options] = sendMessage.mock.calls[1] ?? [];
-    expect(html).toMatch(/^🔍 <b>@mariofit<\/b> · personal trainer\n/);
+    expect(html).toMatch(
+      /^🔍 <b><a href="https:\/\/www\.instagram\.com\/mariofit\/">@mariofit<\/a><\/b> · personal trainer\n/,
+    );
     expect(html).toContain("Solo profilo");
-    expect(options).toStrictEqual({ parseMode: "HTML", replyTo: 1_001 });
+    expect(options).toMatchObject({ parseMode: "HTML", replyTo: 1_001 });
+    expect(
+      options?.keyboard?.map((row) => row.map((button) => button.label)),
+    ).toStrictEqual([["✍️ Proponi primi messaggi", "✅ Già scritto"]]);
   });
 
   it("writes nothing for a prospect who asked not to be contacted", async () => {
@@ -1411,6 +1417,42 @@ describe("buttons", () => {
     slow.resolve(generation("NEW_SUGGESTIONS", ok(NEW_REPLIES)));
 
     expect(sent).toMatchObject({ type: "PRESSED", button: "SENT" });
+  });
+
+  it("writes from the card what its situation calls for", async () => {
+    const { handleUpdate, sendMessage, suggestAgain, answerCallbackQuery } =
+      await answered();
+    await handleUpdate(tapOn(1_001, "1:an:F"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    // The card arrived as message 1002: Alex taps ✍️ on it.
+    const outcome = await handleUpdate(
+      tapOn(1_002, "1:w:F", { updateId: 301, suggestions: [] }),
+    );
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(3);
+    });
+
+    expect(outcome).toStrictEqual({
+      type: "PRESSED",
+      button: "WRITE",
+      kind: "FIRST_MESSAGES",
+    });
+    expect(answerCallbackQuery).toHaveBeenLastCalledWith(
+      "query-301",
+      "✍️ Scrivo tre primi messaggi…",
+    );
+    expect(suggestAgain.mock.calls[0]?.[0]).toStrictEqual({
+      action: "MORE",
+      kind: "FIRST_MESSAGES",
+      previous: [],
+    });
+    expect(sendMessage.mock.calls[2]?.[1]).toMatch(
+      /^✍️ <b>@mariofit<\/b> · 3 primi messaggi\n/,
+    );
+    expect(sendMessage.mock.calls[2]?.[2]).toMatchObject({ replyTo: 1_002 });
   });
 
   it("keeps suggestions and usernames out of the logs of taps", async () => {

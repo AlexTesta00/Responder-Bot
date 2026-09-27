@@ -424,6 +424,8 @@ export type NewSuggestionsView = Readonly<{
   previousLost: boolean;
   /** 💬 has just marked the message Alex tapped as sent. */
   declared: boolean;
+  /** Asked from a prospect's card, where no suggestion was shown before. */
+  fromCard: boolean;
 }>;
 
 const ACTION_ICONS: Readonly<Record<SuggestionAction, string>> = {
@@ -466,6 +468,20 @@ const RESULT_TITLES: Readonly<
 
 const DECLARED = "✅ Ho segnato come inviato il messaggio di prima.";
 
+/** Asked from a card: nothing was shown before, so not "3 more". */
+const CARD_TITLES: Readonly<Record<SuggestionKind, string>> = {
+  FIRST_MESSAGES: "✍️ {user} · 3 primi messaggi",
+  REPLIES: "↩️ {user} · 3 risposte",
+  FOLLOW_UPS: "💬 {user} · follow-up",
+};
+
+const titleOf = (view: NewSuggestionsView): string => {
+  const user = `<b>@${escapeHtml(view.username)}</b>`;
+  return view.fromCard
+    ? CARD_TITLES[view.kind].replace("{user}", user)
+    : `${ACTION_ICONS[view.action]} ${user} · ${RESULT_TITLES[view.action][view.kind]}`;
+};
+
 const UPGRADED =
   "ℹ️ La conversazione è già iniziata: ti propongo risposte invece di primi messaggi.";
 
@@ -481,7 +497,7 @@ export const newSuggestionsAnswer = (
   const nothingSuggested = suggestions.length === 0;
   const compose = (withNote: boolean): string =>
     [
-      `${ACTION_ICONS[view.action]} <b>@${escapeHtml(view.username)}</b> · ${RESULT_TITLES[view.action][view.kind]}`,
+      titleOf(view),
       ...(view.declared ? [DECLARED] : []),
       ...(view.upgraded ? [UPGRADED] : []),
       ...(view.previousLost ? [PREVIOUS_LOST] : []),

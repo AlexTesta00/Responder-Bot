@@ -96,3 +96,18 @@ describe("✅ button data", () => {
     expect(decodeButton(data)).toBeNull();
   });
 });
+
+describe("card button data", () => {
+  it.each(["FIRST_MESSAGES", "REPLIES", "FOLLOW_UPS"] as const)(
+    "reads back a card's button for %s",
+    (kind) => {
+      const press = { type: "WRITE", kind } as const;
+      expect(decodeButton(encodeButton(press))).toStrictEqual(press);
+    },
+  );
+
+  it("is short, and takes nothing more", () => {
+    expect(encodeButton({ type: "WRITE", kind: "FOLLOW_UPS" })).toBe("1:w:U");
+    expect(decodeButton("1:w:U:0")).toBeNull();
+  });
+});

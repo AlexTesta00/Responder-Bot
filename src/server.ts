@@ -21,7 +21,7 @@ import {
   type Env,
   type NodeEnv,
 } from "./config/env.ts";
-import { createButtonActions } from "./copilot/buttons.ts";
+import { createButtonActions, createCardWriting } from "./copilot/buttons.ts";
 import { createConversationAnalyst } from "./copilot/conversation.ts";
 import { createSendMarking } from "./copilot/sends.ts";
 import { createScreenshotsAnalyst } from "./copilot/screenshots.ts";
@@ -129,6 +129,12 @@ const start = async (env: Env): Promise<void> => {
           generations,
         }),
         pressButton: createButtonActions({ ai, prospects, generations }),
+        writeFromCard: createCardWriting({
+          ai,
+          prospects,
+          generations,
+          now: () => new Date(),
+        }),
         answerCallbackQuery: telegram.answerCallbackQuery,
         inFlight: createInFlight(),
         markSent: createSendMarking({ prospects, now: () => new Date() }),

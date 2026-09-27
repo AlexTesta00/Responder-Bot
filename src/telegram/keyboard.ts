@@ -7,6 +7,7 @@ import {
   type SuggestionKind,
 } from "../ai/outputs.ts";
 import type { AnswerAction } from "../copilot/buttons.ts";
+import type { Situation } from "../followups/situation.ts";
 import { encodeButton, type ButtonPress } from "./button-data.ts";
 import type { InlineButton, InlineKeyboard } from "./client.ts";
 
@@ -86,6 +87,45 @@ export const copyAndSentRows = (
     const row = [...copy, ...sent];
     return row.length === 0 ? [] : [row];
   });
+
+/**
+ * The buttons of a prospect's card: write what the situation calls for,
+ * or say that Alex already wrote. Nothing for a pause or a client.
+ */
+export const cardRows = (situation: Situation): InlineKeyboard => {
+  const write = (label: string, kind: SuggestionKind): InlineButton =>
+    callback(label, { type: "WRITE", kind });
+  const done = (label: string, kind: SuggestionKind): InlineButton =>
+    callback(label, { type: "SENT", kind, index: null });
+  switch (situation.type) {
+    case "TO_REPLY":
+      return [
+        [
+          write("↩️ Proponi risposte", "REPLIES"),
+          done("✅ Già risposto", "REPLIES"),
+        ],
+      ];
+    case "FOLLOW_UP_DUE":
+      return [
+        [
+          write("💬 Proponi follow-up", "FOLLOW_UPS"),
+          done("✅ Già scritto", "FOLLOW_UPS"),
+        ],
+      ];
+    case "WAITING":
+      return [[done("✅ Già scritto", "FOLLOW_UPS")]];
+    case "TO_CONTACT":
+      return [
+        [
+          write("✍️ Proponi primi messaggi", "FIRST_MESSAGES"),
+          done("✅ Già scritto", "FIRST_MESSAGES"),
+        ],
+      ];
+    case "PAUSED":
+    case "WON":
+      return [];
+  }
+};
 
 /** Copy buttons for the suggestions short enough to be copied. */
 export const copyRows = (

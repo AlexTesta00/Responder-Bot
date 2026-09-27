@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { Suggestion } from "../ai/outputs.ts";
+import type { Situation } from "../followups/situation.ts";
 import {
   actionRows,
+  cardRows,
   copyAndSentRows,
   copyRows,
   inPairs,
@@ -124,5 +126,31 @@ describe("copyAndSentRows", () => {
     );
 
     expect(row?.at(-1)).toMatchObject({ data: "1:ok:F:2" });
+  });
+});
+
+describe("cardRows", () => {
+  const SENT = new Date("2026-09-24T08:00:00Z");
+  const labelsOf = (situation: Situation) =>
+    cardRows(situation).map((row) => row.map((button) => button.label));
+
+  it.each<[Situation, string[][]]>([
+    [
+      { type: "TO_REPLY", since: SENT },
+      [["↩️ Proponi risposte", "✅ Già risposto"]],
+    ],
+    [
+      { type: "FOLLOW_UP_DUE", number: 1, lastOutboundAt: SENT },
+      [["💬 Proponi follow-up", "✅ Già scritto"]],
+    ],
+    [
+      { type: "WAITING", number: 1, lastOutboundAt: SENT, dueDay: 20_000 },
+      [["✅ Già scritto"]],
+    ],
+    [{ type: "TO_CONTACT" }, [["✍️ Proponi primi messaggi", "✅ Già scritto"]]],
+    [{ type: "PAUSED", pause: "CLOSED" }, []],
+    [{ type: "WON" }, []],
+  ])("offers what %j calls for", (situation, labels) => {
+    expect(labelsOf(situation)).toStrictEqual(labels);
   });
 });

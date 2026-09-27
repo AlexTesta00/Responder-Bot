@@ -7,6 +7,7 @@ import {
   EXPIRED_BUTTON_NOTICE,
   pressNotice,
   sentNotice,
+  writeNotice,
 } from "./button-replies.ts";
 
 // Sunday 27 September 2026, 10:42 in Italy.
@@ -76,6 +77,9 @@ describe("notices", () => {
     const notices = [
       EXPIRED_BUTTON_NOTICE,
       BUSY_NOTICE,
+      writeNotice("FIRST_MESSAGES"),
+      writeNotice("REPLIES"),
+      writeNotice("FOLLOW_UPS"),
       ...(["MORE", "NATURAL", "DIRECT", "FOLLOW_UP", "ANALYZE"] as const).map(
         (action) => pressNotice(action) ?? "",
       ),

@@ -16,6 +16,7 @@ import type { Logger } from "../shared/logger.ts";
 import { err, ok } from "../shared/result.ts";
 import {
   createButtonActions,
+  createCardWriting,
   type AnswerAction,
   type AnswerPress,
 } from "./buttons.ts";
@@ -176,6 +177,7 @@ describe("createButtonActions", () => {
       upgraded: false,
       previousLost: false,
       declared: false,
+      fromCard: false,
       costMicroUsd: 7_000,
     });
     expect(record).toHaveBeenCalledExactlyOnceWith({
@@ -403,7 +405,6 @@ describe("createButtonActions", () => {
       type: "CARD",
       memory: marioMemory,
       history: await prospects.stageHistory("mariofit"),
-      pause: "DO_NOT_CONTACT",
     });
     expect(suggestAgain).not.toHaveBeenCalled();
   });
@@ -510,5 +511,96 @@ describe("pauseOf", () => {
     });
     const marked = await store.load("mariofit");
     expect(marked === null ? null : pauseOf(marked)).toBe("FOLLOW_UP_LIMIT");
+  });
+});
+
+describe("createCardWriting", () => {
+  // Mario's messages were stored on Sunday 27 September at 10:00 in Italy.
+  const STORED = new Date("2026-09-27T08:00:00Z");
+
+  const cardSetup = async (
+    conversation: ConversationState | null,
+    messages: readonly ConversationMessage[],
+    now: Date,
+  ) => {
+    const prospects = createInMemoryProspectStore({ now: () => STORED });
+    const memory = await prospects.save({
+      profile: profile("mariofit", conversation),
+      newMessages: messages,
+    });
+    await prospects.linkMessages(memory.prospect.id, CHAT, [1_001]);
+    const suggestAgain = vi.fn<AiEngine["suggestAgain"]>(() =>
+      Promise.resolve(generated(ok(NEW))),
+    );
+    const notExpected = () => Promise.reject(new Error("not expected"));
+    const write = createCardWriting({
+      ai: {
+        identifyProspect: notExpected,
+        analyzeScreenshots: notExpected,
+        replyToConversation: notExpected,
+        suggestAgain,
+      },
+      prospects,
+      generations: { record: () => Promise.resolve() },
+      now: () => now,
+    });
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    return {
+      suggestAgain,
+      write: (kind: "FIRST_MESSAGES" | "REPLIES" | "FOLLOW_UPS") =>
+        write(kind, { chatId: CHAT, messageId: 1_001, suggestions: [] }, log),
+    };
+  };
+
+  it("writes replies from the memory when it is Alex's turn", async () => {
+    const { write, suggestAgain } = await cardSetup(
+      ENGAGED,
+      [them("Quanto costa?")],
+      STORED,
+    );
+
+    const answer = await write("REPLIES");
+
+    expect(suggestAgain.mock.calls[0]?.[0]).toStrictEqual({
+      action: "MORE",
+      kind: "REPLIES",
+      previous: [],
+    });
+    expect(answer).toMatchObject({ type: "SUGGESTED", fromCard: true });
+  });
+
+  it("writes the follow-up only once it is due", async () => {
+    const waiting = await cardSetup(
+      ENGAGED,
+      [them("Ci penso"), alex("Ok!")],
+      STORED,
+    );
+    const due = await cardSetup(
+      ENGAGED,
+      [them("Ci penso"), alex("Ok!")],
+      new Date("2026-09-30T08:00:00Z"),
+    );
+
+    expect(await waiting.write("FOLLOW_UPS")).toMatchObject({ type: "CARD" });
+    expect(waiting.suggestAgain).not.toHaveBeenCalled();
+    expect(await due.write("FOLLOW_UPS")).toMatchObject({
+      type: "SUGGESTED",
+      action: "NEXT_FOLLOW_UP",
+      kind: "FOLLOW_UPS",
+    });
+  });
+
+  it("writes nothing for a paused conversation", async () => {
+    const { write, suggestAgain } = await cardSetup(
+      { ...ENGAGED, stage: "DO_NOT_CONTACT" },
+      [them("Non scrivermi")],
+      STORED,
+    );
+
+    expect(await write("REPLIES")).toMatchObject({
+      type: "PAUSED",
+      pause: "DO_NOT_CONTACT",
+    });
+    expect(suggestAgain).not.toHaveBeenCalled();
   });
 });

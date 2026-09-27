@@ -6,6 +6,7 @@ import type {
   ButtonAction,
   ButtonAnswer,
   PressButton,
+  WriteFromCard,
 } from "../copilot/buttons.ts";
 import type { ReplyToConversation } from "../copilot/conversation.ts";
 import type { ProspectReference } from "../copilot/memory.ts";
@@ -32,6 +33,7 @@ import {
   NOT_LINKED_REPLY,
   pressNotice,
   sentNotice,
+  writeNotice,
 } from "./button-replies.ts";
 import {
   isKeyboardRejection,
@@ -102,7 +104,7 @@ export type IgnoredReason =
   | "BUSY";
 
 /** The button a tap pressed, as the logs name it. */
-export type PressName = ButtonAction | "SENT";
+export type PressName = ButtonAction | "SENT" | "WRITE";
 
 export type UpdateOutcome =
   | Readonly<{ type: "REPLIED"; input: RepliedInput["type"] }>
@@ -132,6 +134,8 @@ export type UpdateHandlerDependencies = Readonly<{
   replyToConversation: ReplyToConversation;
   /** A button under an answer, answered from the prospect's memory. */
   pressButton: PressButton;
+  /** A button of a prospect's card, written from the memory. */
+  writeFromCard: WriteFromCard;
   answerCallbackQuery: TelegramClient["answerCallbackQuery"];
   /** ✅: marks the suggestion Alex sent from a message of the bot. */
   markSent: MarkSent;
@@ -206,6 +210,7 @@ export const createUpdateHandler = ({
   analyzeScreenshots,
   replyToConversation,
   pressButton,
+  writeFromCard,
   answerCallbackQuery,
   inFlight,
   markSent,
@@ -437,7 +442,7 @@ export const createUpdateHandler = ({
   /** The message that answers a tap, in reply to the tapped message. */
   const deliverPressAnswer = async (
     tapped: TappedBotMessage,
-    press: AnswerPress,
+    kind: SuggestionKind,
     answer: ButtonAnswer,
     log: Logger,
   ): Promise<void> => {
@@ -458,6 +463,7 @@ export const createUpdateHandler = ({
                   upgraded: answer.upgraded,
                   previousLost: answer.previousLost,
                   declared: answer.declared,
+                  fromCard: answer.fromCard,
                 },
                 footer,
               )
@@ -471,7 +477,7 @@ export const createUpdateHandler = ({
       case "PAUSED":
         await deliverLinked(
           chatId,
-          pauseAnswer(answer.pause, press.kind),
+          pauseAnswer(answer.pause, kind),
           answer.prospectId,
           log,
           messageId,
@@ -480,10 +486,7 @@ export const createUpdateHandler = ({
       case "CARD":
         await deliverLinked(
           chatId,
-          {
-            html: prospectCard(answer.memory, answer.history, answer.pause),
-            keyboard: null,
-          },
+          prospectCard(answer.memory, answer.history, now()),
           answer.memory.prospect.id,
           log,
           messageId,
@@ -556,7 +559,7 @@ export const createUpdateHandler = ({
         },
         "button handled",
       );
-      await deliverPressAnswer(tapped, press, answer, log);
+      await deliverPressAnswer(tapped, press.kind, answer, log);
     } finally {
       inFlight.finish(key);
     }
@@ -566,6 +569,42 @@ export const createUpdateHandler = ({
    * Answers ✅: the send is recorded first, then the tap is acknowledged
    * with what happened, so that the notice never says more than was done.
    */
+  /** Answers a button of a card, like one under suggestions. */
+  const answerWrite = async (
+    queryId: string,
+    tapped: TappedBotMessage,
+    kind: SuggestionKind,
+    key: string,
+    log: Logger,
+  ): Promise<void> => {
+    try {
+      await acknowledge(queryId, writeNotice(kind), log);
+      const answer = await whileTyping(tapped.chatId, () =>
+        writeFromCard(
+          kind,
+          {
+            chatId: tapped.chatId,
+            messageId: tapped.messageId,
+            suggestions: tapped.suggestions,
+          },
+          log,
+        ),
+      );
+      log.info(
+        {
+          button: "WRITE",
+          kind,
+          response: answer.type,
+          ...(answer.type === "PAUSED" ? { pause: answer.pause } : {}),
+        },
+        "button handled",
+      );
+      await deliverPressAnswer(tapped, kind, answer, log);
+    } finally {
+      inFlight.finish(key);
+    }
+  };
+
   const answerSent = async (
     queryId: string,
     tapped: TappedBotMessage,
@@ -630,6 +669,12 @@ export const createUpdateHandler = ({
       case "SENT":
         runInBackground(answerSent(queryId, message, press, key, log), log);
         return { type: "PRESSED", button: "SENT", kind: press.kind };
+      case "WRITE":
+        runInBackground(
+          answerWrite(queryId, message, press.kind, key, log),
+          log,
+        );
+        return { type: "PRESSED", button: "WRITE", kind: press.kind };
     }
   };
 

@@ -17,7 +17,9 @@ export type ButtonPress =
       type: "SENT";
       kind: SuggestionKind;
       index: SuggestionIndex | null;
-    }>;
+    }>
+  /** On a prospect's card: write suggestions of `kind` from the memory. */
+  | Readonly<{ type: "WRITE"; kind: SuggestionKind }>;
 
 // Changing what the data means needs a new version: older buttons then
 // decode to nothing and are answered as expired.
@@ -40,6 +42,9 @@ const KIND_CODES = {
 // Marks a send, as in "1:ok:R:2" or, without the suggestion, "1:ok:R".
 const SENT_CODE = "ok";
 
+// Writes from a card, as in "1:w:U".
+const WRITE_CODE = "w";
+
 export const encodeButton = (press: ButtonPress): string => {
   switch (press.type) {
     case "ANSWER":
@@ -51,6 +56,8 @@ export const encodeButton = (press: ButtonPress): string => {
         KIND_CODES[press.kind],
         ...(press.index === null ? [] : [String(press.index)]),
       ].join(":");
+    case "WRITE":
+      return `${VERSION}:${WRITE_CODE}:${KIND_CODES[press.kind]}`;
   }
 };
 
@@ -121,8 +128,12 @@ export const decodeButton = (data: string | undefined): ButtonPress | null => {
       ? null
       : { type: "SENT", kind, index };
   }
+  if (extra.length > 0) {
+    return null;
+  }
+  if (code === WRITE_CODE) {
+    return { type: "WRITE", kind };
+  }
   const action = actionOf(code);
-  return action === null || extra.length > 0
-    ? null
-    : { type: "ANSWER", action, kind };
+  return action === null ? null : { type: "ANSWER", action, kind };
 };

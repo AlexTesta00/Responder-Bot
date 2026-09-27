@@ -1,5 +1,6 @@
 // What Alex sees after tapping a button: the notice at the top of the chat
 // (at most 200 characters) and the replies when the bot writes nothing.
+import type { SuggestionKind } from "../ai/outputs.ts";
 import type { ButtonAction } from "../copilot/buttons.ts";
 import type { MarkedSend } from "../copilot/sends.ts";
 import { dayAndTime, fromDay } from "../shared/time.ts";
@@ -18,6 +19,18 @@ export const pressNotice = (action: ButtonAction): string | undefined => {
     case "ANALYZE":
       // What the bot remembers arrives at once.
       return undefined;
+  }
+};
+
+/** The notice shown as soon as Alex taps a button of a card. */
+export const writeNotice = (kind: SuggestionKind): string => {
+  switch (kind) {
+    case "FIRST_MESSAGES":
+      return "✍️ Scrivo tre primi messaggi…";
+    case "REPLIES":
+      return "↩️ Scrivo tre risposte…";
+    case "FOLLOW_UPS":
+      return "💬 Preparo il follow-up…";
   }
 };
 

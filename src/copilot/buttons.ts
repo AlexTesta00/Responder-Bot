@@ -12,6 +12,7 @@ import {
 import { runOf, totalCost, type GenerationLog } from "../ai/runs.ts";
 import type { StageChange } from "../conversations/domain.ts";
 import type { Pause } from "../conversations/transition.ts";
+import { situationOfMemory } from "../followups/situation.ts";
 import type { ProspectMemory } from "../prospects/memory.ts";
 import type { ProspectStore, SendOutcome } from "../prospects/store.ts";
 import { errorFields } from "../shared/errors.ts";
@@ -58,6 +59,8 @@ export type ButtonAnswer =
       previousLost: boolean;
       /** 💬 has just marked the tapped message as sent. */
       declared: boolean;
+      /** Asked from a prospect's card, not under suggestions. */
+      fromCard: boolean;
       costMicroUsd: number | null;
     }>
   /** The transition rules say Alex should not write now. */
@@ -67,12 +70,11 @@ export type ButtonAnswer =
       username: string;
       prospectId: string;
     }>
-  /** What the bot remembers about the prospect. */
+  /** What the bot remembers about the prospect, and what to do next. */
   | Readonly<{
       type: "CARD";
       memory: ProspectMemory;
       history: readonly StageChange[];
-      pause: Pause | null;
     }>
   /** The tapped message is about no prospect the bot remembers. */
   | Readonly<{ type: "NOT_LINKED" }>
@@ -106,24 +108,59 @@ export const suggestionsShown = (
 const conversationStarted = (memory: ProspectMemory): boolean =>
   memory.messages.length > 0 || memory.prospect.conversation !== null;
 
+const historyOf = async (
+  prospects: ProspectStore,
+  username: string,
+  log: Logger,
+): Promise<readonly StageChange[]> => {
+  try {
+    return await prospects.stageHistory(username);
+  } catch (error) {
+    log.warn(errorFields(error), "stage history unavailable");
+    return [];
+  }
+};
+
+/**
+ * The memory of the prospect a message of the bot is about. Fail closed:
+ * without the memory, neither the context nor the pauses are known, so
+ * nothing is written.
+ */
+const memoryOfTapped = async (
+  prospects: ProspectStore,
+  steps: ReturnType<typeof createMemorySteps>,
+  tapped: TappedMessage,
+  log: Logger,
+): Promise<
+  | Readonly<{ type: "FOUND"; memory: ProspectMemory }>
+  | Readonly<{ type: "NOT_LINKED" }>
+  | Readonly<{ type: "UNAVAILABLE" }>
+> => {
+  const resolved = await resolveReference(
+    prospects,
+    { type: "REPLY", chatId: tapped.chatId, messageId: tapped.messageId },
+    log,
+  );
+  if (resolved.type !== "FOUND") {
+    return resolved.type === "UNKNOWN"
+      ? { type: "NOT_LINKED" }
+      : { type: "UNAVAILABLE" };
+  }
+  const loaded = await steps.load(resolved.username, log);
+  if (!loaded.available) {
+    return { type: "UNAVAILABLE" };
+  }
+  return loaded.memory === null
+    ? { type: "NOT_LINKED" }
+    : { type: "FOUND", memory: loaded.memory };
+};
+
 export const createButtonActions = ({
   ai,
   prospects,
   generations,
 }: ButtonDependencies): PressButton => {
   const steps = createMemorySteps({ prospects, generations });
-
-  const historyOf = async (
-    username: string,
-    log: Logger,
-  ): Promise<readonly StageChange[]> => {
-    try {
-      return await prospects.stageHistory(username);
-    } catch (error) {
-      log.warn(errorFields(error), "stage history unavailable");
-      return [];
-    }
-  };
 
   /**
    * 💬 says that Alex sent one of the suggestions of the tapped message:
@@ -170,35 +207,18 @@ export const createButtonActions = ({
       return { type: "NOT_LINKED" };
     }
 
-    // Fail closed: without the memory, neither the context nor the pauses
-    // are known, so nothing is written.
-    const resolved = await resolveReference(
-      prospects,
-      { type: "REPLY", chatId: tapped.chatId, messageId: tapped.messageId },
-      log,
-    );
-    if (resolved.type !== "FOUND") {
-      return resolved.type === "UNKNOWN"
-        ? { type: "NOT_LINKED" }
-        : { type: "UNAVAILABLE" };
+    const found = await memoryOfTapped(prospects, steps, tapped, log);
+    if (found.type !== "FOUND") {
+      return found;
     }
-    const { username } = resolved;
-    const loaded = await steps.load(username, log);
-    if (!loaded.available) {
-      return { type: "UNAVAILABLE" };
-    }
-    const { memory } = loaded;
-    if (memory === null) {
-      return { type: "NOT_LINKED" };
-    }
-    const prospectId = memory.prospect.id;
+    const { memory } = found;
+    const { id: prospectId, username } = memory.prospect;
 
     if (action === "ANALYZE") {
       return {
         type: "CARD",
         memory,
-        history: await historyOf(username, log),
-        pause: pauseOf(memory),
+        history: await historyOf(prospects, username, log),
       };
     }
 
@@ -236,6 +256,76 @@ export const createButtonActions = ({
       upgraded,
       previousLost: rewriting && !upgraded && shown === null,
       declared: declared === "RECORDED",
+      fromCard: false,
+      costMicroUsd: totalCost(runs),
+    };
+  };
+};
+
+/** A button of a prospect's card: write suggestions of `kind` from the memory. */
+export type WriteFromCard = (
+  kind: SuggestionKind,
+  tapped: TappedMessage,
+  log: Logger,
+) => Promise<ButtonAnswer>;
+
+/**
+ * Writes from the card, as its situation called for. The follow-up is
+ * written only once it is due, as Alex chose: otherwise the card comes back
+ * with the day it will be, and no generation is paid for.
+ */
+export const createCardWriting = ({
+  ai,
+  prospects,
+  generations,
+  now,
+}: ButtonDependencies & Readonly<{ now: () => Date }>): WriteFromCard => {
+  const steps = createMemorySteps({ prospects, generations });
+
+  return async (kind, tapped, log) => {
+    const found = await memoryOfTapped(prospects, steps, tapped, log);
+    if (found.type !== "FOUND") {
+      return found;
+    }
+    const { memory } = found;
+    const { id: prospectId, username } = memory.prospect;
+
+    const pause = pauseOf(memory);
+    if (pause !== null) {
+      return { type: "PAUSED", pause, username, prospectId };
+    }
+    if (
+      kind === "FOLLOW_UPS" &&
+      situationOfMemory(memory, now()).type !== "FOLLOW_UP_DUE"
+    ) {
+      return {
+        type: "CARD",
+        memory,
+        history: await historyOf(prospects, username, log),
+      };
+    }
+
+    const upgraded = kind === "FIRST_MESSAGES" && conversationStarted(memory);
+    const written: SuggestionKind = upgraded ? "REPLIES" : kind;
+    const action = kind === "FOLLOW_UPS" ? "NEXT_FOLLOW_UP" : "MORE";
+    const generation = await ai.suggestAgain(
+      { action, kind: written, previous: [] },
+      memory,
+    );
+    logGeneration(generation, log);
+    const runs = [runOf(generation, prospectId)];
+    await steps.record(runs, log);
+    return {
+      type: "SUGGESTED",
+      action,
+      generation,
+      kind: written,
+      username,
+      prospectId,
+      upgraded,
+      previousLost: false,
+      declared: false,
+      fromCard: true,
       costMicroUsd: totalCost(runs),
     };
   };

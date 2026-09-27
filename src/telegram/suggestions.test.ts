@@ -574,7 +574,22 @@ describe("newSuggestionsAnswer", () => {
     upgraded: false,
     previousLost: false,
     declared: false,
+    fromCard: false,
   } as const;
+
+  it.each([
+    ["FIRST_MESSAGES", "✍️ <b>@mariofit</b> · 3 primi messaggi"],
+    ["REPLIES", "↩️ <b>@mariofit</b> · 3 risposte"],
+    ["FOLLOW_UPS", "💬 <b>@mariofit</b> · follow-up"],
+  ] as const)("names what a card asked for: %s", (kind, title) => {
+    const { html } = newSuggestionsAnswer(
+      NEW,
+      { ...view, kind, fromCard: true },
+      null,
+    );
+
+    expect(html.split("\n")[0]).toBe(title);
+  });
 
   it("says that 💬 marked the message Alex tapped as sent", () => {
     const { html } = newSuggestionsAnswer(
