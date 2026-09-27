@@ -423,6 +423,7 @@ const ACTION_ICONS: Readonly<Record<SuggestionAction, string>> = {
   NATURAL: "🙂",
   DIRECT: "🎯",
   FOLLOW_UP: "💬",
+  NEXT_FOLLOW_UP: "💬",
 };
 
 const RESULT_TITLES: Readonly<
@@ -444,6 +445,11 @@ const RESULT_TITLES: Readonly<
     FOLLOW_UPS: "follow-up più diretti",
   },
   FOLLOW_UP: {
+    FIRST_MESSAGES: "follow-up",
+    REPLIES: "follow-up",
+    FOLLOW_UPS: "follow-up",
+  },
+  NEXT_FOLLOW_UP: {
     FIRST_MESSAGES: "follow-up",
     REPLIES: "follow-up",
     FOLLOW_UPS: "follow-up",

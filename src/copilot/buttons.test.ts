@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { AiEngine, Generation, SuggestionAction } from "../ai/engine.ts";
+import type { AiEngine, Generation } from "../ai/engine.ts";
 import type { NewSuggestions } from "../ai/outputs.ts";
 import type { GenerationLog } from "../ai/runs.ts";
 import type {
@@ -14,7 +14,11 @@ import {
 } from "../prospects/store.ts";
 import type { Logger } from "../shared/logger.ts";
 import { err, ok } from "../shared/result.ts";
-import { createButtonActions, type ButtonPress } from "./buttons.ts";
+import {
+  createButtonActions,
+  type AnswerAction,
+  type ButtonPress,
+} from "./buttons.ts";
 import { conversationMove, pauseOf } from "./memory.ts";
 
 const CHAT = 42;
@@ -293,7 +297,7 @@ describe("createButtonActions", () => {
     expect(answer).toMatchObject({ type: "SUGGESTED", previousLost: true });
   });
 
-  it.each<SuggestionAction>(["MORE", "NATURAL", "DIRECT", "FOLLOW_UP"])(
+  it.each<AnswerAction>(["MORE", "NATURAL", "DIRECT", "FOLLOW_UP"])(
     "writes nothing with %s when the prospect asked not to be contacted",
     async (action) => {
       const { tap, suggestAgain } = await setup({
@@ -309,7 +313,7 @@ describe("createButtonActions", () => {
     },
   );
 
-  it.each<SuggestionAction>(["MORE", "NATURAL", "DIRECT", "FOLLOW_UP"])(
+  it.each<AnswerAction>(["MORE", "NATURAL", "DIRECT", "FOLLOW_UP"])(
     "writes nothing with %s after the closing to an uninterested prospect",
     async (action) => {
       const { tap, suggestAgain } = await setup({
@@ -325,7 +329,7 @@ describe("createButtonActions", () => {
     },
   );
 
-  it.each<SuggestionAction>(["MORE", "NATURAL", "DIRECT", "FOLLOW_UP"])(
+  it.each<AnswerAction>(["MORE", "NATURAL", "DIRECT", "FOLLOW_UP"])(
     "writes nothing with %s after the follow-ups allowed",
     async (action) => {
       const { tap, suggestAgain } = await setup({

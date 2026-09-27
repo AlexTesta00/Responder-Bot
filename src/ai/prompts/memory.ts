@@ -4,7 +4,7 @@ import { layer } from "./layer.ts";
  * How to use what the bot remembers about a prospect, and how to keep it up
  * to date: shared by screenshots and pasted conversations.
  */
-export const MEMORY_TASK = layer("memory", 1, [
+export const MEMORY_TASK = layer("memory", 2, [
   "Memory: when the request includes <prospect_memory>, it holds what earlier analyses stored about this prospect: the profile, the latest reading of the conversation, the open objections and promises, a summary and the latest messages. Use it as context: continue from where the conversation stands, never suggest again what Alex has already written, deliver what Alex promised, and answer an open objection when it matters for the next step. What the conversation shows now wins over the memory. If it clearly shows a different person from the one in the memory, ignore the memory and say so in the note.",
   "",
   "Alongside the analysis, keep the memory up to date:",
@@ -12,4 +12,6 @@ export const MEMORY_TASK = layer("memory", 1, [
   "- commitments: what Alex or the prospect said they would do and has not done yet, with who said it (by);",
   "- summary: two or three sentences in Italian that Alex's memory will keep about the prospect: who they are, where the relationship stands, what has been said or promised and what is still open.",
   "Start from the lists and the summary in the memory: keep what still holds, add what is new and drop what has been resolved. For a profile, objections and commitments are empty.",
+  "",
+  "Dates in the memory are the days the bot saw each message or Alex marked it as sent: the real message was sent that day or earlier. Messages Alex marked as sent are part of the conversation, after the latest messages shown, even when their text is not recorded: never repeat them. Take into account how many days have passed since the last contact.",
 ]);

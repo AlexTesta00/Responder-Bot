@@ -23,8 +23,11 @@ import {
   resolveReference,
 } from "./memory.ts";
 
+/** What the buttons under suggestions ask for. */
+export type AnswerAction = Exclude<SuggestionAction, "NEXT_FOLLOW_UP">;
+
 /** What a button does: write suggestions again, or show the memory. */
-export type ButtonAction = SuggestionAction | "ANALYZE";
+export type ButtonAction = AnswerAction | "ANALYZE";
 
 /** A tap on a button, under suggestions of `kind`. */
 export type ButtonPress = Readonly<{
