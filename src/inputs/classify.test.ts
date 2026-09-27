@@ -51,6 +51,15 @@ describe("classifyText", () => {
     expect(classifyText(text)).toStrictEqual({ type: "PROSPECT", username });
   });
 
+  it.each([
+    ["/nuovo", "NEW_PROSPECTS"],
+    ["/nuovo@AlexOutreachBot", "NEW_PROSPECTS"],
+    ["/lista", "LIST"],
+    ["/Lista tutti", "LIST"],
+  ])("recognizes %j", (text, type) => {
+    expect(classifyText(text)).toStrictEqual({ type });
+  });
+
   it.each(["/followup", "/followup@AlexOutreachBot", "/FollowUp"])(
     "lists the follow-ups with %j",
     (text) => {

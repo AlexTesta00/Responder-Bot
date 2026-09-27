@@ -1,8 +1,18 @@
 // The lists of the outreach, starting from /oggi: whom to answer and whom to
 // follow up. Each prospect gets a button that opens the card; the button
 // holds only its position, and the bot remembers which prospect it opens.
-import type { ConversationIntent } from "../conversations/domain.ts";
-import { firstOf, type Agenda, type AgendaEntry } from "../followups/agenda.ts";
+import {
+  CONVERSATION_STAGES,
+  type ConversationIntent,
+} from "../conversations/domain.ts";
+import type { Pause } from "../conversations/transition.ts";
+import {
+  firstOf,
+  latestActivityFirst,
+  type Agenda,
+  type AgendaEntry,
+} from "../followups/agenda.ts";
+import type { Situation } from "../followups/situation.ts";
 import type { Prospect } from "../prospects/memory.ts";
 import { fromDay, longDay, relativeDay } from "../shared/time.ts";
 import { openRows } from "./keyboard.ts";
@@ -18,6 +28,12 @@ export const TODAY_LIMIT = 5;
 
 /** Prospects shown in each group of /followup: 20 buttons at most. */
 export const FOLLOW_UPS_LIMIT = 10;
+
+/** Profiles shown by /nuovo. */
+export const NEW_PROSPECTS_LIMIT = 10;
+
+/** Names shown in each group of /lista, or fewer when they do not fit. */
+export const LIST_LIMITS = [12, 5, 0] as const;
 
 const PROMISE_LENGTH = 80;
 
@@ -259,4 +275,169 @@ export const followUpsList = (agenda: Agenda, now: Date): PresentedList => {
     ...(buttons.length === 0 ? [] : ["", FOLLOW_UPS_HINT]),
   ].join("\n");
   return withButtons(html, buttons);
+};
+
+const NEW_PROSPECT_HELP =
+  "Mandami 1-3 screenshot del suo profilo Instagram, con bio e post: ti propongo tre primi messaggi e lo salvo in memoria. Quando ne mandi uno, tocca ✅ Inviato accanto al 📋 che hai copiato.";
+
+const NOBODY_TO_CONTACT =
+  "Nessun profilo da contattare: a tutti quelli che ho in memoria hai già scritto.";
+
+const ALREADY_WRITTEN_HINT =
+  "Hai già scritto a qualcuno di loro? Apri la scheda e tocca ✅ Già scritto.";
+
+const newProspectEntry = (
+  { prospect }: AgendaEntry<"TO_CONTACT">,
+  now: Date,
+): readonly string[] => [
+  nameLine(prospect),
+  `profilo analizzato ${relativeDay(prospect.updatedAt, now)}`,
+];
+
+/**
+ * /nuovo: how to add a prospect, and the profiles Alex has not written to
+ * yet, the latest analyzed first. It never adds a prospect by itself: only
+ * an analysis does.
+ */
+export const newProspectsList = (agenda: Agenda, now: Date): PresentedList => {
+  const toContact = firstOf(agenda.toContact, NEW_PROSPECTS_LIMIT);
+  const html = [
+    "➕ <b>NUOVO PROSPECT</b>",
+    "",
+    NEW_PROSPECT_HELP,
+    ...(agenda.toContact.length === 0
+      ? ["", "👤 <b>Da contattare</b>", NOBODY_TO_CONTACT]
+      : [
+          ...section(
+            "👤 <b>Da contattare</b>",
+            agenda.toContact.length,
+            toContact.shown.map((entry) => newProspectEntry(entry, now)),
+            leftOut(toContact.more, "/lista"),
+          ),
+          "",
+          ALREADY_WRITTEN_HINT,
+        ]),
+  ].join("\n");
+  return withButtons(html, toContact.shown.map(button("👤")));
+};
+
+const PAUSE_MARKS: Readonly<Record<Pause, string>> = {
+  FOLLOW_UP_LIMIT: "🤐",
+  DO_NOT_CONTACT: "🔒",
+  CLOSED: "👋",
+};
+
+/** What a prospect waits for, in one sign, or nothing. */
+const markOf = (situation: Situation): string | null => {
+  switch (situation.type) {
+    case "TO_REPLY":
+      return "🔥";
+    case "FOLLOW_UP_DUE":
+      return "⏰";
+    case "WAITING":
+      return "⏳";
+    case "PAUSED":
+      return PAUSE_MARKS[situation.pause];
+    case "TO_CONTACT":
+    case "WON":
+      return null;
+  }
+};
+
+const LEGEND =
+  "🔥 da rispondere · ⏰ follow-up da fare · ⏳ in attesa · 🤐 2 follow-up senza risposta · 🔒 non vuole messaggi · 👋 saluto finale inviato";
+
+const LIST_HINT =
+  "Per la scheda: tocca un bottone in /oggi, /followup o /nuovo, oppure mandami lo username.";
+
+type ListGroup = Readonly<{
+  title: string;
+  entries: readonly AgendaEntry[];
+}>;
+
+/**
+ * Every prospect in one group: the paused ones, whatever their stage, the
+ * clients, the profiles without a conversation, then each stage in order.
+ */
+const listGroups = (agenda: Agenda): readonly ListGroup[] => {
+  const active = [
+    ...agenda.reply,
+    ...agenda.followUp,
+    ...agenda.waiting,
+    ...agenda.toContact,
+    ...agenda.won,
+  ];
+  const clients = active.filter(
+    ({ prospect }) => prospect.conversation?.stage === "WON",
+  );
+  const byStage = CONVERSATION_STAGES.filter((stage) => stage !== "WON").map(
+    (stage) => ({
+      title: `<b>${stage}</b>`,
+      entries: active.filter(
+        ({ prospect }) => prospect.conversation?.stage === stage,
+      ),
+    }),
+  );
+  return [
+    ...byStage,
+    {
+      title: "👤 <b>Solo profilo</b>",
+      entries: active.filter(({ prospect }) => prospect.conversation === null),
+    },
+    { title: "🏆 <b>Clienti</b>", entries: clients },
+    { title: "⏸ <b>Fermi</b>", entries: agenda.paused },
+  ]
+    .filter(({ entries }) => entries.length > 0)
+    .map(({ title, entries }) => ({
+      title,
+      entries: entries.toSorted(latestActivityFirst),
+    }));
+};
+
+const groupLines = (
+  { title, entries }: ListGroup,
+  limit: number,
+): readonly string[] => {
+  const { shown, more } = firstOf(entries, limit);
+  const names = shown.map(({ prospect, situation }) => {
+    const mark = markOf(situation);
+    return mark === null
+      ? profileLink(prospect.username)
+      : `${profileLink(prospect.username)} ${mark}`;
+  });
+  return [
+    "",
+    `${title} · ${String(entries.length)}`,
+    ...(names.length === 0
+      ? []
+      : [
+          `${names.join(" · ")}${more === 0 || limit === 0 ? "" : ` +${String(more)}`}`,
+        ]),
+  ];
+};
+
+/**
+ * /lista: every prospect at a glance, by stage, with what each waits for.
+ * Fewer names per group when they do not fit in a message, and no buttons.
+ */
+export const prospectsList = (agenda: Agenda): PresentedList => {
+  const groups = listGroups(agenda);
+  const total = groups.reduce((sum, { entries }) => sum + entries.length, 0);
+  if (total === 0) {
+    return withButtons(
+      "📇 Nessun prospect in memoria: mandami gli screenshot di un profilo per iniziare.",
+      [],
+    );
+  }
+  const html = (limit: number): string =>
+    [
+      `📇 <b>PROSPECT</b> · ${String(total)} in memoria`,
+      ...groups.flatMap((group) => groupLines(group, limit)),
+      "",
+      LEGEND,
+      LIST_HINT,
+    ].join("\n");
+  const fitting =
+    LIST_LIMITS.map(html).find(fitsInMessage) ?? html(LIST_LIMITS[2]);
+  return withButtons(fitting, []);
 };

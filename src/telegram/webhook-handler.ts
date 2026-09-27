@@ -62,7 +62,13 @@ import type { TelegramChatId, TelegramUserId } from "./ids.ts";
 import type { InFlight } from "./in-flight.ts";
 import { createMediaGroupCollector, type Schedule } from "./media-group.ts";
 import type { ProcessedUpdates } from "./processed-updates.ts";
-import { followUpsList, todayList, type PresentedList } from "./lists.ts";
+import {
+  followUpsList,
+  newProspectsList,
+  prospectsList,
+  todayList,
+  type PresentedList,
+} from "./lists.ts";
 import { prospectCard } from "./prospect-card.ts";
 import {
   imageProblemReply,
@@ -790,7 +796,7 @@ export const createUpdateHandler = ({
   /** A list of the agenda, each prospect with a button to the card. */
   const replyList = async (
     chatId: TelegramChatId,
-    command: "today" | "follow_ups",
+    command: "today" | "follow_ups" | "new_prospects" | "list",
     render: (agenda: Agenda, now: Date) => PresentedList,
     log: Logger,
   ): Promise<Result<SentMessage, TelegramError>> => {
@@ -873,6 +879,10 @@ export const createUpdateHandler = ({
         return replyList(chatId, "today", todayList, log);
       case "FOLLOW_UPS":
         return replyList(chatId, "follow_ups", followUpsList, log);
+      case "NEW_PROSPECTS":
+        return replyList(chatId, "new_prospects", newProspectsList, log);
+      case "LIST":
+        return replyList(chatId, "list", prospectsList, log);
       case "PROSPECT": {
         if (input.username !== null) {
           return cardReply(

@@ -22,6 +22,10 @@ export type TextInput =
   | Readonly<{ type: "TODAY" }>
   /** A prospect's card; without a username, of the message Alex replied to. */
   | Readonly<{ type: "PROSPECT"; username: string | null }>
+  /** /nuovo: how to add a prospect, and the profiles still to contact. */
+  | Readonly<{ type: "NEW_PROSPECTS" }>
+  /** /lista: every prospect, by stage. */
+  | Readonly<{ type: "LIST" }>
   /** /followup: the follow-ups due and those coming. */
   | Readonly<{ type: "FOLLOW_UPS" }>
   /** /followup @name: that prospect's follow-up, written only when due. */
@@ -92,6 +96,12 @@ export const classifyText = (text: string): TextInput => {
     }
     if (name === "oggi") {
       return { type: "TODAY" };
+    }
+    if (name === "nuovo") {
+      return { type: "NEW_PROSPECTS" };
+    }
+    if (name === "lista") {
+      return { type: "LIST" };
     }
     if (name === "prospect") {
       if (argument === "") {

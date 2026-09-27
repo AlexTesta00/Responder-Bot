@@ -1791,6 +1791,37 @@ describe("lists", () => {
     );
   });
 
+  it("lists the profiles still to contact with /nuovo", async () => {
+    const { handleUpdate, sendMessage, prospects } = await withProspects();
+
+    const outcome = await handleUpdate(textMessage("/nuovo"));
+
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: "NEW_PROSPECTS" });
+    const [, html, options] = sendMessage.mock.calls[0] ?? [];
+    expect(html).toMatch(/^➕ <b>NUOVO PROSPECT<\/b>/);
+    expect(options?.keyboard).toStrictEqual([
+      [{ type: "CALLBACK", label: "👤 @giulia.bakery", data: "1:o:0" }],
+    ]);
+    expect(await prospects.prospectOfItem(CHAT, 1_001, 0)).toBe(
+      "giulia.bakery",
+    );
+  });
+
+  it("lists every prospect with /lista, without buttons", async () => {
+    const { handleUpdate, sendMessage, log } = await withProspects();
+
+    const outcome = await handleUpdate(textMessage("/lista"));
+
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: "LIST" });
+    const [, html, options] = sendMessage.mock.calls[0] ?? [];
+    expect(html).toMatch(/^📇 <b>PROSPECT<\/b> · 2 in memoria/);
+    expect(options).toStrictEqual({ parseMode: "HTML" });
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "list", items: 0 }),
+      "crm command handled",
+    );
+  });
+
   it("opens the card of an item, in reply to the list", async () => {
     const { handleUpdate, sendMessage, prospects, answerCallbackQuery } =
       await withProspects();

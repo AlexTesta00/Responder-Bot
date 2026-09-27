@@ -102,6 +102,12 @@ const activityAt = ({ prospect, contact }: AgendaEntry): number =>
     contact.lastContact?.at.getTime() ?? 0,
   );
 
+/** The prospects with the latest activity first, as /lista shows them. */
+export const latestActivityFirst: Order<AgendaEntry> = inTurn(
+  descending(activityAt),
+  byUsername,
+);
+
 const isIn =
   <T extends SituationType>(type: T) =>
   (entry: AgendaEntry): entry is AgendaEntry<T> =>
@@ -115,7 +121,6 @@ export const agendaOf = (
     prospect: overview.prospect,
     ...standingOf(overview, now),
   }));
-  const latestActivity = inTurn(descending(activityAt), byUsername);
   return {
     reply: entries
       .filter(isIn("TO_REPLY"))
@@ -148,8 +153,8 @@ export const agendaOf = (
     toContact: entries
       .filter(isIn("TO_CONTACT"))
       .toSorted(inTurn(descending(analyzedAt), byUsername)),
-    paused: entries.filter(isIn("PAUSED")).toSorted(latestActivity),
-    won: entries.filter(isIn("WON")).toSorted(latestActivity),
+    paused: entries.filter(isIn("PAUSED")).toSorted(latestActivityFirst),
+    won: entries.filter(isIn("WON")).toSorted(latestActivityFirst),
   };
 };
 

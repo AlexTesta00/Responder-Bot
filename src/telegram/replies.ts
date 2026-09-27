@@ -16,6 +16,8 @@ export type InstantInput = Exclude<
       | "TODAY"
       | "FOLLOW_UPS"
       | "FOLLOW_UP_FOR"
+      | "NEW_PROSPECTS"
+      | "LIST"
       | "PROSPECT"
       | "INSTAGRAM_PROFILE";
   }>
@@ -63,6 +65,8 @@ const HELP = [
   "Comandi disponibili:",
   "/oggi – a chi rispondere e i follow-up da fare oggi",
   "/followup – i follow-up da fare e quelli in arrivo; con @username li scrive",
+  "/nuovo – come aggiungere un prospect e chi è ancora da contattare",
+  "/lista – tutti i prospect, per stage",
   "/start – presentazione del bot",
   "/help – questo elenco",
   "/prospect @username – la scheda di un prospect, con i bottoni (basta anche mandarmi @username)",
