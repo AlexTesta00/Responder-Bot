@@ -164,6 +164,29 @@ export const MIGRATIONS: Readonly<Record<string, Migration>> = {
       `.execute(db);
     },
   },
+  // What Alex marked as sent, one per message of the bot: the kind, the
+  // style and the text of the suggestion, when known.
+  "0006_prospect_sends": {
+    up: async (db) => {
+      await sql`
+        CREATE TABLE prospect_sends (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          prospect_id CHAR(36) CHARACTER SET ascii NOT NULL,
+          chat_id BIGINT NOT NULL,
+          message_id BIGINT NOT NULL,
+          kind VARCHAR(20) CHARACTER SET ascii NOT NULL,
+          style VARCHAR(20) CHARACTER SET ascii NULL,
+          body TEXT NULL,
+          sent_at DATETIME(3) NOT NULL,
+          PRIMARY KEY (id),
+          UNIQUE KEY prospect_sends_bot_message (chat_id, message_id),
+          KEY prospect_sends_prospect (prospect_id, sent_at),
+          CONSTRAINT prospect_sends_prospect_fk FOREIGN KEY (prospect_id)
+            REFERENCES prospects (id) ON DELETE CASCADE
+        ) ${TABLE_OPTIONS}
+      `.execute(db);
+    },
+  },
 };
 
 export type MigrationFailure = Readonly<{

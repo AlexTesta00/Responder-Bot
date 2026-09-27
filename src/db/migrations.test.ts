@@ -30,6 +30,7 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
         "0003_stage_changes",
         "0004_telegram_messages",
         "0005_generation_costs",
+        "0006_prospect_sends",
       ]),
     );
     expect(await migrateToLatest(db)).toStrictEqual(ok([]));
@@ -39,6 +40,7 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
       "credit_balances",
       "generation_runs",
       "prospect_messages",
+      "prospect_sends",
       "prospect_stage_changes",
       "prospects",
       "telegram_messages",
@@ -101,6 +103,7 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
         "0003_stage_changes",
         "0004_telegram_messages",
         "0005_generation_costs",
+        "0006_prospect_sends",
       ]),
     );
     expect(
@@ -161,6 +164,58 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
       },
       { model: null, cost_micro_usd: null, cache_write_tokens: null },
     ]);
+  });
+
+  it("keeps one send per message of the bot, deleted with its prospect", async () => {
+    const db = await freshDatabase();
+    await migrateToLatest(db);
+    const at = new Date("2026-09-27T08:42:00.500Z");
+    await db
+      .insertInto("prospects")
+      .values({
+        id: "00000000-0000-4000-8000-000000000001",
+        platform: "instagram",
+        username: "mariofit",
+        display_name: null,
+        business_type: null,
+        facts: "[]",
+        hypotheses: "[]",
+        stage: null,
+        intent: null,
+        interest: null,
+        next_goal: null,
+        summary: null,
+        objections: "[]",
+        commitments: "[]",
+        created_at: at,
+        updated_at: at,
+      })
+      .execute();
+    const send = {
+      prospect_id: "00000000-0000-4000-8000-000000000001",
+      chat_id: 42,
+      message_id: 1_001,
+      kind: "FIRST_MESSAGES",
+      style: "BEST",
+      body: "Ciao Mario 💪",
+      sent_at: at,
+    };
+
+    await db.insertInto("prospect_sends").values(send).execute();
+    await expect(
+      db.insertInto("prospect_sends").values(send).execute(),
+    ).rejects.toMatchObject({ errno: 1062 });
+    expect(
+      await db
+        .selectFrom("prospect_sends")
+        .select(["body", "sent_at"])
+        .execute(),
+    ).toStrictEqual([{ body: "Ciao Mario 💪", sent_at: at }]);
+
+    await db.deleteFrom("prospects").execute();
+    expect(
+      await db.selectFrom("prospect_sends").select("id").execute(),
+    ).toStrictEqual([]);
   });
 
   it("reports a failure without its message", async () => {
