@@ -584,6 +584,8 @@ Il bot produce suggerimenti.
 
 Alex prende la decisione finale.
 
+Eccezione decisa da Alex dopo la V1: su WhatsApp Business, e solo con chi scrive ad Alex, il bot passa per gradi dalle risposte approvate a un pilota automatico limitato ai casi sicuri (Sprint 11-13). Su Instagram non cambia nulla: il bot non scrive mai da solo.
+
 ## 12. Filosofia ingegneristica
 
 La qualità del codice è una priorità primaria del progetto.
@@ -1594,7 +1596,7 @@ documentazione aggiornata quando necessario
 
 ## 42. Sprint strategy
 
-Lo sviluppo è suddiviso in 10 sprint.
+Lo sviluppo della V1 è suddiviso in 10 sprint. Dopo la V1, su richiesta di Alex, gli sprint 11-13 aggiungono WhatsApp Business.
 
 Ogni sprint introduce un insieme coerente di capacità.
 
@@ -2313,6 +2315,123 @@ GET /health/ready
 `/health` indica che il processo è vivo.
 
 `/health/ready` indica che le dipendenze critiche necessarie per servire richieste sono disponibili.
+
+### Sprint 11 — WhatsApp Channel
+
+#### Obiettivo
+
+Collegare WhatsApp Business: i messaggi di chi scrive ad Alex su WhatsApp arrivano al bot, e le risposte partono solo con l'approvazione di Alex. Prima con approvazione, poi pilota automatico: scelta di Alex.
+
+#### Prerequisiti
+
+```text
+account Meta Business
+
+numero collegato alla WhatsApp Business Platform (Cloud API)
+
+webhook su https://aboutly.site, lo stesso server del bot
+```
+
+Decisione aperta: un numero nuovo dedicato al bot o il numero attuale di Alex.
+
+#### Funzionalità
+
+```text
+webhook WhatsApp con verifica della firma di Meta
+
+ogni cliente diventa un prospect con canale whatsapp (colonna platform)
+
+messaggio del cliente → Telegram: analisi e tre risposte proposte
+
+✅ Invia su WhatsApp: la risposta scelta parte solo dopo il tap di Alex
+
+stessa memoria per prospect e stesse regole di transizione
+```
+
+#### Vincoli
+
+- Entro 24 ore dall'ultimo messaggio del cliente si può rispondere liberamente; dopo, solo con modelli di messaggio approvati da Meta, a pagamento. Fuori finestra il bot lo dice e non invia.
+- Il bot parla solo dei servizi di Alex: le regole di Meta escludono dall'API gli assistenti AI generici. Da ricontrollare all'inizio dello sprint.
+- Ogni messaggio in arrivo costa una generazione: si usa il modello più economico che risponde bene, e la riga dei costi resta.
+- I log non contengono numeri di telefono né testi, solo `prospect_id`.
+
+#### Risultato atteso
+
+Alex riceve su Telegram ogni messaggio WhatsApp con tre risposte, ne sceglie una e il bot la manda al cliente.
+
+### Sprint 12 — Lead Qualification
+
+#### Obiettivo
+
+Fare al cliente le domande giuste per preparare un preventivo, sempre con l'approvazione di Alex.
+
+#### Domande
+
+```text
+che attività ha
+
+cosa serve: sito, landing, e-commerce, prenotazioni, automazioni, software o app, assistenza
+
+cosa usa oggi
+
+tempi
+
+budget indicativo
+
+come preferisce essere ricontattato
+```
+
+#### Funzionalità
+
+```text
+una domanda alla volta, adattata a quello che il cliente ha già detto
+
+scheda del lead su Telegram quando le risposte bastano
+
+prezzi, preventivi, reclami e richieste fuori tema passano sempre ad Alex
+```
+
+#### Risultato atteso
+
+Alex riceve una scheda con quello che serve per il preventivo, senza chiederlo una domanda alla volta.
+
+### Sprint 13 — WhatsApp Autopilot
+
+#### Obiettivo
+
+Lasciare che il bot risponda da solo nei casi sicuri, dopo che le risposte approvate hanno dimostrato di funzionare. Scelta di Alex.
+
+#### Casi automatici
+
+```text
+saluti
+
+domande di qualificazione
+
+informazioni sui servizi di Alex
+
+fissare una call
+```
+
+#### Limiti
+
+```text
+mai prezzi, sconti o scadenze promesse
+
+solo negli orari scelti da Alex
+
+stop immediato da Telegram, per tutti o per un cliente
+
+Alex può prendere in mano qualsiasi conversazione
+
+nel dubbio il bot passa ad Alex invece di rispondere
+
+il cliente sa che sta scrivendo con un assistente
+```
+
+#### Risultato atteso
+
+I clienti ricevono risposta anche quando Alex non è disponibile; Alex interviene solo quando serve.
 
 ## 43. Sprint completion policy
 
