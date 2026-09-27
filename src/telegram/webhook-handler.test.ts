@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AiEngine, AiError, Generation } from "../ai/engine.ts";
 import type { GenerationLog } from "../ai/runs.ts";
@@ -1836,5 +1836,128 @@ describe("lists", () => {
       replyTo: 1_001,
     });
     expect(LIST_RETRY_MS).toBe(1_000);
+  });
+});
+
+describe("follow-ups", () => {
+  const ENGAGED: ConversationState = {
+    stage: "ENGAGED",
+    intent: "INTERESTED",
+    interest: "MEDIUM",
+    nextGoal: "UNDERSTAND_PROCESS",
+  };
+
+  /** Mario, whom Alex answered on `writtenAt`, without a reply since. */
+  const waitingForMario = async (writtenAt: Date) => {
+    vi.useFakeTimers({ toFake: ["Date"], now: writtenAt });
+    const context = setup();
+    await context.prospects.save({
+      profile: {
+        username: "mariofit",
+        displayName: null,
+        businessType: "personal trainer",
+        facts: [],
+        hypotheses: [],
+        conversation: ENGAGED,
+        summary: null,
+        objections: [],
+        commitments: [],
+      },
+      newMessages: [
+        { author: "PROSPECT", text: "Ci penso" },
+        { author: "ALEX", text: "Ok, fammi sapere!" },
+      ],
+    });
+    return context;
+  };
+
+  const later = (days: number) =>
+    vi.setSystemTime(new Date(Date.now() + days * 86_400_000));
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("lists the follow-ups with a button for each", async () => {
+    const { handleUpdate, sendMessage, prospects } = await waitingForMario(
+      new Date("2026-09-23T08:00:00Z"),
+    );
+    later(4);
+
+    const outcome = await handleUpdate(textMessage("/followup"));
+
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: "FOLLOW_UPS" });
+    const [, html, options] = sendMessage.mock.calls[0] ?? [];
+    expect(html).toContain("<b>Da fare</b> (1)");
+    expect(options?.keyboard).toStrictEqual([
+      [{ type: "CALLBACK", label: "⏰ @mariofit", data: "1:o:0" }],
+    ]);
+    expect(await prospects.prospectOfItem(CHAT, 1_001, 0)).toBe("mariofit");
+  });
+
+  it("writes the follow-up Alex asks for once it is due", async () => {
+    const { handleUpdate, sendMessage, suggestAgain, prospects, log } =
+      await waitingForMario(new Date("2026-09-23T08:00:00Z"));
+    later(4);
+
+    const outcome = await handleUpdate(textMessage("/followup @mariofit"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+
+    expect(outcome).toStrictEqual({ type: "ACCEPTED", input: "FOLLOW_UP_FOR" });
+    expect(suggestAgain.mock.calls[0]?.[0]).toStrictEqual({
+      action: "NEXT_FOLLOW_UP",
+      kind: "FOLLOW_UPS",
+      previous: [],
+    });
+    const [, html, options] = sendMessage.mock.calls[0] ?? [];
+    expect(html?.split("\n").slice(0, 2)).toStrictEqual([
+      "💬 <b>@mariofit</b> · follow-up",
+      "⏰ 1° follow-up · il tuo ultimo messaggio: 4 giorni fa.",
+    ]);
+    expect(options).not.toHaveProperty("replyTo");
+    // The answer continues with Mario, and the logs never name him.
+    expect(await prospects.prospectOfMessage(CHAT, 1_001)).toBe("mariofit");
+    expect(log.info).toHaveBeenCalledWith(
+      { command: "follow_up_for", response: "SUGGESTED" },
+      "crm command handled",
+    );
+    expect(JSON.stringify(log.info.mock.calls)).not.toContain("mariofit");
+  });
+
+  it("shows the card, without the AI, before the follow-up is due", async () => {
+    const { handleUpdate, sendMessage, suggestAgain } = await waitingForMario(
+      new Date("2026-09-26T08:00:00Z"),
+    );
+    later(1);
+
+    await handleUpdate(textMessage("/followup @mariofit"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+
+    expect(suggestAgain).not.toHaveBeenCalled();
+    const [, html] = sendMessage.mock.calls[0] ?? [];
+    expect(html).toMatch(/^🔍 /);
+    expect(html).toContain("⏳ Aspetti la sua risposta");
+  });
+
+  it("knows no follow-up for a prospect it does not remember", async () => {
+    const { handleUpdate, sendMessage, suggestAgain } = await waitingForMario(
+      new Date("2026-09-23T08:00:00Z"),
+    );
+
+    await handleUpdate(textMessage("/followup @giulia.bakery"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+
+    expect(suggestAgain).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith(
+      CHAT,
+      escapeHtml(unknownProspectReply("giulia.bakery")),
+      { parseMode: "HTML" },
+    );
   });
 });

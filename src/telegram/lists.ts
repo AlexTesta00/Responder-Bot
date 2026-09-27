@@ -4,17 +4,20 @@
 import type { ConversationIntent } from "../conversations/domain.ts";
 import { firstOf, type Agenda, type AgendaEntry } from "../followups/agenda.ts";
 import type { Prospect } from "../prospects/memory.ts";
-import { longDay, relativeDay } from "../shared/time.ts";
+import { fromDay, longDay, relativeDay } from "../shared/time.ts";
 import { openRows } from "./keyboard.ts";
 import { fitsInMessage } from "./message-length.ts";
 import { profileLink } from "./prospect-card.ts";
-import { escapeHtml, type Presented } from "./suggestions.ts";
+import { escapeHtml, followUpNumber, type Presented } from "./suggestions.ts";
 
 /** A list, with the id of the prospect each of its buttons opens, in order. */
 export type PresentedList = Presented & Readonly<{ items: readonly string[] }>;
 
 /** Prospects shown in each section of /oggi; the others are a command away. */
 export const TODAY_LIMIT = 5;
+
+/** Prospects shown in each group of /followup: 20 buttons at most. */
+export const FOLLOW_UPS_LIMIT = 10;
 
 const PROMISE_LENGTH = 80;
 
@@ -72,9 +75,6 @@ const promiseLines = ({ commitments }: Prospect): readonly string[] => {
   ];
 };
 
-export const followUpNumber = (number: 1 | 2): string =>
-  number === 1 ? "1° follow-up" : "2° e ultimo follow-up";
-
 const replyEntry = (
   { prospect, situation }: AgendaEntry<"TO_REPLY">,
   now: Date,
@@ -89,6 +89,14 @@ const replyEntry = (
     phrase === null ? `ha risposto ${day}` : `${phrase} · ${day}`,
   ];
 };
+
+const waitingEntry = (
+  { prospect, situation }: AgendaEntry<"WAITING">,
+  now: Date,
+): readonly string[] => [
+  nameLine(prospect),
+  `ultimo contatto: ${relativeDay(situation.lastOutboundAt, now)} · ${followUpNumber(situation.number)} ${fromDay(situation.dueDay, now)}`,
+];
 
 const followUpEntry = (
   { prospect, situation }: AgendaEntry<"FOLLOW_UP_DUE">,
@@ -201,4 +209,54 @@ export const todayList = (agenda: Agenda, now: Date): PresentedList => {
     ].join("\n");
   const full = html(true);
   return withButtons(fitsInMessage(full) ? full : html(false), buttons);
+};
+
+const NO_FOLLOW_UPS =
+  "Nessun follow-up da fare né in arrivo. Quando mandi un messaggio tocca ✅ Inviato: se non ti rispondono, te lo ricordo qui e in /oggi.";
+
+const FOLLOW_UPS_HINT =
+  "Tocca un bottone per aprire la scheda: da lì 💬 scrive il follow-up. Al massimo 2 follow-up a chi non risponde.";
+
+/**
+ * /followup: the follow-ups due and those coming, with the day each one
+ * will be due, and how many prospects stopped after two unanswered ones.
+ */
+export const followUpsList = (agenda: Agenda, now: Date): PresentedList => {
+  const title = "⏰ <b>FOLLOW-UP</b>";
+  const due = firstOf(agenda.followUp, FOLLOW_UPS_LIMIT);
+  const waiting = firstOf(agenda.waiting, FOLLOW_UPS_LIMIT);
+  const stopped = agenda.paused.filter(
+    ({ situation }) => situation.pause === "FOLLOW_UP_LIMIT",
+  ).length;
+  const buttons = [
+    ...due.shown.map(button("⏰")),
+    ...waiting.shown.map(button("⏳")),
+  ];
+  const html = [
+    title,
+    ...(buttons.length === 0
+      ? ["", NO_FOLLOW_UPS]
+      : [
+          ...section(
+            "<b>Da fare</b>",
+            agenda.followUp.length,
+            due.shown.map((entry) => followUpEntry(entry, now)),
+            leftOut(due.more, "/lista"),
+          ),
+          ...section(
+            "<b>In attesa</b>",
+            agenda.waiting.length,
+            waiting.shown.map((entry) => waitingEntry(entry, now)),
+            leftOut(waiting.more, "/lista"),
+          ),
+        ]),
+    ...(stopped === 0
+      ? []
+      : [
+          "",
+          `🤐 ${String(stopped)} fermi dopo 2 follow-up senza risposta: non li ripropongo.`,
+        ]),
+    ...(buttons.length === 0 ? [] : ["", FOLLOW_UPS_HINT]),
+  ].join("\n");
+  return withButtons(html, buttons);
 };

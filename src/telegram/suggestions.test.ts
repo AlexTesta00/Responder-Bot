@@ -575,6 +575,7 @@ describe("newSuggestionsAnswer", () => {
     previousLost: false,
     declared: false,
     fromCard: false,
+    followUp: null,
   } as const;
 
   it.each([
@@ -589,6 +590,31 @@ describe("newSuggestionsAnswer", () => {
     );
 
     expect(html.split("\n")[0]).toBe(title);
+  });
+
+  it.each([
+    [1, "⏰ 1° follow-up · il tuo ultimo messaggio: 4 giorni fa."],
+    [2, "⏰ 2° e ultimo follow-up · il tuo ultimo messaggio: 6 giorni fa."],
+  ] as const)("says which follow-up a card asked for: %i", (number, line) => {
+    const { html } = newSuggestionsAnswer(
+      NEW,
+      {
+        ...view,
+        action: "NEXT_FOLLOW_UP",
+        kind: "FOLLOW_UPS",
+        fromCard: true,
+        followUp: {
+          number,
+          lastWritten: number === 1 ? "4 giorni fa" : "6 giorni fa",
+        },
+      },
+      null,
+    );
+
+    expect(html.split("\n").slice(0, 2)).toStrictEqual([
+      "💬 <b>@mariofit</b> · follow-up",
+      line,
+    ]);
   });
 
   it("says that 💬 marked the message Alex tapped as sent", () => {

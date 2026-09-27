@@ -14,6 +14,8 @@ export type InstantInput = Exclude<
       | "TEXT"
       | "CREDIT"
       | "TODAY"
+      | "FOLLOW_UPS"
+      | "FOLLOW_UP_FOR"
       | "PROSPECT"
       | "INSTAGRAM_PROFILE";
   }>
@@ -60,6 +62,7 @@ const START = [
 const HELP = [
   "Comandi disponibili:",
   "/oggi – a chi rispondere e i follow-up da fare oggi",
+  "/followup – i follow-up da fare e quelli in arrivo; con @username li scrive",
   "/start – presentazione del bot",
   "/help – questo elenco",
   "/prospect @username – la scheda di un prospect, con i bottoni (basta anche mandarmi @username)",

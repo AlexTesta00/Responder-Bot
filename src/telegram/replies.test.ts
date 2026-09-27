@@ -17,6 +17,8 @@ const replyToText = (text: string): string => {
     case "TEXT":
     case "CREDIT":
     case "TODAY":
+    case "FOLLOW_UPS":
+    case "FOLLOW_UP_FOR":
     case "PROSPECT":
     case "INSTAGRAM_PROFILE":
       return expect.unreachable(`${text} is not answered from the input alone`);

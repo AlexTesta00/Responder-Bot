@@ -22,6 +22,7 @@ import {
   logGeneration,
   pauseOf,
   resolveReference,
+  type ProspectReference,
 } from "./memory.ts";
 
 /** What the buttons under suggestions ask for. */
@@ -44,6 +45,9 @@ export type TappedMessage = Readonly<{
   suggestions: readonly string[];
 }>;
 
+/** The follow-up due, when a card asked for it. */
+export type DueFollowUp = Readonly<{ number: 1 | 2; lastOutboundAt: Date }>;
+
 export type ButtonAnswer =
   | Readonly<{
       type: "SUGGESTED";
@@ -61,6 +65,8 @@ export type ButtonAnswer =
       declared: boolean;
       /** Asked from a prospect's card, not under suggestions. */
       fromCard: boolean;
+      /** The follow-up written from the card, due at last. */
+      followUp: DueFollowUp | null;
       costMicroUsd: number | null;
     }>
   /** The transition rules say Alex should not write now. */
@@ -122,25 +128,21 @@ const historyOf = async (
 };
 
 /**
- * The memory of the prospect a message of the bot is about. Fail closed:
- * without the memory, neither the context nor the pauses are known, so
- * nothing is written.
+ * The memory of the prospect a message of the bot, or Alex, names. Fail
+ * closed: without the memory, neither the context nor the pauses are
+ * known, so nothing is written.
  */
-const memoryOfTapped = async (
+const memoryOfReference = async (
   prospects: ProspectStore,
   steps: ReturnType<typeof createMemorySteps>,
-  tapped: TappedMessage,
+  reference: ProspectReference,
   log: Logger,
 ): Promise<
   | Readonly<{ type: "FOUND"; memory: ProspectMemory }>
   | Readonly<{ type: "NOT_LINKED" }>
   | Readonly<{ type: "UNAVAILABLE" }>
 > => {
-  const resolved = await resolveReference(
-    prospects,
-    { type: "REPLY", chatId: tapped.chatId, messageId: tapped.messageId },
-    log,
-  );
+  const resolved = await resolveReference(prospects, reference, log);
   if (resolved.type !== "FOUND") {
     return resolved.type === "UNKNOWN"
       ? { type: "NOT_LINKED" }
@@ -207,7 +209,12 @@ export const createButtonActions = ({
       return { type: "NOT_LINKED" };
     }
 
-    const found = await memoryOfTapped(prospects, steps, tapped, log);
+    const found = await memoryOfReference(
+      prospects,
+      steps,
+      { type: "REPLY", chatId: tapped.chatId, messageId: tapped.messageId },
+      log,
+    );
     if (found.type !== "FOUND") {
       return found;
     }
@@ -257,15 +264,19 @@ export const createButtonActions = ({
       previousLost: rewriting && !upgraded && shown === null,
       declared: declared === "RECORDED",
       fromCard: false,
+      followUp: null,
       costMicroUsd: totalCost(runs),
     };
   };
 };
 
-/** A button of a prospect's card: write suggestions of `kind` from the memory. */
+/**
+ * Writes suggestions of `kind` from the memory: asked by a button of the
+ * prospect's card, or by /followup @name.
+ */
 export type WriteFromCard = (
   kind: SuggestionKind,
-  tapped: TappedMessage,
+  reference: ProspectReference,
   log: Logger,
 ) => Promise<ButtonAnswer>;
 
@@ -282,8 +293,8 @@ export const createCardWriting = ({
 }: ButtonDependencies & Readonly<{ now: () => Date }>): WriteFromCard => {
   const steps = createMemorySteps({ prospects, generations });
 
-  return async (kind, tapped, log) => {
-    const found = await memoryOfTapped(prospects, steps, tapped, log);
+  return async (kind, reference, log) => {
+    const found = await memoryOfReference(prospects, steps, reference, log);
     if (found.type !== "FOUND") {
       return found;
     }
@@ -294,10 +305,9 @@ export const createCardWriting = ({
     if (pause !== null) {
       return { type: "PAUSED", pause, username, prospectId };
     }
-    if (
-      kind === "FOLLOW_UPS" &&
-      situationOfMemory(memory, now()).type !== "FOLLOW_UP_DUE"
-    ) {
+    const situation = situationOfMemory(memory, now());
+    const due = situation.type === "FOLLOW_UP_DUE" ? situation : null;
+    if (kind === "FOLLOW_UPS" && due === null) {
       return {
         type: "CARD",
         memory,
@@ -326,6 +336,10 @@ export const createCardWriting = ({
       previousLost: false,
       declared: false,
       fromCard: true,
+      followUp:
+        kind === "FOLLOW_UPS" && due !== null
+          ? { number: due.number, lastOutboundAt: due.lastOutboundAt }
+          : null,
       costMicroUsd: totalCost(runs),
     };
   };

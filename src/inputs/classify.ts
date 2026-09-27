@@ -22,8 +22,12 @@ export type TextInput =
   | Readonly<{ type: "TODAY" }>
   /** A prospect's card; without a username, of the message Alex replied to. */
   | Readonly<{ type: "PROSPECT"; username: string | null }>
+  /** /followup: the follow-ups due and those coming. */
+  | Readonly<{ type: "FOLLOW_UPS" }>
+  /** /followup @name: that prospect's follow-up, written only when due. */
+  | Readonly<{ type: "FOLLOW_UP_FOR"; username: string }>
   /** A command that needs a username, followed by something else. */
-  | Readonly<{ type: "INVALID_USERNAME"; command: "prospect" }>
+  | Readonly<{ type: "INVALID_USERNAME"; command: "prospect" | "followup" }>
   | Readonly<{ type: "UNKNOWN_COMMAND" }>
   | Readonly<{ type: "INSTAGRAM_PROFILE"; username: string }>
   | Readonly<{ type: "LINK"; url: string }>
@@ -68,6 +72,10 @@ const creditRequestOf = (argument: string): CreditRequest => {
   };
 };
 
+/** The username after a command, as "@name", "name" or a profile link. */
+const usernameArgument = (argument: string): string | null =>
+  usernameFromLinks(argument) ?? canonicalUsername(argument);
+
 const isWebLink = (text: string): boolean =>
   !/\s/.test(text) &&
   URL.canParse(text) &&
@@ -89,11 +97,19 @@ export const classifyText = (text: string): TextInput => {
       if (argument === "") {
         return { type: "PROSPECT", username: null };
       }
-      const username =
-        usernameFromLinks(argument) ?? canonicalUsername(argument);
+      const username = usernameArgument(argument);
       return username === null
         ? { type: "INVALID_USERNAME", command: "prospect" }
         : { type: "PROSPECT", username };
+    }
+    if (name === "followup") {
+      if (argument === "") {
+        return { type: "FOLLOW_UPS" };
+      }
+      const username = usernameArgument(argument);
+      return username === null
+        ? { type: "INVALID_USERNAME", command: "followup" }
+        : { type: "FOLLOW_UP_FOR", username };
     }
     return isCommand(name)
       ? { type: "COMMAND", command: name }

@@ -426,7 +426,12 @@ export type NewSuggestionsView = Readonly<{
   declared: boolean;
   /** Asked from a prospect's card, where no suggestion was shown before. */
   fromCard: boolean;
+  /** The follow-up due, with the day Alex last wrote, as the text says it. */
+  followUp: Readonly<{ number: 1 | 2; lastWritten: string }> | null;
 }>;
+
+export const followUpNumber = (number: 1 | 2): string =>
+  number === 1 ? "1° follow-up" : "2° e ultimo follow-up";
 
 const ACTION_ICONS: Readonly<Record<SuggestionAction, string>> = {
   MORE: "🔄",
@@ -498,6 +503,11 @@ export const newSuggestionsAnswer = (
   const compose = (withNote: boolean): string =>
     [
       titleOf(view),
+      ...(view.followUp === null
+        ? []
+        : [
+            `⏰ ${followUpNumber(view.followUp.number)} · il tuo ultimo messaggio: ${view.followUp.lastWritten}.`,
+          ]),
       ...(view.declared ? [DECLARED] : []),
       ...(view.upgraded ? [UPGRADED] : []),
       ...(view.previousLost ? [PREVIOUS_LOST] : []),

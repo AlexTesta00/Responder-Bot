@@ -178,6 +178,7 @@ describe("createButtonActions", () => {
       previousLost: false,
       declared: false,
       fromCard: false,
+      followUp: null,
       costMicroUsd: 7_000,
     });
     expect(record).toHaveBeenCalledExactlyOnceWith({
@@ -548,7 +549,9 @@ describe("createCardWriting", () => {
     return {
       suggestAgain,
       write: (kind: "FIRST_MESSAGES" | "REPLIES" | "FOLLOW_UPS") =>
-        write(kind, { chatId: CHAT, messageId: 1_001, suggestions: [] }, log),
+        write(kind, { type: "REPLY", chatId: CHAT, messageId: 1_001 }, log),
+      writeFor: (username: string) =>
+        write("FOLLOW_UPS", { type: "USERNAME", username }, log),
     };
   };
 
@@ -587,7 +590,39 @@ describe("createCardWriting", () => {
       type: "SUGGESTED",
       action: "NEXT_FOLLOW_UP",
       kind: "FOLLOW_UPS",
+      followUp: { number: 1, lastOutboundAt: STORED },
     });
+  });
+
+  it("writes the follow-up of the prospect Alex names, once it is due", async () => {
+    const waiting = await cardSetup(
+      ENGAGED,
+      [them("Ci penso"), alex("Ok!")],
+      STORED,
+    );
+    const due = await cardSetup(
+      ENGAGED,
+      [them("Ci penso"), alex("Ok!")],
+      new Date("2026-09-30T08:00:00Z"),
+    );
+
+    expect(await waiting.writeFor("mariofit")).toMatchObject({ type: "CARD" });
+    expect(await due.writeFor("mariofit")).toMatchObject({
+      type: "SUGGESTED",
+      username: "mariofit",
+      action: "NEXT_FOLLOW_UP",
+    });
+    expect(await due.writeFor("giulia.bakery")).toStrictEqual({
+      type: "NOT_LINKED",
+    });
+    expect(waiting.suggestAgain).not.toHaveBeenCalled();
+    expect(due.suggestAgain).toHaveBeenCalledOnce();
+  });
+
+  it("says nothing of follow-ups when writing replies", async () => {
+    const { write } = await cardSetup(ENGAGED, [them("Quanto costa?")], STORED);
+
+    expect(await write("REPLIES")).toMatchObject({ followUp: null });
   });
 
   it("writes nothing for a paused conversation", async () => {

@@ -18,6 +18,7 @@ import type { StageChange } from "../conversations/domain.ts";
 import type { ProspectMemory } from "../prospects/memory.ts";
 import type { ProspectStore } from "../prospects/store.ts";
 import { errorFields } from "../shared/errors.ts";
+import { relativeDay } from "../shared/time.ts";
 import {
   classifyText,
   type CreditRequest,
@@ -61,7 +62,7 @@ import type { TelegramChatId, TelegramUserId } from "./ids.ts";
 import type { InFlight } from "./in-flight.ts";
 import { createMediaGroupCollector, type Schedule } from "./media-group.ts";
 import type { ProcessedUpdates } from "./processed-updates.ts";
-import { todayList } from "./lists.ts";
+import { followUpsList, todayList, type PresentedList } from "./lists.ts";
 import { prospectCard } from "./prospect-card.ts";
 import {
   imageProblemReply,
@@ -108,7 +109,7 @@ export const TYPING_REFRESH_MS = 4_000;
 /** Inputs answered by the AI engine, which takes too long to wait for. */
 export type AiInput = Extract<
   Input,
-  Readonly<{ type: "SCREENSHOTS" | "TEXT" }>
+  Readonly<{ type: "SCREENSHOTS" | "TEXT" | "FOLLOW_UP_FOR" }>
 >;
 
 /** Inputs answered while Telegram waits, the instant ones and the credit. */
@@ -553,13 +554,18 @@ export const createUpdateHandler = ({
   };
 
   /** The message that answers a tap, in reply to the tapped message. */
+  /**
+   * Delivers what a button, or /followup @name, asked for: in reply to the
+   * tapped message, if any.
+   */
   const deliverPressAnswer = async (
-    tapped: TappedBotMessage,
+    chatId: TelegramChatId,
     kind: SuggestionKind,
     answer: ButtonAnswer,
+    source: CardSource,
     log: Logger,
+    messageId?: number,
   ): Promise<void> => {
-    const { chatId, messageId } = tapped;
     switch (answer.type) {
       case "SUGGESTED": {
         const { result } = answer.generation;
@@ -577,6 +583,16 @@ export const createUpdateHandler = ({
                   previousLost: answer.previousLost,
                   declared: answer.declared,
                   fromCard: answer.fromCard,
+                  followUp:
+                    answer.followUp === null
+                      ? null
+                      : {
+                          number: answer.followUp.number,
+                          lastWritten: relativeDay(
+                            answer.followUp.lastOutboundAt,
+                            now(),
+                          ),
+                        },
                 },
                 footer,
               )
@@ -597,7 +613,7 @@ export const createUpdateHandler = ({
         );
         return;
       case "CARD": {
-        const sent = await sendCard(chatId, answer, "button", log, messageId);
+        const sent = await sendCard(chatId, answer, source, log, messageId);
         if (!sent.ok) {
           notDelivered(sent.error, log);
         }
@@ -670,16 +686,19 @@ export const createUpdateHandler = ({
         },
         "button handled",
       );
-      await deliverPressAnswer(tapped, press.kind, answer, log);
+      await deliverPressAnswer(
+        tapped.chatId,
+        press.kind,
+        answer,
+        "button",
+        log,
+        tapped.messageId,
+      );
     } finally {
       inFlight.finish(key);
     }
   };
 
-  /**
-   * Answers ✅: the send is recorded first, then the tap is acknowledged
-   * with what happened, so that the notice never says more than was done.
-   */
   /** Answers a button of a card, like one under suggestions. */
   const answerWrite = async (
     queryId: string,
@@ -693,11 +712,7 @@ export const createUpdateHandler = ({
       const answer = await whileTyping(tapped.chatId, () =>
         writeFromCard(
           kind,
-          {
-            chatId: tapped.chatId,
-            messageId: tapped.messageId,
-            suggestions: tapped.suggestions,
-          },
+          { type: "REPLY", chatId: tapped.chatId, messageId: tapped.messageId },
           log,
         ),
       );
@@ -710,12 +725,23 @@ export const createUpdateHandler = ({
         },
         "button handled",
       );
-      await deliverPressAnswer(tapped, kind, answer, log);
+      await deliverPressAnswer(
+        tapped.chatId,
+        kind,
+        answer,
+        "button",
+        log,
+        tapped.messageId,
+      );
     } finally {
       inFlight.finish(key);
     }
   };
 
+  /**
+   * Answers ✅: the send is recorded first, then the tap is acknowledged
+   * with what happened, so that the notice never says more than was done.
+   */
   const answerSent = async (
     queryId: string,
     tapped: TappedBotMessage,
@@ -761,9 +787,11 @@ export const createUpdateHandler = ({
     }
   };
 
-  /** /oggi: whom to answer and follow up, each with a button to the card. */
-  const replyToday = async (
+  /** A list of the agenda, each prospect with a button to the card. */
+  const replyList = async (
     chatId: TelegramChatId,
+    command: "today" | "follow_ups",
+    render: (agenda: Agenda, now: Date) => PresentedList,
     log: Logger,
   ): Promise<Result<SentMessage, TelegramError>> => {
     const time = now();
@@ -771,20 +799,43 @@ export const createUpdateHandler = ({
     if (found.type === "UNAVAILABLE") {
       return sendMessage(chatId, PROSPECTS_UNAVAILABLE_REPLY);
     }
-    const list = todayList(found.agenda, time);
+    const list = render(found.agenda, time);
     const sent = await sendPresented(chatId, list, log);
     if (sent.ok) {
       log.info(
-        {
-          command: "today",
-          ...agendaCounts(found.agenda),
-          items: list.items.length,
-        },
+        { command, ...agendaCounts(found.agenda), items: list.items.length },
         "crm command handled",
       );
       await linkListItems(chatId, sent.value.messageId, list.items, log);
     }
     return sent;
+  };
+
+  /**
+   * /followup @name: the follow-up, written only when it is due; otherwise
+   * the card says when it will be, and nothing is paid for.
+   */
+  const answerFollowUpFor = async (
+    chatId: TelegramChatId,
+    username: string,
+    log: Logger,
+  ): Promise<void> => {
+    const answer = await whileTyping(chatId, () =>
+      writeFromCard("FOLLOW_UPS", { type: "USERNAME", username }, log),
+    );
+    log.info(
+      {
+        command: "follow_up_for",
+        response: answer.type,
+        ...(answer.type === "PAUSED" ? { pause: answer.pause } : {}),
+      },
+      "crm command handled",
+    );
+    if (answer.type === "NOT_LINKED") {
+      await deliver(chatId, plainMessage(unknownProspectReply(username)), log);
+      return;
+    }
+    await deliverPressAnswer(chatId, "FOLLOW_UPS", answer, "command", log);
   };
 
   /** The card of a prospect, or plain text when there is none to show. */
@@ -819,7 +870,9 @@ export const createUpdateHandler = ({
           parseMode: "HTML",
         });
       case "TODAY":
-        return replyToday(chatId, log);
+        return replyList(chatId, "today", todayList, log);
+      case "FOLLOW_UPS":
+        return replyList(chatId, "follow_ups", followUpsList, log);
       case "PROSPECT": {
         if (input.username !== null) {
           return cardReply(
@@ -1049,6 +1102,10 @@ export const createUpdateHandler = ({
         ),
         log,
       );
+      return { type: "ACCEPTED", input: input.type };
+    }
+    if (input.type === "FOLLOW_UP_FOR") {
+      runInBackground(answerFollowUpFor(chatId, input.username, log), log);
       return { type: "ACCEPTED", input: input.type };
     }
 

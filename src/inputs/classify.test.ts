@@ -51,6 +51,31 @@ describe("classifyText", () => {
     expect(classifyText(text)).toStrictEqual({ type: "PROSPECT", username });
   });
 
+  it.each(["/followup", "/followup@AlexOutreachBot", "/FollowUp"])(
+    "lists the follow-ups with %j",
+    (text) => {
+      expect(classifyText(text)).toStrictEqual({ type: "FOLLOW_UPS" });
+    },
+  );
+
+  it.each([
+    ["/followup @mariofit", "mariofit"],
+    ["/followup MarioFit", "mariofit"],
+    ["/followup https://www.instagram.com/mariofit/", "mariofit"],
+  ])("asks for the follow-up of the prospect in %j", (text, username) => {
+    expect(classifyText(text)).toStrictEqual({
+      type: "FOLLOW_UP_FOR",
+      username,
+    });
+  });
+
+  it("refuses a follow-up for something that is not a username", () => {
+    expect(classifyText("/followup mario fit")).toStrictEqual({
+      type: "INVALID_USERNAME",
+      command: "followup",
+    });
+  });
+
   it.each(["/prospect", "/prospect@AlexOutreachBot", "  /prospect  "])(
     "leaves the prospect of %j to the message it replies to",
     (text) => {
@@ -82,6 +107,7 @@ describe("classifyText", () => {
     "/creditocard",
     "/prospects",
     "/oggigiorno",
+    "/followups",
   ])("marks %j as an unknown command", (text) => {
     expect(classifyText(text)).toStrictEqual({ type: "UNKNOWN_COMMAND" });
   });

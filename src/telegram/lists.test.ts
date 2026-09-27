@@ -10,7 +10,7 @@ import { overviewOf, type ProspectMemory } from "../prospects/memory.ts";
 import { memoryOf } from "../prospects/memory.test-support.ts";
 import { decodeButton } from "./button-data.ts";
 import { fitsInMessage } from "./message-length.ts";
-import { todayList } from "./lists.ts";
+import { followUpsList, todayList } from "./lists.ts";
 
 // Sunday 27 September, 10:00 in Italy.
 const NOW = new Date("2026-09-27T08:00:00Z");
@@ -296,5 +296,94 @@ describe("todayList", () => {
     expect(list.html).toContain("Non ho ancora nessun prospect in memoria");
     expect(list.keyboard).toBeNull();
     expect(list.items).toStrictEqual([]);
+  });
+});
+
+describe("followUpsList", () => {
+  it("lists the follow-ups due and coming, with the day each is due", () => {
+    const list = followUpsList(
+      agenda(
+        memory("barberriccione", { businessType: "barbiere", ...waited(4) }),
+        memory("ristorantexyz", waited(5, 2)),
+        memory("pizzeria.gino", { businessType: "ristorante", ...waited(1) }),
+        memory("studio.rossi", waited(2, 2)),
+        memory("fermo.uno", waited(3, 3)),
+        memory("fermo.due", waited(9, 3)),
+        memory("da.rispondere"),
+      ),
+      NOW,
+    );
+
+    expect(list.html).toBe(
+      [
+        "⏰ <b>FOLLOW-UP</b>",
+        "",
+        "<b>Da fare</b> (2)",
+        "",
+        `${link("barberriccione")} · barbiere`,
+        "ultimo contatto: 4 giorni fa · 1° follow-up",
+        "",
+        link("ristorantexyz"),
+        "ultimo contatto: 5 giorni fa · 2° e ultimo follow-up",
+        "",
+        "<b>In attesa</b> (2)",
+        "",
+        `${link("pizzeria.gino")} · ristorante`,
+        "ultimo contatto: ieri · 1° follow-up da martedì 29/09",
+        "",
+        link("studio.rossi"),
+        "ultimo contatto: 2 giorni fa · 2° e ultimo follow-up da mercoledì 30/09",
+        "",
+        "🤐 2 fermi dopo 2 follow-up senza risposta: non li ripropongo.",
+        "",
+        "Tocca un bottone per aprire la scheda: da lì 💬 scrive il follow-up. Al massimo 2 follow-up a chi non risponde.",
+      ].join("\n"),
+    );
+    expect(
+      list.keyboard?.map((row) => row.map((button) => button.label)),
+    ).toStrictEqual([
+      ["⏰ @barberriccione", "⏰ @ristorantexyz"],
+      ["⏳ @pizzeria.gino", "⏳ @studio.rossi"],
+    ]);
+    expect(list.items).toStrictEqual([
+      "id-barberriccione",
+      "id-ristorantexyz",
+      "id-pizzeria.gino",
+      "id-studio.rossi",
+    ]);
+  });
+
+  it("shows ten of each group, twenty buttons at most", () => {
+    const { html, items } = followUpsList(
+      agenda(
+        ...Array.from({ length: 12 }, (_, index) =>
+          memory(`dovuto.${String(index)}`, waited(10 + index)),
+        ),
+        ...Array.from({ length: 11 }, (_, index) =>
+          memory(`attesa.${String(index)}`, waited(index % 3)),
+        ),
+      ),
+      NOW,
+    );
+
+    expect(html).toContain("<b>Da fare</b> (12)");
+    expect(html).toContain("…e altri 2: /lista");
+    expect(html).toContain("<b>In attesa</b> (11)");
+    expect(html).toContain("…e un altro: /lista");
+    expect(items).toHaveLength(20);
+  });
+
+  it("says when no follow-up is due or coming", () => {
+    const list = followUpsList(agenda(memory("da.rispondere")), NOW);
+
+    expect(list).toStrictEqual({
+      html: [
+        "⏰ <b>FOLLOW-UP</b>",
+        "",
+        "Nessun follow-up da fare né in arrivo. Quando mandi un messaggio tocca ✅ Inviato: se non ti rispondono, te lo ricordo qui e in /oggi.",
+      ].join("\n"),
+      keyboard: null,
+      items: [],
+    });
   });
 });
