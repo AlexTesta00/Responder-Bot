@@ -13,6 +13,7 @@ export type TelegramMethod =
   | "answerCallbackQuery"
   | "setWebhook"
   | "getWebhookInfo"
+  | "setMyCommands"
   | "getFile"
   | "downloadFile";
 
@@ -125,6 +126,10 @@ export type TelegramClient = Readonly<{
     options: SetWebhookOptions,
   ) => Promise<Result<void, TelegramError>>;
   getWebhookInfo: () => Promise<Result<WebhookInfo, TelegramError>>;
+  /** The menu of commands, for every private chat. */
+  setMyCommands: (
+    commands: readonly Readonly<{ command: string; description: string }>[],
+  ) => Promise<Result<void, TelegramError>>;
   getFile: (fileId: string) => Promise<Result<TelegramFile, TelegramError>>;
   /** Downloads a file into memory, refusing anything above `maxBytes`. */
   downloadFile: (
@@ -408,6 +413,19 @@ export const createTelegramClient = ({
         ),
       ),
     getWebhookInfo: () => call("getWebhookInfo", {}, webhookInfoSchema),
+    setMyCommands: async (commands) =>
+      withoutValue(
+        await call(
+          "setMyCommands",
+          {
+            commands: commands.map(({ command, description }) => ({
+              command,
+              description,
+            })),
+          },
+          z.literal(true),
+        ),
+      ),
     getFile: (fileId) => call("getFile", { file_id: fileId }, fileSchema),
     downloadFile,
   };

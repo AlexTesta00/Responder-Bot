@@ -239,6 +239,25 @@ describe("createTelegramClient", () => {
     });
   });
 
+  it("registers the menu of commands", async () => {
+    const { fetchFn, requests } = fakeFetch(() =>
+      jsonResponse(200, { ok: true, result: true }),
+    );
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+
+    const result = await client.setMyCommands([
+      { command: "oggi", description: "A chi rispondere oggi" },
+    ]);
+
+    expect(result).toStrictEqual({ ok: true, value: undefined });
+    expect(requests[0]?.url).toBe(
+      `https://api.telegram.org/bot${TOKEN}/setMyCommands`,
+    );
+    expect(requests[0]?.body).toStrictEqual({
+      commands: [{ command: "oggi", description: "A chi rispondere oggi" }],
+    });
+  });
+
   it("reads the webhook status", async () => {
     const { fetchFn } = fakeFetch(() =>
       jsonResponse(200, {

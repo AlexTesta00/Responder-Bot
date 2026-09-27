@@ -1,5 +1,6 @@
 import type { Input } from "../inputs/classify.ts";
 import type { ImageDownloadError } from "../inputs/images.ts";
+import { BOT_COMMANDS } from "./commands.ts";
 
 /**
  * Inputs answered at once, from the input alone: screenshots and texts go
@@ -63,14 +64,7 @@ const START = [
 
 const HELP = [
   "Comandi disponibili:",
-  "/oggi – a chi rispondere e i follow-up da fare oggi",
-  "/followup – i follow-up da fare e quelli in arrivo; con @username li scrive",
-  "/nuovo – come aggiungere un prospect e chi è ancora da contattare",
-  "/lista – tutti i prospect, per stage",
-  "/start – presentazione del bot",
-  "/help – questo elenco",
-  "/prospect @username – la scheda di un prospect, con i bottoni (basta anche mandarmi @username)",
-  "/credito – quanto hai speso questo mese e il credito che resta; con il saldo della Console, per esempio /credito 25,40, lo aggiorna",
+  ...BOT_COMMANDS.map(({ help }) => help),
   "",
   "Oltre ai comandi puoi mandarmi screenshot di profili e conversazioni (anche più di uno insieme), il testo di una conversazione e link o @username di profili Instagram.",
   "",
