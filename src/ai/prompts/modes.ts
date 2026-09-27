@@ -1,5 +1,6 @@
 import { unansweredMessages } from "../../conversations/transition.ts";
 import type { ProspectMemory } from "../../prospects/memory.ts";
+import { romeDate } from "../../shared/time.ts";
 import type { SuggestionAction, SuggestionsRequest } from "../engine.ts";
 import type { SuggestionKind } from "../outputs.ts";
 import { CONVERSATION_REPLY_TASK } from "./conversation-reply.ts";
@@ -69,8 +70,6 @@ export const PROSPECT_IDENTITY_REQUEST =
 const listed = (title: string, items: readonly string[]): string[] =>
   items.length === 0 ? [] : [title, ...items.map((item) => `- ${item}`)];
 
-const day = (date: Date): string => date.toISOString().slice(0, 10);
-
 const speaker = (author: "ALEX" | "PROSPECT"): string =>
   author === "ALEX" ? "Alex" : "Prospect";
 
@@ -85,11 +84,11 @@ export const memoryContext = (
   const unanswered = unansweredMessages(messages);
   const reading = prospect.conversation;
   return [
-    `Today: ${day(today)}`,
+    `Today: ${romeDate(today)} (Europe/Rome)`,
     `Username: @${prospect.username}`,
     `Name: ${prospect.displayName ?? "unknown"}`,
     `Business: ${prospect.businessType ?? "unknown"}`,
-    `Last updated: ${day(prospect.updatedAt)}`,
+    `Last updated: ${romeDate(prospect.updatedAt)}`,
     ...(reading === null
       ? []
       : [

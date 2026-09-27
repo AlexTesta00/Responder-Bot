@@ -128,10 +128,27 @@ const MEMORY: ProspectMemory = {
 const TODAY = new Date("2026-09-30T08:00:00Z");
 
 describe("memoryContext", () => {
+  it("dates the memory in Italian time", () => {
+    // 01:30 on 30 September in Italy, still the 29th in UTC.
+    const context = memoryContext(
+      {
+        ...MEMORY,
+        prospect: {
+          ...MEMORY.prospect,
+          updatedAt: new Date("2026-09-23T22:30:00Z"),
+        },
+      },
+      new Date("2026-09-29T23:30:00Z"),
+    );
+
+    expect(context).toContain("Today: 2026-09-30 (Europe/Rome)");
+    expect(context).toContain("Last updated: 2026-09-24");
+  });
+
   it("describes what the bot remembers about the prospect", () => {
     expect(memoryContext(MEMORY, TODAY)).toBe(
       [
-        "Today: 2026-09-30",
+        "Today: 2026-09-30 (Europe/Rome)",
         "Username: @mariofit",
         "Name: Mario Rossi",
         "Business: personal trainer",
@@ -175,7 +192,7 @@ describe("memoryContext", () => {
       ),
     ).toBe(
       [
-        "Today: 2026-09-30",
+        "Today: 2026-09-30 (Europe/Rome)",
         "Username: @mariofit",
         "Name: unknown",
         "Business: personal trainer",
