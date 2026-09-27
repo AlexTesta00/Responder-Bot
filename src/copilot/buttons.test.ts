@@ -17,7 +17,7 @@ import { err, ok } from "../shared/result.ts";
 import {
   createButtonActions,
   type AnswerAction,
-  type ButtonPress,
+  type AnswerPress,
 } from "./buttons.ts";
 import { conversationMove, pauseOf } from "./memory.ts";
 
@@ -141,7 +141,7 @@ const actions = (prospects: ProspectStore) => {
     save,
     log,
     tap: (
-      buttonPress: ButtonPress,
+      buttonPress: AnswerPress,
       messageId = 1_001,
       suggestions: readonly string[] = SHOWN_REPLIES,
     ) => press(buttonPress, { chatId: CHAT, messageId, suggestions }, log),

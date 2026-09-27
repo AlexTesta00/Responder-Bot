@@ -260,7 +260,7 @@ describe("parseUpdate, button taps", () => {
             messageId: 1_001,
             suggestions: ["Ciao 💪 Mario", "Come lavori?", "Da 800 €."],
           },
-          press: { action: "NATURAL", kind: "REPLIES" },
+          press: { type: "ANSWER", action: "NATURAL", kind: "REPLIES" },
         },
       },
     });

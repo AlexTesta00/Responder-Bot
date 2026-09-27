@@ -1,9 +1,8 @@
 import { z } from "zod";
 
-import type { ButtonPress } from "../copilot/buttons.ts";
 import type { ImageRef } from "../inputs/images.ts";
 import { err, ok, type Result } from "../shared/result.ts";
-import { decodeButton } from "./button-data.ts";
+import { decodeButton, type ButtonPress } from "./button-data.ts";
 import {
   telegramChatIdSchema,
   telegramUserIdSchema,

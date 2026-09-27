@@ -1239,7 +1239,7 @@ describe("buttons", () => {
         queryId: "query-300",
         senderId: ALEX,
         message: null,
-        press: { action: "MORE", kind: "REPLIES" },
+        press: { type: "ANSWER", action: "MORE", kind: "REPLIES" },
       },
     });
 

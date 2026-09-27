@@ -2,9 +2,9 @@ import type { AiError } from "../ai/engine.ts";
 import type { SuggestionKind } from "../ai/outputs.ts";
 import type { SpendingLedger } from "../ai/spending.ts";
 import type {
+  AnswerPress,
   ButtonAction,
   ButtonAnswer,
-  ButtonPress,
   PressButton,
 } from "../copilot/buttons.ts";
 import type { ReplyToConversation } from "../copilot/conversation.ts";
@@ -427,7 +427,7 @@ export const createUpdateHandler = ({
   /** The message that answers a tap, in reply to the tapped message. */
   const deliverPressAnswer = async (
     tapped: TappedBotMessage,
-    press: ButtonPress,
+    press: AnswerPress,
     answer: ButtonAnswer,
     log: Logger,
   ): Promise<void> => {
@@ -519,7 +519,7 @@ export const createUpdateHandler = ({
   const answerPress = async (
     queryId: string,
     tapped: TappedBotMessage,
-    press: ButtonPress,
+    press: AnswerPress,
     key: string,
     log: Logger,
   ): Promise<void> => {

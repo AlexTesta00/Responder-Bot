@@ -17,7 +17,7 @@ const KINDS: readonly SuggestionKind[] = [
   "FOLLOW_UPS",
 ];
 const PRESSES = ACTIONS.flatMap((action) =>
-  KINDS.map((kind) => ({ action, kind })),
+  KINDS.map((kind) => ({ type: "ANSWER" as const, action, kind })),
 );
 
 describe("button data", () => {
@@ -30,9 +30,20 @@ describe("button data", () => {
   });
 
   it("is short and readable", () => {
-    expect(encodeButton({ action: "MORE", kind: "FIRST_MESSAGES" })).toBe(
-      "1:more:F",
-    );
+    expect(
+      encodeButton({ type: "ANSWER", action: "MORE", kind: "FIRST_MESSAGES" }),
+    ).toBe("1:more:F");
+  });
+
+  // Buttons already sent in Telegram chats keep working.
+  it.each([
+    ["1:more:F", "MORE", "FIRST_MESSAGES"],
+    ["1:nat:R", "NATURAL", "REPLIES"],
+    ["1:dir:U", "DIRECT", "FOLLOW_UPS"],
+    ["1:fu:R", "FOLLOW_UP", "REPLIES"],
+    ["1:an:F", "ANALYZE", "FIRST_MESSAGES"],
+  ] as const)("still reads %s", (data, action, kind) => {
+    expect(decodeButton(data)).toStrictEqual({ type: "ANSWER", action, kind });
   });
 
   it.each([

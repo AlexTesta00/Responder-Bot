@@ -30,7 +30,7 @@ export type AnswerAction = Exclude<SuggestionAction, "NEXT_FOLLOW_UP">;
 export type ButtonAction = AnswerAction | "ANALYZE";
 
 /** A tap on a button, under suggestions of `kind`. */
-export type ButtonPress = Readonly<{
+export type AnswerPress = Readonly<{
   action: ButtonAction;
   kind: SuggestionKind;
 }>;
@@ -80,7 +80,7 @@ export type ButtonAnswer =
   | Readonly<{ type: "UNAVAILABLE" }>;
 
 export type PressButton = (
-  press: ButtonPress,
+  press: AnswerPress,
   tapped: TappedMessage,
   log: Logger,
 ) => Promise<ButtonAnswer>;

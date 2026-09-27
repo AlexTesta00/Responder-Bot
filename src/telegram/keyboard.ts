@@ -2,8 +2,8 @@
 // one first and alone, then at most two per row so that the labels fit on a
 // phone.
 import type { Suggestion, SuggestionKind } from "../ai/outputs.ts";
-import type { ButtonPress } from "../copilot/buttons.ts";
-import { encodeButton } from "./button-data.ts";
+import type { AnswerAction } from "../copilot/buttons.ts";
+import { encodeButton, type ButtonPress } from "./button-data.ts";
 import type { InlineButton, InlineKeyboard } from "./client.ts";
 
 /** Telegram copies at most 256 characters with a copy button. */
@@ -34,7 +34,7 @@ const callback = (label: string, press: ButtonPress): InlineButton => ({
 
 /** Shows what the bot remembers about the prospect. */
 export const analyzeButton = (kind: SuggestionKind): InlineButton =>
-  callback("🔍 Analizza", { action: "ANALYZE", kind });
+  callback("🔍 Analizza", { type: "ANSWER", action: "ANALYZE", kind });
 
 /**
  * The buttons that write suggestions again, under suggestions of `kind`,
@@ -42,10 +42,12 @@ export const analyzeButton = (kind: SuggestionKind): InlineButton =>
  * a screenshot of the chat, which the transition rules count exactly.
  */
 export const actionRows = (kind: SuggestionKind): InlineKeyboard => {
-  const more = callback("🔄 Altre 3", { action: "MORE", kind });
-  const natural = callback("🙂 Più naturale", { action: "NATURAL", kind });
-  const direct = callback("🎯 Più diretto", { action: "DIRECT", kind });
-  const followUp = callback("💬 Follow-up", { action: "FOLLOW_UP", kind });
+  const answer = (label: string, action: AnswerAction): InlineButton =>
+    callback(label, { type: "ANSWER", action, kind });
+  const more = answer("🔄 Altre 3", "MORE");
+  const natural = answer("🙂 Più naturale", "NATURAL");
+  const direct = answer("🎯 Più diretto", "DIRECT");
+  const followUp = answer("💬 Follow-up", "FOLLOW_UP");
   return kind === "FOLLOW_UPS"
     ? [
         [more, natural],

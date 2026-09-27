@@ -3,7 +3,12 @@
 // never holds ids, usernames or texts: the prospect comes from the message
 // tapped. Telegram allows 1-64 bytes; these take at most 8.
 import type { SuggestionKind } from "../ai/outputs.ts";
-import type { ButtonAction, ButtonPress } from "../copilot/buttons.ts";
+import type { ButtonAction } from "../copilot/buttons.ts";
+
+/** What a tapped button asks for, told apart by what it does. */
+export type ButtonPress =
+  /** Under suggestions: write them again, or show the memory. */
+  Readonly<{ type: "ANSWER"; action: ButtonAction; kind: SuggestionKind }>;
 
 // Changing what the data means needs a new version: older buttons then
 // decode to nothing and are answered as expired.
@@ -23,8 +28,8 @@ const KIND_CODES = {
   FOLLOW_UPS: "U",
 } as const satisfies Record<SuggestionKind, string>;
 
-export const encodeButton = ({ action, kind }: ButtonPress): string =>
-  `${VERSION}:${ACTION_CODES[action]}:${KIND_CODES[kind]}`;
+export const encodeButton = (press: ButtonPress): string =>
+  `${VERSION}:${ACTION_CODES[press.action]}:${KIND_CODES[press.kind]}`;
 
 const actionOf = (code: string): ButtonAction | null => {
   switch (code) {
@@ -56,15 +61,22 @@ const kindOf = (code: string): SuggestionKind | null => {
   }
 };
 
-/** The press a button's data describes, or null for unknown data. */
+/**
+ * The press a button's data describes, or null for unknown data. The code
+ * of the action tells how to read the rest.
+ */
 export const decodeButton = (data: string | undefined): ButtonPress | null => {
-  const [version, actionCode = "", kindCode = "", ...rest] = (data ?? "").split(
-    ":",
-  );
-  if (version !== VERSION || rest.length > 0) {
+  const [version, code = "", ...args] = (data ?? "").split(":");
+  if (version !== VERSION) {
     return null;
   }
-  const action = actionOf(actionCode);
-  const kind = kindOf(kindCode);
-  return action === null || kind === null ? null : { action, kind };
+  const action = actionOf(code);
+  if (action !== null) {
+    const [kindCode = "", ...extra] = args;
+    const kind = kindOf(kindCode);
+    return kind === null || extra.length > 0
+      ? null
+      : { type: "ANSWER", action, kind };
+  }
+  return null;
 };
