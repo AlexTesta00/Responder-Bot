@@ -279,7 +279,9 @@ export const followUpsList = (agenda: Agenda, now: Date): PresentedList => {
         ? []
         : [
             "",
-            `🤐 ${String(stopped)} fermi dopo 2 follow-up senza risposta: non li ripropongo.`,
+            stopped === 1
+              ? "🤐 1 fermo dopo 2 follow-up senza risposta: non lo ripropongo."
+              : `🤐 ${String(stopped)} fermi dopo 2 follow-up senza risposta: non li ripropongo.`,
           ]),
       ...(buttons.length === 0 ? [] : ["", FOLLOW_UPS_HINT]),
     ].join("\n");

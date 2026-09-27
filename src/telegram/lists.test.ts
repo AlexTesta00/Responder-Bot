@@ -403,7 +403,9 @@ describe("followUpsList", () => {
 
     expect(fitsInMessage(html)).toBe(true);
     expect(html).not.toContain("b".repeat(100));
-    expect(html).toContain("🤐 1 fermi");
+    expect(html).toContain(
+      "🤐 1 fermo dopo 2 follow-up senza risposta: non lo ripropongo.",
+    );
     expect(items).toHaveLength(20);
   });
 
