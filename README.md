@@ -8,7 +8,7 @@ Visione, principi ingegneristici e roadmap: [docs/PROJECT.md](docs/PROJECT.md). 
 
 ## Stato
 
-**Sprint 07 — Telegram UX.** Il bot riceve gli update da Telegram tramite webhook, verifica il secret e risponde solo all'utente autorizzato in chat privata. Gli screenshot, anche inviati come album, e il testo di una conversazione vengono analizzati da Claude tramite l'API Anthropic:
+**Sprint 08 — Personal CRM.** Il bot riceve gli update da Telegram tramite webhook, verifica il secret e risponde solo all'utente autorizzato in chat privata. Gli screenshot, anche inviati come album, e il testo di una conversazione vengono analizzati da Claude tramite l'API Anthropic:
 
 - dagli screenshot di un profilo nascono tre primi messaggi (BEST, CURIOSITY, NATURAL);
 - dagli screenshot di una conversazione, o dal suo testo incollato, nascono l'analisi (ultimo messaggio del prospect, stage, intent, interesse, prossimo obiettivo) e tre risposte (BEST, ALTERNATIVE, DIRECT).
@@ -29,9 +29,18 @@ Anche il testo incollato usa la memoria: basta rispondere (in Telegram) a un mes
 Pensato per l'iPhone, dal profilo Instagram al messaggio da incollare servono pochi tocchi:
 
 - ogni risposta è un solo messaggio: in alto i suggerimenti, sotto l'analisi richiudibile e una riga con i costi;
-- sotto ogni suggerimento c'è il tasto 📋 Copia (i suggerimenti restano entro 250 caratteri, il limite del tasto è 256);
-- per un prospect in memoria ci sono anche 🔄 altre 3, 🙂 più naturale, 🎯 più diretto, 💬 follow-up e 🔍 cosa ricorda il bot. Il risultato arriva come nuovo messaggio in risposta a quello toccato; i bottoni non cambiano la memoria e rispettano le stesse regole delle analisi: 💬 conta un messaggio di Alex senza risposta, quindi dopo 2 follow-up il bot si ferma;
+- accanto a ogni suggerimento ci sono 📋 Copia (i suggerimenti restano entro 250 caratteri, il limite del tasto è 256) e ✅ Inviato, da toccare quando lo mandi;
+- per un prospect in memoria ci sono anche 🔄 altre 3, 🙂 più naturale, 🎯 più diretto, 💬 follow-up e 🔍 la scheda del prospect. Il risultato arriva come nuovo messaggio in risposta a quello toccato; i bottoni non cambiano la memoria delle analisi e rispettano le stesse regole: 💬 segna come inviato il messaggio toccato, quindi dopo 2 follow-up senza risposta il bot si ferma;
 - ogni risposta stima quanto è costata, quanto il bot ha speso nel mese e, con `ANTHROPIC_MONTHLY_LIMIT_USD`, quanto resta del limite mensile. Nessuna API espone il credito della Console di Claude: `/credito 25,40` lo imposta e da lì il bot scala la spesa stimata; `/credito` da solo mostra la situazione.
+
+Telegram è anche il pannello dell'outreach. Liste e schede leggono solo la memoria, senza chiamare l'AI e senza costi:
+
+- `/oggi`: chi aspetta una tua risposta, prima chi chiede il prezzo, una call o informazioni, e i follow-up da fare, con un bottone che apre la scheda di ciascuno;
+- `/followup`: i follow-up da fare e quelli in arrivo, con il giorno in cui scadono. `/followup @nome` scrive il follow-up di quel prospect, ma solo quando è dovuto: prima mostra la scheda con la data;
+- `/prospect @nome`, o solo `@nome`: la scheda del prospect, con l'ultimo contatto, cosa fare adesso e i bottoni per farlo: ↩️ risposte, ✍️ primi messaggi, 💬 follow-up e ✅ Già scritto per quello che hai mandato fuori dal bot;
+- `/nuovo`: come aggiungere un prospect e i profili ancora da contattare; `/lista`: tutti i prospect per stage.
+
+Con ✅ il bot sa chi aspetta una risposta e da quando: propone il primo follow-up dopo 3 giorni e il secondo dopo altri 5, 7 per chi ha detto di essere impegnato, e dopo 2 follow-up senza risposta si ferma. I giorni si contano sul calendario italiano. Il menu dei comandi, accanto al campo di testo, si registra con `npm run telegram:webhook -- commands`.
 
 Claude decide da solo se uno screenshot mostra un profilo o una conversazione, e non suggerisce nulla quando non va scritto nulla. Mentre lavora la chat mostra "sta scrivendo…". Comandi, link e @username Instagram ricevono una risposta immediata. Gli screenshot restano solo in memoria e vengono cancellati subito dopo l'analisi: nel database finiscono solo le informazioni estratte e al massimo gli ultimi 50 messaggi per prospect. Gira su Hostinger all'indirizzo `https://aboutly.site`, con il database MySQL (MariaDB) dell'hosting.
 
@@ -72,6 +81,7 @@ In locale Telegram non può raggiungere il webhook: i messaggi reali arrivano al
 | `npm run test:coverage`                       | Esegue i test con report di coverage in `coverage/`                            |
 | `npm run telegram:webhook -- set <https-url>` | Registra il webhook del bot su Telegram                                        |
 | `npm run telegram:webhook -- info`            | Mostra lo stato del webhook e l'ultimo errore di consegna                      |
+| `npm run telegram:webhook -- commands`        | Registra il menu dei comandi del bot su Telegram                               |
 
 ## Configurazione
 
@@ -140,13 +150,19 @@ src/
 ├── copilot/
 │   ├── memory.ts               passaggi comuni: carica la memoria, applica le transizioni, ricorda, registra i costi
 │   ├── screenshots.ts          caso d'uso: riconosce il prospect negli screenshot, analizza, ricorda
-│   ├── buttons.ts              caso d'uso: bottoni sotto i suggerimenti, dal messaggio toccato alla memoria del prospect
+│   ├── buttons.ts              caso d'uso: bottoni sotto i suggerimenti e della scheda, dal messaggio toccato alla memoria
+│   ├── sends.ts                caso d'uso: ✅ Inviato, registra il suggerimento mandato
+│   ├── crm.ts                  caso d'uso: schede e liste del CRM, lette dalla memoria senza AI
 │   └── conversation.ts         caso d'uso: conversazione incollata, collegata al prospect da risposta o @username
+├── followups/
+│   ├── contact.ts              messaggi di Alex senza risposta, contando quelli segnati come inviati
+│   ├── situation.ts            cosa fare con un prospect: rispondere, scrivere, follow-up dovuto o in attesa, pausa
+│   └── agenda.ts               agenda del giorno: ogni prospect in una sezione, nell'ordine in cui occuparsene
 ├── db/
 │   ├── connection.ts           connessione a MySQL o MariaDB con Kysely e mysql2
 │   ├── migrations.ts           schema del database, applicato in ordine all'avvio
 │   ├── schema.ts               tabelle viste da Kysely
-│   ├── prospect-store.ts       memoria dei prospect su MySQL
+│   ├── prospect-store.ts       memoria dei prospect su MySQL: messaggi, invii, panoramica e liste
 │   ├── generation-log.ts       registro delle generazioni su MySQL
 │   └── spending-ledger.ts      spesa e credito su MySQL
 ├── prospects/
@@ -160,18 +176,20 @@ src/
 │   ├── health.ts               GET /health
 │   └── telegram-webhook.ts     POST /telegram/webhook: secret, parsing, esito dell'update
 ├── telegram/
-│   ├── button-data.ts          dati dei bottoni: versione, azione e tipo dei suggerimenti
+│   ├── button-data.ts          dati dei bottoni: versione, azione, tipo dei suggerimenti o posizione nella lista
 │   ├── button-replies.ts       avvisi dei tap e risposte quando il bot non scrive
-│   ├── client.ts               client della Bot API: tastiere, risposte ai tap, download dei file
+│   ├── client.ts               client della Bot API: tastiere, risposte ai tap, menu dei comandi, download dei file
+│   ├── commands.ts             comandi del menu di Telegram e di /help
 │   ├── costs.ts                riga dei costi e risposta a /credito
 │   ├── files.ts                download degli screenshot con limite di dimensione
 │   ├── ids.ts                  ID utente e chat come tipi distinti
 │   ├── in-flight.ts            bottoni in corso: un doppio tap genera una volta sola
-│   ├── keyboard.ts             tasti Copia e bottoni sotto ogni risposta
+│   ├── keyboard.ts             tasti Copia, ✅ Inviato e bottoni di risposte, schede e liste
+│   ├── lists.ts                /oggi, /followup, /nuovo e /lista
 │   ├── media-group.ts          raggruppa le foto di un album
 │   ├── message-length.ts       lunghezza di un messaggio come la conta Telegram
 │   ├── processed-updates.ts    registro degli update già elaborati
-│   ├── prospect-card.ts        scheda 🔍 di un prospect, dalla memoria
+│   ├── prospect-card.ts        scheda di un prospect: memoria, ultimo contatto, cosa fare e bottoni
 │   ├── replies.ts              testi delle risposte immediate
 │   ├── suggestions.ts          risposta in un solo messaggio: suggerimenti, analisi richiudibile, bottoni
 │   ├── update.ts               parsing degli update: testo, foto, immagini come file, didascalie, tap sui bottoni
@@ -179,8 +197,9 @@ src/
 └── shared/
     ├── errors.ts               errori nei log: nome e codici, mai il messaggio
     ├── logger.ts               interfaccia di logging usata dal codice applicativo
-    └── result.ts               tipo Result per gli errori attesi
-scripts/telegram-webhook.ts     registrazione e stato del webhook
+    ├── result.ts               tipo Result per gli errori attesi
+    └── time.ts                 giorni di calendario in Italia: date, «ieri», «3 giorni fa»
+scripts/telegram-webhook.ts     registrazione e stato del webhook, menu dei comandi
 index.js                        entry file per Hostinger: carica il server compilato in dist/
 compose.yaml                    MariaDB locale per i test del database
 ```

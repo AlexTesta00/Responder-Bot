@@ -67,6 +67,14 @@ Da fare una volta sola in hPanel.
 6. Rispondi a uno dei messaggi del bot su quel prospect incollando il testo di un suo messaggio: anche qui «🧠 Già in memoria», con obiezioni e promesse aperte nel riepilogo.
 7. Tocca 📋 Copia BEST e incolla su Instagram. Tocca 🔄, 🙂 e 🎯: compare un avviso in alto, poi un nuovo messaggio in risposta a quello toccato. 🔍 mostra cosa ricorda il bot.
 8. Manda `/credito` e poi `/credito` seguito dal saldo della Console (per esempio `/credito 25,40`): la riga 💳 delle risposte successive scala da lì.
+9. Tocca ✅ Inviato accanto al 📋 che hai mandato: l'avviso dice da quando il prospect tornerà in /oggi se non risponde. Poi manda `/oggi`, `/followup`, `/nuovo` e `/lista`: i bottoni delle liste aprono la scheda in risposta alla lista, e `@username` di un prospect in memoria apre la sua scheda.
+10. Solo quando Alex lo chiede, registra il menu dei comandi dal tuo PC:
+
+    ```bash
+    npm run telegram:webhook -- commands
+    ```
+
+    Accanto al campo di testo compare il bottone «Menu», con /oggi, /followup, /prospect, /nuovo, /lista, /credito e /help.
 
 ## Diagnostica
 
@@ -86,8 +94,14 @@ Da fare una volta sola in hPanel.
   - `bot messages not linked to the prospect` indica che la risposta è arrivata ma non è stata collegata al prospect: rispondendo a quei messaggi il bot non saprà di chi si tratta. Si può sempre usare @username nella prima riga.
   - `prospect memory saved` riporta lo `stage` deciso dalle regole di transizione, per esempio `GHOSTED` dopo 2 follow-up senza risposta.
 - **Bottoni** nei Runtime logs: `telegram button pressed` riporta `button` e `kind`; `button handled` la risposta (`SUGGESTED`, `PAUSED`, `CARD`, `NOT_LINKED`, `UNAVAILABLE`), e i run `NEW_SUGGESTIONS` la durata della generazione. `button tap not acknowledged` indica che Telegram non ha accettato la conferma del tap: la risposta arriva comunque. `keyboard rejected, answer resent without buttons` indica che Telegram ha rifiutato i bottoni: il testo è arrivato senza.
+- **CRM** nei Runtime logs, sempre senza username:
+  - `crm command handled` riporta il comando (`today`, `follow_ups`, `new_prospects`, `list` o `follow_up_for`) e quanti prospect ha ogni sezione;
+  - `prospect card shown` riporta `prospect_id`, la situazione e cosa ha aperto la scheda (`command`, `mention`, `item` o `button`);
+  - `send recorded` riporta tipo, stile ed esito di un ✅ o di un 💬;
+  - `list items not linked` indica che la lista è arrivata, ma i suoi bottoni risponderanno che l'elenco è vecchio;
+  - `prospects unavailable` indica che il database non ha risposto a una lista.
 - **Costi**: `ai generation completed` riporta anche `cost_micro_usd`, il costo stimato in milionesimi di dollaro; `spending unavailable` indica che spesa e credito non si sono potuti leggere dal database.
-- **phpMyAdmin**, dalla stessa sezione di hPanel, mostra le tabelle `prospects`, `prospect_messages`, `prospect_stage_changes` (lo storico degli stage), `telegram_messages` (quali messaggi del bot riguardano quale prospect), `generation_runs` (con il costo stimato di ogni generazione) e `credit_balances` (i crediti impostati con /credito). Per cancellare la memoria di un prospect basta eliminarne la riga in `prospects`: i suoi messaggi vengono eliminati con lei.
+- **phpMyAdmin**, dalla stessa sezione di hPanel, mostra le tabelle `prospects`, `prospect_messages`, `prospect_stage_changes` (lo storico degli stage), `telegram_messages` (quali messaggi del bot riguardano quale prospect), `generation_runs` (con il costo stimato di ogni generazione), `credit_balances` (i crediti impostati con /credito), `prospect_sends` (i messaggi che Alex ha segnato come inviati, al massimo 50 per prospect) e `telegram_list_items` (quale prospect apre ogni bottone delle liste, per 30 giorni). Per cancellare la memoria di un prospect basta eliminarne la riga in `prospects`: i suoi messaggi vengono eliminati con lei.
 - Se cambi `TELEGRAM_WEBHOOK_SECRET`, aggiornalo sia in hPanel sia nel `.env` locale, poi ripeti `npm run telegram:webhook -- set https://aboutly.site`.
 
 ## Note tecniche

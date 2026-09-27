@@ -10,7 +10,7 @@ La specifica completa (visione, principi, roadmap degli sprint) è in [docs/PROJ
 - `npm run check`: tutti i quality gate (lint, typecheck, test, build). Deve essere verde prima di ogni commit.
 - `npm test`, `npm run test:watch`, `npm run test:coverage`.
 - `npm run format`: applica Prettier.
-- `npm run telegram:webhook -- info`: stato del webhook su Telegram (sola lettura). `-- set <https-url>` lo registra: modifica il bot reale, eseguilo solo quando richiesto.
+- `npm run telegram:webhook -- info`: stato del webhook su Telegram (sola lettura). `-- set <https-url>` lo registra e `-- commands` registra il menu dei comandi: modificano il bot reale, eseguili solo quando richiesto.
 
 ## Stack
 
@@ -42,9 +42,17 @@ Il database è MySQL o MariaDB, quello incluso nell'hosting Hostinger, al posto 
 - Il testo incollato si collega a un prospect solo se Alex risponde a un messaggio del bot su quel prospect o scrive @username nella prima riga: mai per supposizione.
 - I messaggi di Alex senza risposta sono quelli visti dalle analisi più quelli segnati come inviati (`src/followups/contact.ts`): nessuno contato due volte, mai meno di quanto mostrano gli screenshot. Le regole di transizione valgono su questo conteggio, anche per chi ha ricevuto messaggi dopo la sola analisi del profilo.
 
+## Follow-up e liste
+
+- Cosa fare con un prospect (rispondere, primo messaggio, follow-up dovuto o in attesa, pausa, cliente) si calcola in un solo modo per la scheda e per le liste: `standingOf` in `src/followups/situation.ts`.
+- Il primo follow-up è dovuto 3 giorni dopo l'ultimo messaggio di Alex, il secondo 5 giorni dopo il primo, e almeno 7 per chi è BUSY (`FOLLOW_UP_WAIT_DAYS` e `BUSY_WAIT_DAYS`, scelte di Alex). Dal CRM (scheda e `/followup @nome`) il follow-up si scrive solo quando è dovuto; 💬 sotto i suggerimenti resta libero entro i 2 follow-up.
+- I giorni si contano sul calendario di Europe/Rome (`src/shared/time.ts`); nel database gli orari restano in UTC.
+- Le liste (`/oggi`, `/followup`, `/nuovo`, `/lista`) leggono solo la panoramica della memoria (`overview()`): non chiamano mai l'AI. Si genera per un prospect alla volta, su un tap o con `/followup @nome`.
+
 ## Bottoni
 
-- `callback_data` contiene solo versione, azione e tipo dei suggerimenti (per esempio `1:nat:R`): mai id, username o testi. Il prospect si ricava solo dal messaggio toccato, tramite `telegram_messages`; se la memoria non si legge, il bot non genera nulla.
+- `callback_data` contiene solo versione, azione e tipo dei suggerimenti (per esempio `1:nat:R`), più l'indice del suggerimento per ✅ (`1:ok:R:0`) o la posizione nella lista per i bottoni delle liste (`1:o:3`): mai id, username o testi. Il prospect si ricava solo dal messaggio toccato, tramite `telegram_messages`, o dalla posizione nella lista, tramite `telegram_list_items` salvata dopo l'invio; se la memoria non si legge, il bot non genera nulla.
+- Un bottone di una lista apre la scheda in risposta alla lista, senza avviso. Se la lista non si trova, il bot riprova una volta dopo un secondo e poi dice che l'elenco è vecchio; le liste valgono 30 giorni.
 - Ogni tap riapplica le regole di `src/conversations/transition.ts` alla memoria, contando anche i messaggi che Alex ha segnato come inviati. 💬 Follow-up segna come inviato il messaggio toccato prima di applicare le regole (scelta di Alex): mai più permissivo della memoria.
 - I bottoni non toccano la memoria delle analisi: ✅ Inviato e 💬 registrano solo gli invii che Alex dichiara, in `prospect_sends`, con il suggerimento scelto quando si sa. Ogni generazione viene registrata con il suo costo.
 - Nei messaggi del bot `<pre>` è riservato ai suggerimenti: un tap li rilegge dalle entità del messaggio toccato per riscriverli.

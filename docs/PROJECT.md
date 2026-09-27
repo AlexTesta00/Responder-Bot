@@ -2562,7 +2562,7 @@ Il risultato finale deve essere una conversazione che sembra naturale perché na
 Current development phase:
 
 ```text
-Sprint 07 — Telegram UX
+Sprint 08 — Personal CRM
 (implemented; pull request to main, end-to-end test on the
 deployment that follows the merge)
 ```
@@ -2627,8 +2627,8 @@ message of the bot or by @username on the first line, as Alex chose.
 The spec's objections/promises/transitions are covered; follow-up
 scheduling and the prospect list are left to the Personal CRM sprint.)
 
-Sprint 07 — Telegram UX: implemented
-(one message per answer, as Alex chose: suggestions on top with a
+Sprint 07 — Telegram UX ✅
+(deployed on https://aboutly.site; one message per answer, as Alex chose: suggestions on top with a
 copy button each, the analysis in an expandable block, a cost line at
 the bottom; suggestions within 250 characters so each one fits a copy
 button. For a known prospect: 🔄 three more, 🙂 more natural, 🎯 more
@@ -2641,12 +2641,31 @@ holds only version, action and kind. Added at Alex's request: the
 estimated cost of each answer, the month's spending, what is left of
 the monthly limit and of the credit Alex sets with /credito, since no
 API exposes the Console's credit.)
+
+Sprint 08 — Personal CRM: implemented
+(Telegram as the panel of the outreach, read from the memory without
+AI: /oggi lists whom to answer, hottest first, and the follow-ups due;
+/followup lists those due and coming, and /followup @name writes one
+only once it is due; /prospect @name, or @name alone, opens the card
+with the last contact, what to do next and the buttons to do it;
+/nuovo lists the profiles still to contact and /lista every prospect
+by stage. ✅ Inviato beside each copy button records the suggestion
+sent, with its kind, style and text, in prospect_sends, as Alex chose:
+the unanswered count adds the sends to what the screenshots show,
+without counting a message twice. Follow-ups are due 3 days after
+Alex's last message and 5 after the first, 7 for a busy prospect, as
+Alex chose, counting calendar days in Italy; from the card and
+/followup @name they are written only once due, while 💬 under the
+suggestions stays free within the 2 allowed. The list buttons hold
+only their position, mapped to the prospect in telegram_list_items.
+The command menu is registered with npm run telegram:webhook --
+commands.)
 ```
 
 Next milestone:
 
 ```text
-Sprint 08 — Personal CRM
+Sprint 09 — Learning & Analytics
 ```
 
 ## 51. Final project philosophy
