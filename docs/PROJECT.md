@@ -2332,7 +2332,7 @@ numero collegato alla WhatsApp Business Platform (Cloud API)
 webhook su https://aboutly.site, lo stesso server del bot
 ```
 
-Decisione aperta: un numero nuovo dedicato al bot o il numero attuale di Alex.
+Numero: Alex ha un numero business dedicato. All'inizio dello sprint si verifica se resta usabile anche nell'app WhatsApp Business o se passa solo all'API.
 
 #### Funzionalità
 
