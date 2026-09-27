@@ -10,7 +10,11 @@ import {
   type ProspectOverview,
   type ProspectProfile,
 } from "./memory.ts";
-import type { ProspectStore, StoreDependencies } from "./store.ts";
+import {
+  LIST_ITEMS_TTL_DAYS,
+  type ProspectStore,
+  type StoreDependencies,
+} from "./store.ts";
 
 /** Opens an empty store that uses the given clock and identifiers. */
 export type OpenStore = (
@@ -227,6 +231,70 @@ export const describeProspectStore = (name: string, open: OpenStore): void => {
       expect(await store.prospectOfMessage(42, 1_003)).toBe("giulia.bakery");
       expect(await store.prospectOfMessage(42, 1_004)).toBeNull();
       expect(await store.prospectOfMessage(7, 1_001)).toBeNull();
+    });
+
+    describe("list items", () => {
+      const CHAT = 42;
+
+      /** A store with Mario and Giulia, and the ids of both. */
+      const withBoth = async (dependencies: Required<StoreDependencies>) => {
+        const store = await open(dependencies);
+        const mario = await store.save({ profile: MARIO, newMessages: [] });
+        const giulia = await store.save({ profile: GIULIA, newMessages: [] });
+        return { store, mario: mario.prospect.id, giulia: giulia.prospect.id };
+      };
+
+      it("opens the prospect of each item of a list, by its position", async () => {
+        const { store, mario, giulia } = await withBoth(dependencies());
+
+        await store.linkItems(CHAT, 3_001, [giulia, mario]);
+        await store.linkItems(CHAT, 3_002, []);
+
+        expect(await store.prospectOfItem(CHAT, 3_001, 0)).toBe(
+          "giulia.bakery",
+        );
+        expect(await store.prospectOfItem(CHAT, 3_001, 1)).toBe("mariofit");
+        expect(await store.prospectOfItem(CHAT, 3_001, 2)).toBeNull();
+        expect(await store.prospectOfItem(CHAT, 3_002, 0)).toBeNull();
+        expect(await store.prospectOfItem(7, 3_001, 0)).toBeNull();
+        // A list is not a message about a prospect.
+        expect(await store.prospectOfMessage(CHAT, 3_001)).toBeNull();
+      });
+
+      it("keeps each list as it was sent, whatever the lists after it", async () => {
+        const { store, mario, giulia } = await withBoth(dependencies());
+
+        await store.linkItems(CHAT, 3_001, [mario, giulia]);
+        await store.linkItems(CHAT, 3_002, [giulia, mario]);
+
+        expect(await store.prospectOfItem(CHAT, 3_001, 0)).toBe("mariofit");
+        expect(await store.prospectOfItem(CHAT, 3_002, 0)).toBe(
+          "giulia.bakery",
+        );
+      });
+
+      it(`forgets the lists older than ${String(LIST_ITEMS_TTL_DAYS)} days`, async () => {
+        const sent = at(0);
+        let time = sent;
+        const { store, mario } = await withBoth({
+          ...dependencies(),
+          now: () => time,
+        });
+        await store.linkItems(CHAT, 3_001, [mario]);
+        const expiry = sent.getTime() + LIST_ITEMS_TTL_DAYS * 86_400_000;
+
+        time = new Date(expiry);
+        expect(await store.prospectOfItem(CHAT, 3_001, 0)).toBe("mariofit");
+        time = new Date(expiry + 1);
+        expect(await store.prospectOfItem(CHAT, 3_001, 0)).toBeNull();
+
+        // A new list deletes the old ones for good, even for a clock
+        // turned back.
+        await store.linkItems(CHAT, 3_002, [mario]);
+        time = sent;
+        expect(await store.prospectOfItem(CHAT, 3_001, 0)).toBeNull();
+        expect(await store.prospectOfItem(CHAT, 3_002, 0)).toBe("mariofit");
+      });
     });
 
     it("remembers when each side last wrote, as the bot saw it", async () => {

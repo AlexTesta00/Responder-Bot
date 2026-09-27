@@ -60,6 +60,13 @@ export const sendsToLoad = (
     )
     .slice(-MAX_LOADED_SENDS);
 
+/** Days the buttons of a list of the bot keep working. */
+export const LIST_ITEMS_TTL_DAYS = 30;
+
+/** Lists sent before this time are too old to open their items. */
+export const listItemsExpiry = (now: Date): Date =>
+  new Date(now.getTime() - LIST_ITEMS_TTL_DAYS * 86_400_000);
+
 /**
  * Where prospect memory lives: MySQL in production, the process itself in
  * development. Every implementation passes the same contract tests.
@@ -96,6 +103,24 @@ export type ProspectStore = Readonly<{
    * as `load` gives them: what the lists need, without the messages.
    */
   overview: () => Promise<readonly ProspectOverview[]>;
+  /**
+   * Remembers which prospect each item of a list of the bot opens, counting
+   * from 0 as its buttons do, and forgets the lists too old to open.
+   */
+  linkItems: (
+    chatId: number,
+    messageId: number,
+    prospectIds: readonly string[],
+  ) => Promise<void>;
+  /**
+   * The username of the prospect an item of a list opens; null when the
+   * list is unknown or too old.
+   */
+  prospectOfItem: (
+    chatId: number,
+    messageId: number,
+    index: number,
+  ) => Promise<string | null>;
 }>;
 
 /** Time and identifiers, injected so tests can predict them. */
@@ -149,6 +174,13 @@ export const createInMemoryProspectStore = ({
   const links = new Map<string, string>();
   const linkKey = (chatId: number, messageId: number): string =>
     `${String(chatId)}:${String(messageId)}`;
+  // Each item of a list of the bot, to the prospect it opens.
+  const items = new Map<string, Readonly<{ prospectId: string; at: Date }>>();
+  const itemKey = (chatId: number, messageId: number, index: number): string =>
+    `${linkKey(chatId, messageId)}:${String(index)}`;
+  const usernameOf = (prospectId: string | undefined): string | null =>
+    [...memories.values()].find(({ prospect }) => prospect.id === prospectId)
+      ?.prospect.username ?? null;
 
   return {
     load: (username) => {
@@ -194,13 +226,8 @@ export const createInMemoryProspectStore = ({
       }
       return Promise.resolve();
     },
-    prospectOfMessage: (chatId, messageId) => {
-      const prospectId = links.get(linkKey(chatId, messageId));
-      const memory = [...memories.values()].find(
-        ({ prospect }) => prospect.id === prospectId,
-      );
-      return Promise.resolve(memory?.prospect.username ?? null);
-    },
+    prospectOfMessage: (chatId, messageId) =>
+      Promise.resolve(usernameOf(links.get(linkKey(chatId, messageId)))),
     recordSend: ({ chatId, messageId, kind, style, text }) => {
       const key = linkKey(chatId, messageId);
       const prospectId = links.get(key);
@@ -253,5 +280,32 @@ export const createInMemoryProspectStore = ({
           overviewOf(withSends(remembered)),
         ),
       ),
+    linkItems: (chatId, messageId, prospectIds) => {
+      if (prospectIds.length > 0) {
+        const time = now();
+        const expiry = listItemsExpiry(time);
+        for (const [key, { at }] of items) {
+          if (at.getTime() < expiry.getTime()) {
+            items.delete(key);
+          }
+        }
+        prospectIds.forEach((prospectId, index) => {
+          items.set(itemKey(chatId, messageId, index), {
+            prospectId,
+            at: time,
+          });
+        });
+      }
+      return Promise.resolve();
+    },
+    prospectOfItem: (chatId, messageId, index) => {
+      const expiry = listItemsExpiry(now());
+      const item = items.get(itemKey(chatId, messageId, index));
+      return Promise.resolve(
+        item === undefined || item.at.getTime() < expiry.getTime()
+          ? null
+          : usernameOf(item.prospectId),
+      );
+    },
   };
 };

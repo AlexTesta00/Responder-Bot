@@ -31,6 +31,7 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
         "0004_telegram_messages",
         "0005_generation_costs",
         "0006_prospect_sends",
+        "0007_telegram_list_items",
       ]),
     );
     expect(await migrateToLatest(db)).toStrictEqual(ok([]));
@@ -43,6 +44,7 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
       "prospect_sends",
       "prospect_stage_changes",
       "prospects",
+      "telegram_list_items",
       "telegram_messages",
     ]);
   });
@@ -104,6 +106,7 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
         "0004_telegram_messages",
         "0005_generation_costs",
         "0006_prospect_sends",
+        "0007_telegram_list_items",
       ]),
     );
     expect(
@@ -215,6 +218,40 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("migrateToLatest", () => {
     await db.deleteFrom("prospects").execute();
     expect(
       await db.selectFrom("prospect_sends").select("id").execute(),
+    ).toStrictEqual([]);
+  });
+
+  it("keeps one prospect per item of a list, deleted with its prospect", async () => {
+    const db = await freshDatabase();
+    await migrateToLatest(db);
+    const at = new Date("2026-09-27T08:42:00.500Z");
+    await sql`
+      INSERT INTO prospects
+        (id, platform, username, facts, hypotheses, objections, commitments,
+         created_at, updated_at)
+      VALUES
+        ('00000000-0000-4000-8000-000000000001', 'instagram', 'mariofit',
+         '[]', '[]', '[]', '[]', NOW(3), NOW(3))
+    `.execute(db);
+    const item = {
+      chat_id: 42,
+      message_id: 3_001,
+      item_index: 19,
+      prospect_id: "00000000-0000-4000-8000-000000000001",
+      created_at: at,
+    };
+
+    await db.insertInto("telegram_list_items").values(item).execute();
+    await expect(
+      db.insertInto("telegram_list_items").values(item).execute(),
+    ).rejects.toMatchObject({ errno: 1062 });
+    expect(
+      await db.selectFrom("telegram_list_items").selectAll().execute(),
+    ).toStrictEqual([item]);
+
+    await db.deleteFrom("prospects").execute();
+    expect(
+      await db.selectFrom("telegram_list_items").selectAll().execute(),
     ).toStrictEqual([]);
   });
 

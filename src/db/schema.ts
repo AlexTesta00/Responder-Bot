@@ -91,6 +91,15 @@ export interface CreditBalancesTable {
   set_at: Date;
 }
 
+/** Which prospect each button of a list of the bot opens, by its position. */
+export interface TelegramListItemsTable {
+  chat_id: number;
+  message_id: number;
+  item_index: number;
+  prospect_id: string;
+  created_at: Date;
+}
+
 export interface Database {
   prospects: ProspectsTable;
   prospect_messages: ProspectMessagesTable;
@@ -99,4 +108,5 @@ export interface Database {
   generation_runs: GenerationRunsTable;
   credit_balances: CreditBalancesTable;
   prospect_sends: ProspectSendsTable;
+  telegram_list_items: TelegramListItemsTable;
 }

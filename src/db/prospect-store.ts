@@ -31,6 +31,7 @@ import {
   type StoredAt,
 } from "../prospects/memory.ts";
 import {
+  listItemsExpiry,
   sendsToLoad,
   type ProspectStore,
   type StoreDependencies,
@@ -578,4 +579,41 @@ export const createMysqlProspectStore = (
     return { type: "RECORDED", prospectId, username, sentAt };
   },
   overview: () => overview(db),
+  linkItems: async (chatId, messageId, prospectIds) => {
+    if (prospectIds.length === 0) {
+      return;
+    }
+    const time = now();
+    await db
+      .deleteFrom("telegram_list_items")
+      .where("created_at", "<", listItemsExpiry(time))
+      .execute();
+    await db
+      .insertInto("telegram_list_items")
+      .values(
+        prospectIds.map((prospectId, index) => ({
+          chat_id: chatId,
+          message_id: messageId,
+          item_index: index,
+          prospect_id: prospectId,
+          created_at: time,
+        })),
+      )
+      .execute();
+  },
+  prospectOfItem: async (chatId, messageId, index) => {
+    const row = await db
+      .selectFrom("telegram_list_items")
+      .innerJoin("prospects", "prospects.id", "telegram_list_items.prospect_id")
+      .select("prospects.username")
+      .where("telegram_list_items.chat_id", "=", chatId)
+      .where("telegram_list_items.message_id", "=", messageId)
+      .where("telegram_list_items.item_index", "=", index)
+      .where("telegram_list_items.created_at", ">=", listItemsExpiry(now()))
+      .executeTakeFirst();
+    return z
+      .string()
+      .nullable()
+      .parse(row?.username ?? null);
+  },
 });
