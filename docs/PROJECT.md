@@ -2279,6 +2279,10 @@ conversation stage
 eventuale conversione
 ```
 
+#### Da sistemare
+
+Oggi l'ora del tap su ✅ vale come ora dell'invio. Un ✅ toccato dopo che uno screenshot ha già mostrato quel messaggio lo conta due volte; se lo screenshot mostrava anche la risposta del prospect, il prospect esce da "da rispondere". Collegando ogni invio alle risposte, lo sprint lo ricollega anche ai messaggi di Alex visti negli screenshot, confrontando il testo.
+
 #### Esempio
 
 ```text
