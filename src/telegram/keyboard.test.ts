@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { Suggestion } from "../ai/outputs.ts";
-import { actionRows, copyRows, inPairs, isCopyable } from "./keyboard.ts";
+import {
+  actionRows,
+  copyAndSentRows,
+  copyRows,
+  inPairs,
+  isCopyable,
+} from "./keyboard.ts";
 
 const labels = (suggestions: readonly Suggestion[]) =>
   copyRows(suggestions).map((row) => row.map((button) => button.label));
@@ -84,5 +90,39 @@ describe("actionRows", () => {
       label: "💬 Follow-up",
       data: "1:fu:F",
     });
+  });
+});
+
+describe("copyAndSentRows", () => {
+  it("puts ✅ beside the copy button of each suggestion", () => {
+    const rows = copyAndSentRows(
+      [
+        { style: "BEST", text: "a" },
+        { style: "ALTERNATIVE", text: "b" },
+        { style: "DIRECT", text: "x".repeat(300) },
+      ],
+      "REPLIES",
+    );
+
+    expect(rows.map((row) => row.map((button) => button.label))).toStrictEqual([
+      ["📋 Copia BEST", "✅ Inviato"],
+      ["📋 ALTERNATIVE", "✅ Inviato"],
+      // Too long to copy: only ✅, named after the suggestion.
+      ["✅ Inviato DIRECT"],
+    ]);
+    expect(rows.map((row) => row.at(-1))).toMatchObject([
+      { data: "1:ok:R:0" },
+      { data: "1:ok:R:1" },
+      { data: "1:ok:R:2" },
+    ]);
+  });
+
+  it("names each suggestion by its style, whatever its place", () => {
+    const [row] = copyAndSentRows(
+      [{ style: "NATURAL", text: "c" }],
+      "FIRST_MESSAGES",
+    );
+
+    expect(row?.at(-1)).toMatchObject({ data: "1:ok:F:2" });
   });
 });

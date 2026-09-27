@@ -46,9 +46,9 @@ Il database è MySQL o MariaDB, quello incluso nell'hosting Hostinger, al posto 
 
 - `callback_data` contiene solo versione, azione e tipo dei suggerimenti (per esempio `1:nat:R`): mai id, username o testi. Il prospect si ricava solo dal messaggio toccato, tramite `telegram_messages`; se la memoria non si legge, il bot non genera nulla.
 - Ogni tap riapplica le regole di `src/conversations/transition.ts` alla memoria, contando anche i messaggi che Alex ha segnato come inviati. 💬 Follow-up segna come inviato il messaggio toccato prima di applicare le regole (scelta di Alex): mai più permissivo della memoria.
-- I bottoni non toccano la memoria delle analisi: registrano solo gli invii che Alex dichiara, in `prospect_sends`. Ogni generazione viene registrata con il suo costo.
+- I bottoni non toccano la memoria delle analisi: ✅ Inviato e 💬 registrano solo gli invii che Alex dichiara, in `prospect_sends`, con il suggerimento scelto quando si sa. Ogni generazione viene registrata con il suo costo.
 - Nei messaggi del bot `<pre>` è riservato ai suggerimenti: un tap li rilegge dalle entità del messaggio toccato per riscriverli.
-- Il risultato di un tap arriva come nuovo messaggio in risposta a quello toccato, collegato al prospect. Il tap si conferma subito (`answerCallbackQuery`), prima di leggere la memoria o chiamare l'AI, e non viene mai fatto ripetere a Telegram.
+- Il risultato di un tap arriva come nuovo messaggio in risposta a quello toccato, collegato al prospect. Il tap si conferma subito (`answerCallbackQuery`), prima di leggere la memoria o chiamare l'AI, e non viene mai fatto ripetere a Telegram. Fa eccezione ✅, che si conferma dopo aver registrato l'invio, con l'esito: l'avviso non dice mai più di quanto è stato fatto.
 - Il webhook è iscritto a `message` e `callback_query` (`ALLOWED_UPDATES` in `src/telegram/update.ts`).
 
 ## Costi

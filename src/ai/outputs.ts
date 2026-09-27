@@ -133,6 +133,35 @@ export const SUGGESTION_KINDS = [
 
 export type SuggestionKind = (typeof SUGGESTION_KINDS)[number];
 
+/** The styles of each kind of suggestions, in the order they are shown. */
+export const KIND_STYLES: Readonly<
+  Record<
+    SuggestionKind,
+    readonly [SuggestionStyle, SuggestionStyle, SuggestionStyle]
+  >
+> = {
+  FIRST_MESSAGES: ["BEST", "CURIOSITY", "NATURAL"],
+  REPLIES: ["BEST", "ALTERNATIVE", "DIRECT"],
+  FOLLOW_UPS: ["BEST", "ALTERNATIVE", "DIRECT"],
+};
+
+/** The position of a suggestion among those of its kind, 0 to 2. */
+export type SuggestionIndex = 0 | 1 | 2;
+
+export const indexOfStyle = (
+  kind: SuggestionKind,
+  style: SuggestionStyle,
+): SuggestionIndex | null => {
+  const [first, second, third] = KIND_STYLES[kind];
+  if (style === first) {
+    return 0;
+  }
+  if (style === second) {
+    return 1;
+  }
+  return style === third ? 2 : null;
+};
+
 /** New suggestions written from the memory, with a note when there are none. */
 export type NewSuggestions = Readonly<{
   suggestions: readonly Suggestion[];

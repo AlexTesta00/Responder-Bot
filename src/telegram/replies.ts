@@ -11,7 +11,7 @@ export type InstantInput = Exclude<
 >;
 
 const BUTTONS =
-  "Sotto ogni risposta trovi i bottoni: 📋 copia, 🔄 altre 3, 🙂 più naturale, 🎯 più diretto, 💬 follow-up (quando il tuo messaggio non ha avuto risposta), 🔍 cosa ricordo del prospect.";
+  "Sotto ogni risposta trovi i bottoni: 📋 copia, ✅ inviato (toccalo quando mandi quel messaggio: così so chi aspetta una risposta e quando proporti un follow-up), 🔄 altre 3, 🙂 più naturale, 🎯 più diretto, 💬 follow-up (quando il tuo messaggio non ha avuto risposta), 🔍 cosa ricordo del prospect.";
 
 const START = [
   "Ciao! 👋 Sono il tuo copilota per l'outreach su Instagram.",
@@ -20,7 +20,7 @@ const START = [
   "• screenshot del profilo di un prospect, e ti propongo tre primi messaggi;",
   "• screenshot di una conversazione, o il testo dei suoi messaggi, e ti dico a che punto è e ti propongo tre risposte.",
   "",
-  "Tu scegli, correggi se vuoi e invii: io non scrivo mai a nessuno.",
+  "Tu scegli, correggi se vuoi e invii: io non scrivo mai a nessuno. Quando hai inviato, tocca ✅ accanto al messaggio che hai mandato.",
   "",
   BUTTONS,
   "",

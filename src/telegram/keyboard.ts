@@ -1,7 +1,11 @@
 // The buttons under an answer: a copy button for each suggestion, the best
 // one first and alone, then at most two per row so that the labels fit on a
 // phone.
-import type { Suggestion, SuggestionKind } from "../ai/outputs.ts";
+import {
+  indexOfStyle,
+  type Suggestion,
+  type SuggestionKind,
+} from "../ai/outputs.ts";
 import type { AnswerAction } from "../copilot/buttons.ts";
 import { encodeButton, type ButtonPress } from "./button-data.ts";
 import type { InlineButton, InlineKeyboard } from "./client.ts";
@@ -55,6 +59,33 @@ export const actionRows = (kind: SuggestionKind): InlineKeyboard => {
       ]
     : [[more, natural], [direct, followUp], [analyzeButton(kind)]];
 };
+
+/**
+ * For a prospect the bot remembers, one row per suggestion: its copy
+ * button and ✅ to mark it as sent. A suggestion too long to copy keeps
+ * only ✅, named after its style.
+ */
+export const copyAndSentRows = (
+  suggestions: readonly Suggestion[],
+  kind: SuggestionKind,
+): InlineKeyboard =>
+  suggestions.flatMap((suggestion) => {
+    const index = indexOfStyle(kind, suggestion.style);
+    const copy = isCopyable(suggestion.text) ? [copyButton(suggestion)] : [];
+    const sent =
+      index === null
+        ? []
+        : [
+            callback(
+              copy.length === 0
+                ? `✅ Inviato ${suggestion.style}`
+                : "✅ Inviato",
+              { type: "SENT", kind, index },
+            ),
+          ];
+    const row = [...copy, ...sent];
+    return row.length === 0 ? [] : [row];
+  });
 
 /** Copy buttons for the suggestions short enough to be copied. */
 export const copyRows = (

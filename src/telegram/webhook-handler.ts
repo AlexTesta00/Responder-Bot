@@ -24,12 +24,14 @@ import {
 } from "../inputs/images.ts";
 import type { Logger } from "../shared/logger.ts";
 import type { Result } from "../shared/result.ts";
+import type { MarkSent, SentPress } from "../copilot/sends.ts";
 import {
   BUSY_NOTICE,
   EXPIRED_BUTTON_NOTICE,
   MEMORY_UNAVAILABLE_REPLY,
   NOT_LINKED_REPLY,
   pressNotice,
+  sentNotice,
 } from "./button-replies.ts";
 import {
   isKeyboardRejection,
@@ -99,6 +101,9 @@ export type IgnoredReason =
   /** A second tap while the first one is still being answered. */
   | "BUSY";
 
+/** The button a tap pressed, as the logs name it. */
+export type PressName = ButtonAction | "SENT";
+
 export type UpdateOutcome =
   | Readonly<{ type: "REPLIED"; input: RepliedInput["type"] }>
   /** Handed to the AI engine: the answer follows in the background. */
@@ -106,7 +111,7 @@ export type UpdateOutcome =
   /** An album photo, answered together with the rest of its album. */
   | Readonly<{ type: "COLLECTED" }>
   /** A button tap: the answer follows in the background. */
-  | Readonly<{ type: "PRESSED"; button: ButtonAction; kind: SuggestionKind }>
+  | Readonly<{ type: "PRESSED"; button: PressName; kind: SuggestionKind }>
   | Readonly<{ type: "IGNORED"; reason: IgnoredReason }>
   | Readonly<{ type: "FAILED"; retryable: boolean; error: TelegramError }>;
 
@@ -128,6 +133,8 @@ export type UpdateHandlerDependencies = Readonly<{
   /** A button under an answer, answered from the prospect's memory. */
   pressButton: PressButton;
   answerCallbackQuery: TelegramClient["answerCallbackQuery"];
+  /** ✅: marks the suggestion Alex sent from a message of the bot. */
+  markSent: MarkSent;
   /** The buttons being answered, to answer a double tap once. */
   inFlight: InFlight;
   /** Remembers which prospect the messages of the bot are about. */
@@ -137,6 +144,7 @@ export type UpdateHandlerDependencies = Readonly<{
   /** The monthly spend limit set on the Console, in millionths of a dollar. */
   monthlyLimitMicroUsd: number | null;
   schedule: Schedule;
+  now: () => Date;
 }>;
 
 type AlbumPhoto = Readonly<{
@@ -200,10 +208,12 @@ export const createUpdateHandler = ({
   pressButton,
   answerCallbackQuery,
   inFlight,
+  markSent,
   linkMessages,
   spending,
   monthlyLimitMicroUsd,
   schedule,
+  now,
 }: UpdateHandlerDependencies): UpdateHandler => {
   // The AI engine answers after Telegram has been acknowledged, so its
   // failures cannot be retried by Telegram: they are explained or logged.
@@ -552,6 +562,37 @@ export const createUpdateHandler = ({
     }
   };
 
+  /**
+   * Answers ✅: the send is recorded first, then the tap is acknowledged
+   * with what happened, so that the notice never says more than was done.
+   */
+  const answerSent = async (
+    queryId: string,
+    tapped: TappedBotMessage,
+    press: SentPress,
+    key: string,
+    log: Logger,
+  ): Promise<void> => {
+    try {
+      const marked = await markSent(
+        press,
+        {
+          chatId: tapped.chatId,
+          messageId: tapped.messageId,
+          suggestions: tapped.suggestions,
+        },
+        log,
+      );
+      log.info(
+        { button: "SENT", kind: press.kind, response: marked.type },
+        "button handled",
+      );
+      await acknowledge(queryId, sentNotice(marked, now()), log);
+    } finally {
+      inFlight.finish(key);
+    }
+  };
+
   /** What can be decided about a tap without waiting for anything. */
   const handleCallback = (
     updateId: number,
@@ -575,13 +616,21 @@ export const createUpdateHandler = ({
       runInBackground(acknowledge(queryId, EXPIRED_BUTTON_NOTICE, log), log);
       return ignored("INVALID_BUTTON");
     }
-    const key = `${String(message.chatId)}:${String(message.messageId)}`;
+    const messageKey = `${String(message.chatId)}:${String(message.messageId)}`;
+    // ✅ does not wait for a generation under the same message.
+    const key = press.type === "SENT" ? `${messageKey}:ok` : messageKey;
     if (!inFlight.start(key)) {
       runInBackground(acknowledge(queryId, BUSY_NOTICE, log), log);
       return ignored("BUSY");
     }
-    runInBackground(answerPress(queryId, message, press, key, log), log);
-    return { type: "PRESSED", button: press.action, kind: press.kind };
+    switch (press.type) {
+      case "ANSWER":
+        runInBackground(answerPress(queryId, message, press, key, log), log);
+        return { type: "PRESSED", button: press.action, kind: press.kind };
+      case "SENT":
+        runInBackground(answerSent(queryId, message, press, key, log), log);
+        return { type: "PRESSED", button: "SENT", kind: press.kind };
+    }
   };
 
   const albums = createMediaGroupCollector<AlbumPhoto>({

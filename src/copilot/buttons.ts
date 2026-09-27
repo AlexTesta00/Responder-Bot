@@ -3,11 +3,11 @@
 // suggestions or show what the bot remembers. Buttons observe nothing new,
 // so they never change the memory.
 import type { AiEngine, Generation, SuggestionAction } from "../ai/engine.ts";
-import type {
-  NewSuggestions,
-  Suggestion,
-  SuggestionKind,
-  SuggestionStyle,
+import {
+  KIND_STYLES,
+  type NewSuggestions,
+  type Suggestion,
+  type SuggestionKind,
 } from "../ai/outputs.ts";
 import { runOf, totalCost, type GenerationLog } from "../ai/runs.ts";
 import type { StageChange } from "../conversations/domain.ts";
@@ -91,18 +91,12 @@ export type ButtonDependencies = Readonly<{
   generations: GenerationLog;
 }>;
 
-const STYLES: Readonly<Record<SuggestionKind, readonly SuggestionStyle[]>> = {
-  FIRST_MESSAGES: ["BEST", "CURIOSITY", "NATURAL"],
-  REPLIES: ["BEST", "ALTERNATIVE", "DIRECT"],
-  FOLLOW_UPS: ["BEST", "ALTERNATIVE", "DIRECT"],
-};
-
 /** The suggestions shown, when the message still holds all three. */
-const suggestionsShown = (
+export const suggestionsShown = (
   kind: SuggestionKind,
   texts: readonly string[],
 ): readonly Suggestion[] | null => {
-  const styles = STYLES[kind];
+  const styles = KIND_STYLES[kind];
   if (texts.length !== styles.length) {
     return null;
   }

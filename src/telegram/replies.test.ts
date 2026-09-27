@@ -30,7 +30,7 @@ describe("replyTo", () => {
   });
 
   it.each(["/start", "/help"])("explains the buttons on %s", (command) => {
-    expect(replyToText(command)).toContain("📋 copia, 🔄 altre 3");
+    expect(replyToText(command)).toContain("📋 copia, ✅ inviato");
   });
 
   it("points unknown commands to /help", () => {

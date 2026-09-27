@@ -495,8 +495,9 @@ describe("buttons under an answer", () => {
         }),
       ),
     ).toStrictEqual([
-      ["📋 Copia BEST"],
-      ["📋 CURIOSITY", "📋 NATURAL"],
+      ["📋 Copia BEST", "✅ Inviato"],
+      ["📋 CURIOSITY", "✅ Inviato"],
+      ["📋 NATURAL", "✅ Inviato"],
       ["🔄 Altre 3", "🙂 Più naturale"],
       ["🎯 Più diretto", "💬 Follow-up"],
       ["🔍 Analizza"],
@@ -511,7 +512,7 @@ describe("buttons under an answer", () => {
       footer: null,
     });
 
-    expect(keyboard?.[2]?.[0]).toStrictEqual({
+    expect(keyboard?.[3]?.[0]).toStrictEqual({
       type: "CALLBACK",
       label: "🔄 Altre 3",
       data: "1:more:R",
@@ -612,8 +613,9 @@ describe("newSuggestionsAnswer", () => {
     expect(
       keyboard?.map((row) => row.map((button) => button.label)),
     ).toStrictEqual([
-      ["📋 Copia BEST"],
-      ["📋 ALTERNATIVE", "📋 DIRECT"],
+      ["📋 Copia BEST", "✅ Inviato"],
+      ["📋 ALTERNATIVE", "✅ Inviato"],
+      ["📋 DIRECT", "✅ Inviato"],
       ["🔄 Altre 3", "🙂 Più naturale"],
       ["🎯 Più diretto", "💬 Follow-up"],
       ["🔍 Analizza"],
@@ -642,7 +644,7 @@ describe("newSuggestionsAnswer", () => {
     );
 
     expect(
-      keyboard?.slice(2).map((row) => row.map((button) => button.label)),
+      keyboard?.slice(3).map((row) => row.map((button) => button.label)),
     ).toStrictEqual([
       ["🔄 Altre 3", "🙂 Più naturale"],
       ["🎯 Più diretto", "🔍 Analizza"],

@@ -23,6 +23,7 @@ import {
 } from "./config/env.ts";
 import { createButtonActions } from "./copilot/buttons.ts";
 import { createConversationAnalyst } from "./copilot/conversation.ts";
+import { createSendMarking } from "./copilot/sends.ts";
 import { createScreenshotsAnalyst } from "./copilot/screenshots.ts";
 import { createDatabase } from "./db/connection.ts";
 import { createMysqlGenerationLog } from "./db/generation-log.ts";
@@ -130,10 +131,12 @@ const start = async (env: Env): Promise<void> => {
         pressButton: createButtonActions({ ai, prospects, generations }),
         answerCallbackQuery: telegram.answerCallbackQuery,
         inFlight: createInFlight(),
+        markSent: createSendMarking({ prospects, now: () => new Date() }),
         linkMessages: prospects.linkMessages,
         spending,
         monthlyLimitMicroUsd: monthlyLimitOf(env),
         schedule: scheduleWithTimers,
+        now: () => new Date(),
       }),
     },
   });

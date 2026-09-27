@@ -13,7 +13,13 @@ import type { MemoryOutcome } from "../copilot/memory.ts";
 import type { Commitment } from "../conversations/domain.ts";
 import { MAX_FOLLOW_UPS, type Pause } from "../conversations/transition.ts";
 import type { InlineKeyboard } from "./client.ts";
-import { actionRows, analyzeButton, copyRows, isCopyable } from "./keyboard.ts";
+import {
+  actionRows,
+  analyzeButton,
+  copyAndSentRows,
+  copyRows,
+  isCopyable,
+} from "./keyboard.ts";
 import { fitsInMessage } from "./message-length.ts";
 
 /** Makes text safe to embed in a Telegram HTML message. */
@@ -295,7 +301,9 @@ const suggestionRows = (
   if (suggestions.length === 0) {
     return linked ? [[analyzeButton(kind)]] : [];
   }
-  return [...copyRows(suggestions), ...(linked ? actionRows(kind) : [])];
+  return linked
+    ? [...copyAndSentRows(suggestions, kind), ...actionRows(kind)]
+    : copyRows(suggestions);
 };
 
 const withRows = (html: string, rows: InlineKeyboard): Presented => ({

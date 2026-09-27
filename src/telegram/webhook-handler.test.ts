@@ -10,6 +10,7 @@ import type {
 import type { PromptMode } from "../ai/prompts/modes.ts";
 import { createInMemorySpending, type SpendingLedger } from "../ai/spending.ts";
 import { createButtonActions } from "../copilot/buttons.ts";
+import { createSendMarking } from "../copilot/sends.ts";
 import { createConversationAnalyst } from "../copilot/conversation.ts";
 import { createScreenshotsAnalyst } from "../copilot/screenshots.ts";
 import type { DownloadedImage, DownloadImage } from "../inputs/images.ts";
@@ -300,6 +301,8 @@ const setupWith = (
     analyzeScreenshots: createScreenshotsAnalyst(copilot),
     replyToConversation: createConversationAnalyst(copilot),
     pressButton: createButtonActions(copilot),
+    markSent: createSendMarking({ prospects, now: () => new Date() }),
+    now: () => new Date(),
     answerCallbackQuery,
     inFlight: createInFlight(),
     linkMessages: prospects.linkMessages,
@@ -1087,7 +1090,7 @@ describe("buttons", () => {
     expect(
       options?.keyboard?.map((row) => row.map((button) => button.label)),
     ).toStrictEqual([
-      ["📋 Copia BEST"],
+      ["📋 Copia BEST", "✅ Inviato"],
       ["🔄 Altre 3", "🙂 Più naturale"],
       ["🎯 Più diretto", "💬 Follow-up"],
       ["🔍 Analizza"],
@@ -1355,6 +1358,59 @@ describe("buttons", () => {
     expect(sendMessage.mock.calls[0]?.[1]).toContain(
       "Non so più di quale prospect parla questo messaggio",
     );
+  });
+
+  it("marks the suggestion sent with ✅, then says so in the notice", async () => {
+    const {
+      handleUpdate,
+      sendMessage,
+      answerCallbackQuery,
+      prospects,
+      suggestAgain,
+    } = await answered();
+    const record = vi.spyOn(prospects, "recordSend");
+
+    const outcome = await handleUpdate(tapOn(1_001, "1:ok:F:0"));
+
+    expect(outcome).toStrictEqual({
+      type: "PRESSED",
+      button: "SENT",
+      kind: "FIRST_MESSAGES",
+    });
+    await vi.waitFor(() => {
+      expect(answerCallbackQuery).toHaveBeenCalledOnce();
+    });
+    // Acknowledged once written, with what comes next.
+    expect(answerCallbackQuery.mock.invocationCallOrder[0]).toBeGreaterThan(
+      record.mock.invocationCallOrder[0] ?? Infinity,
+    );
+    expect(answerCallbackQuery.mock.calls[0]?.[1]).toMatch(
+      /^✅ Segnato come inviato\. Se non risponde, te lo ricordo in \/oggi da /,
+    );
+    expect((await prospects.load("mariofit"))?.contact.sends).toMatchObject([
+      { kind: "FIRST_MESSAGES", style: "BEST", text: SHOWN[0] },
+    ]);
+    // Only the notice: no message in the chat, no generation.
+    expect(sendMessage).toHaveBeenCalledOnce();
+    expect(suggestAgain).not.toHaveBeenCalled();
+  });
+
+  it("does not make ✅ wait for a generation under the same message", async () => {
+    const { handleUpdate, suggestAgain, answerCallbackQuery } =
+      await answered();
+    const slow = Promise.withResolvers<Generation<NewSuggestions>>();
+    suggestAgain.mockReturnValueOnce(slow.promise);
+
+    await handleUpdate(tapOn(1_001, "1:more:F"));
+    const sent = await handleUpdate(
+      tapOn(1_001, "1:ok:F:1", { updateId: 301 }),
+    );
+    await vi.waitFor(() => {
+      expect(answerCallbackQuery).toHaveBeenCalledTimes(2);
+    });
+    slow.resolve(generation("NEW_SUGGESTIONS", ok(NEW_REPLIES)));
+
+    expect(sent).toMatchObject({ type: "PRESSED", button: "SENT" });
   });
 
   it("keeps suggestions and usernames out of the logs of taps", async () => {

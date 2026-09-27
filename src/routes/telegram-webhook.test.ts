@@ -257,6 +257,8 @@ describe("webhook workflow", () => {
           pressButton: notExpected,
           answerCallbackQuery: notExpected,
           inFlight: createInFlight(),
+          markSent: notExpected,
+          now: () => new Date(),
           linkMessages: notExpected,
           spending: { spending: notExpected, setCredit: notExpected },
           monthlyLimitMicroUsd: null,

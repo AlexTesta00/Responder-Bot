@@ -60,3 +60,39 @@ describe("button data", () => {
     expect(decodeButton(data)).toBeNull();
   });
 });
+
+describe("✅ button data", () => {
+  const SENT = (["FIRST_MESSAGES", "REPLIES", "FOLLOW_UPS"] as const).flatMap(
+    (kind) =>
+      ([0, 1, 2, null] as const).map((index) => ({
+        type: "SENT" as const,
+        kind,
+        index,
+      })),
+  );
+
+  it.each(SENT)("reads back ✅ $index under $kind", (press) => {
+    expect(decodeButton(encodeButton(press))).toStrictEqual(press);
+    expect(Buffer.byteLength(encodeButton(press))).toBeLessThanOrEqual(8);
+  });
+
+  it("names the suggestion by its place, or none from the card", () => {
+    expect(encodeButton({ type: "SENT", kind: "REPLIES", index: 2 })).toBe(
+      "1:ok:R:2",
+    );
+    expect(
+      encodeButton({ type: "SENT", kind: "FIRST_MESSAGES", index: null }),
+    ).toBe("1:ok:F");
+  });
+
+  it.each([
+    "1:ok",
+    "1:ok:X:0",
+    "1:ok:R:3",
+    "1:ok:R:-1",
+    "1:ok:R:2:0",
+    "1:ok:R:",
+  ])("does not read %j", (data) => {
+    expect(decodeButton(data)).toBeNull();
+  });
+});
