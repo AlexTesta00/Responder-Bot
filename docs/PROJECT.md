@@ -1361,7 +1361,7 @@ Hostinger
 
 GitHub non deve necessariamente conoscere tutti i secret dell'applicazione.
 
-La strategia definitiva verrà scelta nello Sprint 10 in base al metodo di deployment utilizzato.
+La strategia definitiva verrà scelta nello Sprint 09 in base al metodo di deployment utilizzato.
 
 ## 35. `.env.example`
 
@@ -2158,74 +2158,9 @@ Summary:
 
 Il sistema deve identificare conversazioni per cui avrebbe senso un follow-up senza trasformarsi in uno strumento di spam.
 
-### Sprint 09 — Learning & Analytics
+### Sprint 09 — Production & Hardening
 
-#### Obiettivo
-
-Utilizzare i dati reali di outreach per capire quali approcci funzionano meglio.
-
-Non verrà implementato un sistema di machine learning complesso.
-
-Inizialmente verranno raccolti segnali semplici.
-
-#### Dati
-
-```text
-messaggio scelto
-
-stile
-
-settore prospect
-
-risposta ricevuta
-
-tempo alla risposta
-
-conversation stage
-
-eventuale conversione
-```
-
-#### Esempio
-
-```text
-Personal Trainer
-
-Curiosity approach:
-48% response rate
-
-Natural approach:
-41%
-
-Direct approach:
-26%
-```
-
-Questi numeri saranno basati esclusivamente sui dati reali raccolti.
-
-#### Possibili comandi
-
-```text
-/stats
-
-/performance
-```
-
-#### Obiettivo futuro
-
-Consentire all'agente di utilizzare i risultati storici come segnale aggiuntivo:
-
-```text
-generic best practice
-        +
-prospect context
-        +
-Alex historical performance
-```
-
-senza sacrificare la personalizzazione del singolo caso.
-
-### Sprint 10 — Production & Hardening
+Anticipato prima di Learning & Analytics su richiesta di Alex: intanto i ✅ raccolgono i dati su cui si basano le statistiche, e backup e avvisi sono pronti prima di WhatsApp.
 
 #### Obiettivo
 
@@ -2315,6 +2250,73 @@ GET /health/ready
 `/health` indica che il processo è vivo.
 
 `/health/ready` indica che le dipendenze critiche necessarie per servire richieste sono disponibili.
+
+### Sprint 10 — Learning & Analytics
+
+#### Obiettivo
+
+Utilizzare i dati reali di outreach per capire quali approcci funzionano meglio.
+
+Non verrà implementato un sistema di machine learning complesso.
+
+Inizialmente verranno raccolti segnali semplici.
+
+#### Dati
+
+```text
+messaggio scelto
+
+stile
+
+settore prospect
+
+risposta ricevuta
+
+tempo alla risposta
+
+conversation stage
+
+eventuale conversione
+```
+
+#### Esempio
+
+```text
+Personal Trainer
+
+Curiosity approach:
+48% response rate
+
+Natural approach:
+41%
+
+Direct approach:
+26%
+```
+
+Questi numeri saranno basati esclusivamente sui dati reali raccolti.
+
+#### Possibili comandi
+
+```text
+/stats
+
+/performance
+```
+
+#### Obiettivo futuro
+
+Consentire all'agente di utilizzare i risultati storici come segnale aggiuntivo:
+
+```text
+generic best practice
+        +
+prospect context
+        +
+Alex historical performance
+```
+
+senza sacrificare la personalizzazione del singolo caso.
 
 ### Sprint 11 — WhatsApp Channel
 
@@ -2784,7 +2786,9 @@ commands.)
 Next milestone:
 
 ```text
-Sprint 09 — Learning & Analytics
+Sprint 09 — Production & Hardening
+(moved before Learning & Analytics, as Alex chose: the statistics
+of Sprint 10 then start from real data)
 ```
 
 ## 51. Final project philosophy
