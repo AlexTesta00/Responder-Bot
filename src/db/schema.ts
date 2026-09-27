@@ -69,11 +69,35 @@ export interface GenerationRunsTable {
   created_at: Date;
 }
 
+/** A message Alex marked as sent, from the suggestions of a bot message. */
+export interface ProspectSendsTable {
+  id: Generated<number>;
+  prospect_id: string;
+  /** The message of the bot whose suggestion Alex sent. */
+  chat_id: number;
+  message_id: number;
+  /** FIRST_MESSAGES, REPLIES or FOLLOW_UPS. */
+  kind: string;
+  /** The suggestion's style, when Alex said which one. */
+  style: string | null;
+  body: string | null;
+  sent_at: Date;
+}
+
 /** Each credit Alex read on the Claude Console; the last one counts. */
 export interface CreditBalancesTable {
   id: Generated<number>;
   amount_micro_usd: number;
   set_at: Date;
+}
+
+/** Which prospect each button of a list of the bot opens, by its position. */
+export interface TelegramListItemsTable {
+  chat_id: number;
+  message_id: number;
+  item_index: number;
+  prospect_id: string;
+  created_at: Date;
 }
 
 export interface Database {
@@ -83,4 +107,6 @@ export interface Database {
   telegram_messages: TelegramMessagesTable;
   generation_runs: GenerationRunsTable;
   credit_balances: CreditBalancesTable;
+  prospect_sends: ProspectSendsTable;
+  telegram_list_items: TelegramListItemsTable;
 }

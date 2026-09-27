@@ -79,6 +79,57 @@ describe.skipIf(TEST_MYSQL_URL === undefined)("MySQL", () => {
 
       await expect(store.load("mariofit")).rejects.toThrow();
     });
+
+    it("keeps the latest 50 sends of a prospect", async () => {
+      const db = await database();
+      const store = createMysqlProspectStore(db);
+      const memory = await store.save({ profile, newMessages: [] });
+      const messageIds = Array.from({ length: 52 }, (_, index) => index + 1);
+      await store.linkMessages(memory.prospect.id, 42, messageIds);
+
+      for (const messageId of messageIds) {
+        await store.recordSend({
+          chatId: 42,
+          messageId,
+          kind: "REPLIES",
+          style: null,
+          text: null,
+        });
+      }
+
+      const kept = await db
+        .selectFrom("prospect_sends")
+        .select("message_id")
+        .orderBy("id")
+        .execute();
+      expect(kept.map((row) => row.message_id)).toStrictEqual(
+        messageIds.slice(2),
+      );
+    });
+
+    it("settles two taps on the same message without an error", async () => {
+      const db = await database();
+      const store = createMysqlProspectStore(db);
+      const memory = await store.save({ profile, newMessages: [] });
+      await store.linkMessages(memory.prospect.id, 42, [1_001]);
+      const send = {
+        chatId: 42,
+        messageId: 1_001,
+        kind: "REPLIES",
+        style: "BEST",
+        text: "Ti mando un esempio?",
+      } as const;
+
+      const outcomes = await Promise.all([
+        store.recordSend(send),
+        store.recordSend(send),
+      ]);
+
+      expect(outcomes.map(({ type }) => type).toSorted()).toStrictEqual([
+        "RECORDED",
+        "UNCHANGED",
+      ]);
+    });
   });
 
   describe("createMysqlGenerationLog", () => {

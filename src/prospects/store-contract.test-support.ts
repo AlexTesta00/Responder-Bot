@@ -3,12 +3,18 @@
 import { describe, expect, it } from "vitest";
 
 import type { ConversationMessage } from "../conversations/domain.ts";
+import { unansweredMessages } from "../conversations/transition.ts";
 import {
   MAX_STORED_MESSAGES,
   type MemoryUpdate,
+  type ProspectOverview,
   type ProspectProfile,
 } from "./memory.ts";
-import type { ProspectStore, StoreDependencies } from "./store.ts";
+import {
+  LIST_ITEMS_TTL_DAYS,
+  type ProspectStore,
+  type StoreDependencies,
+} from "./store.ts";
 
 /** Opens an empty store that uses the given clock and identifiers. */
 export type OpenStore = (
@@ -102,6 +108,12 @@ export const describeProspectStore = (name: string, open: OpenStore): void => {
           updatedAt: at(1),
         },
         messages,
+        contact: {
+          lastProspectMessageAt: at(1),
+          lastAlexMessageAt: at(1),
+          lastMessageAt: at(1),
+          sends: [],
+        },
       };
       expect(saved).toStrictEqual(expected);
       expect(await store.load("mariofit")).toStrictEqual(expected);
@@ -166,6 +178,12 @@ export const describeProspectStore = (name: string, open: OpenStore): void => {
           updatedAt: at(2),
         },
         messages: [alex("Ciao Giulia!")],
+        contact: {
+          lastProspectMessageAt: null,
+          lastAlexMessageAt: at(2),
+          lastMessageAt: at(2),
+          sends: [],
+        },
       });
       expect(mario?.prospect.id).toBe("00000000-0000-4000-8000-000000000001");
       expect(mario?.messages).toStrictEqual([
@@ -213,6 +231,398 @@ export const describeProspectStore = (name: string, open: OpenStore): void => {
       expect(await store.prospectOfMessage(42, 1_003)).toBe("giulia.bakery");
       expect(await store.prospectOfMessage(42, 1_004)).toBeNull();
       expect(await store.prospectOfMessage(7, 1_001)).toBeNull();
+    });
+
+    describe("list items", () => {
+      const CHAT = 42;
+
+      /** A store with Mario and Giulia, and the ids of both. */
+      const withBoth = async (dependencies: Required<StoreDependencies>) => {
+        const store = await open(dependencies);
+        const mario = await store.save({ profile: MARIO, newMessages: [] });
+        const giulia = await store.save({ profile: GIULIA, newMessages: [] });
+        return { store, mario: mario.prospect.id, giulia: giulia.prospect.id };
+      };
+
+      it("opens the prospect of each item of a list, by its position", async () => {
+        const { store, mario, giulia } = await withBoth(dependencies());
+
+        await store.linkItems(CHAT, 3_001, [giulia, mario]);
+        await store.linkItems(CHAT, 3_002, []);
+
+        expect(await store.prospectOfItem(CHAT, 3_001, 0)).toBe(
+          "giulia.bakery",
+        );
+        expect(await store.prospectOfItem(CHAT, 3_001, 1)).toBe("mariofit");
+        expect(await store.prospectOfItem(CHAT, 3_001, 2)).toBeNull();
+        expect(await store.prospectOfItem(CHAT, 3_002, 0)).toBeNull();
+        expect(await store.prospectOfItem(7, 3_001, 0)).toBeNull();
+        // A list is not a message about a prospect.
+        expect(await store.prospectOfMessage(CHAT, 3_001)).toBeNull();
+      });
+
+      it("keeps each list as it was sent, whatever the lists after it", async () => {
+        const { store, mario, giulia } = await withBoth(dependencies());
+
+        await store.linkItems(CHAT, 3_001, [mario, giulia]);
+        await store.linkItems(CHAT, 3_002, [giulia, mario]);
+
+        expect(await store.prospectOfItem(CHAT, 3_001, 0)).toBe("mariofit");
+        expect(await store.prospectOfItem(CHAT, 3_002, 0)).toBe(
+          "giulia.bakery",
+        );
+      });
+
+      it(`forgets the lists older than ${String(LIST_ITEMS_TTL_DAYS)} days`, async () => {
+        const sent = at(0);
+        let time = sent;
+        const { store, mario } = await withBoth({
+          ...dependencies(),
+          now: () => time,
+        });
+        await store.linkItems(CHAT, 3_001, [mario]);
+        const expiry = sent.getTime() + LIST_ITEMS_TTL_DAYS * 86_400_000;
+
+        time = new Date(expiry);
+        expect(await store.prospectOfItem(CHAT, 3_001, 0)).toBe("mariofit");
+        time = new Date(expiry + 1);
+        expect(await store.prospectOfItem(CHAT, 3_001, 0)).toBeNull();
+
+        // A new list deletes the old ones for good, even for a clock
+        // turned back.
+        await store.linkItems(CHAT, 3_002, [mario]);
+        time = sent;
+        expect(await store.prospectOfItem(CHAT, 3_001, 0)).toBeNull();
+        expect(await store.prospectOfItem(CHAT, 3_002, 0)).toBe("mariofit");
+      });
+    });
+
+    it("remembers when each side last wrote, as the bot saw it", async () => {
+      const store = await save(
+        { profile: MARIO, newMessages: [alex("Ciao Mario!")] },
+        { profile: MARIO, newMessages: [prospect("Ciao, dimmi pure")] },
+        { profile: MARIO, newMessages: [alex("Ti mando un esempio")] },
+        // Nothing new: an analysis of the same chat, or of the profile.
+        { profile: MARIO, newMessages: [] },
+      );
+
+      expect((await store.load("mariofit"))?.contact).toStrictEqual({
+        lastProspectMessageAt: at(2),
+        lastAlexMessageAt: at(3),
+        lastMessageAt: at(3),
+        sends: [],
+      });
+    });
+
+    it("knows no contact with a prospect only seen in the profile", async () => {
+      const store = await save({ profile: MARIO, newMessages: [] });
+
+      expect((await store.load("mariofit"))?.contact).toStrictEqual({
+        lastProspectMessageAt: null,
+        lastAlexMessageAt: null,
+        lastMessageAt: null,
+        sends: [],
+      });
+    });
+
+    describe("sends", () => {
+      const CHAT = 42;
+
+      /** A store with Mario, and message 1001 of the bot about Mario. */
+      const withMario = async () => {
+        const store = await open(dependencies());
+        const memory = await store.save({
+          profile: MARIO,
+          newMessages: [alex("Ciao Mario!")],
+        });
+        await store.linkMessages(memory.prospect.id, CHAT, [1_001]);
+        return { store, id: memory.prospect.id };
+      };
+
+      const best = {
+        chatId: CHAT,
+        messageId: 1_001,
+        kind: "FIRST_MESSAGES",
+        style: "BEST",
+        text: "Ciao Mario 💪 quanti START ricevi?",
+      } as const;
+
+      it("marks the suggestion Alex sent from a message about the prospect", async () => {
+        const { store, id } = await withMario();
+
+        expect(await store.recordSend(best)).toStrictEqual({
+          type: "RECORDED",
+          prospectId: id,
+          username: "mariofit",
+          sentAt: at(3),
+        });
+        expect((await store.load("mariofit"))?.contact.sends).toStrictEqual([
+          {
+            kind: "FIRST_MESSAGES",
+            style: "BEST",
+            text: "Ciao Mario 💪 quanti START ricevi?",
+            sentAt: at(3),
+          },
+        ]);
+      });
+
+      it("keeps one send per message, corrected when it names another suggestion", async () => {
+        const { store, id } = await withMario();
+        await store.recordSend(best);
+
+        const again = await store.recordSend(best);
+        const unnamed = await store.recordSend({
+          ...best,
+          style: null,
+          text: null,
+        });
+        const other = await store.recordSend({
+          ...best,
+          style: "NATURAL",
+          text: "Bello il format START!",
+        });
+
+        const kept = { prospectId: id, username: "mariofit", sentAt: at(3) };
+        expect([again, unnamed, other]).toStrictEqual([
+          { type: "UNCHANGED", ...kept },
+          { type: "UNCHANGED", ...kept },
+          { type: "CORRECTED", ...kept },
+        ]);
+        expect((await store.load("mariofit"))?.contact.sends).toStrictEqual([
+          {
+            kind: "FIRST_MESSAGES",
+            style: "NATURAL",
+            text: "Bello il format START!",
+            sentAt: at(3),
+          },
+        ]);
+      });
+
+      it("marks nothing for a message about no prospect", async () => {
+        const { store } = await withMario();
+
+        expect(
+          await store.recordSend({ ...best, messageId: 9_999 }),
+        ).toStrictEqual({ type: "NOT_LINKED" });
+        expect((await store.load("mariofit"))?.contact.sends).toStrictEqual([]);
+      });
+
+      it("loads only what Alex sent after the prospect's latest message", async () => {
+        const { store, id } = await withMario();
+        await store.recordSend(best);
+        await store.save({
+          profile: MARIO,
+          newMessages: [prospect("Tanti! Perché?")],
+        });
+        await store.linkMessages(id, CHAT, [1_002]);
+        await store.recordSend({
+          chatId: CHAT,
+          messageId: 1_002,
+          kind: "REPLIES",
+          style: null,
+          text: null,
+        });
+
+        expect((await store.load("mariofit"))?.contact.sends).toStrictEqual([
+          { kind: "REPLIES", style: null, text: null, sentAt: at(6) },
+        ]);
+      });
+
+      it("never mixes the sends of two prospects", async () => {
+        const { store } = await withMario();
+        const giulia = await store.save({
+          profile: GIULIA,
+          newMessages: [],
+        });
+        await store.linkMessages(giulia.prospect.id, CHAT, [2_001]);
+
+        await store.recordSend({ ...best, messageId: 2_001 });
+
+        expect((await store.load("mariofit"))?.contact.sends).toStrictEqual([]);
+        expect((await store.load("giulia.bakery"))?.contact.sends).toHaveLength(
+          1,
+        );
+      });
+
+      it("loads the latest sends only", async () => {
+        const { store, id } = await withMario();
+        const messageIds = Array.from(
+          { length: 12 },
+          (_, index) => 1_100 + index,
+        );
+        await store.linkMessages(id, CHAT, messageIds);
+        for (const messageId of messageIds) {
+          await store.recordSend({
+            ...best,
+            messageId,
+            text: String(messageId),
+          });
+        }
+
+        const sends = (await store.load("mariofit"))?.contact.sends ?? [];
+        expect(sends.map(({ text }) => text)).toStrictEqual(
+          messageIds.slice(-10).map(String),
+        );
+      });
+    });
+
+    describe("overview", () => {
+      const CHAT = 42;
+
+      /** The overview of each prospect, by username. */
+      const listed = async (
+        store: ProspectStore,
+      ): Promise<ReadonlyMap<string, ProspectOverview>> => {
+        const overviews = await store.overview();
+        const byUsername = new Map(
+          overviews.map((overview) => [overview.prospect.username, overview]),
+        );
+        // Each prospect once.
+        expect(byUsername.size).toBe(overviews.length);
+        return byUsername;
+      };
+
+      /** Checks that each prospect is listed as loading its memory gives it. */
+      const expectLikeMemory = async (store: ProspectStore) => {
+        for (const [username, overview] of await listed(store)) {
+          const memory = await store.load(username);
+          expect(overview).toStrictEqual({
+            prospect: memory?.prospect,
+            storedMessages: memory?.messages.length,
+            storedUnanswered: unansweredMessages(memory?.messages ?? []),
+            contact: memory?.contact,
+          });
+        }
+      };
+
+      it("lists nobody when it knows nobody", async () => {
+        const store = await save();
+
+        expect(await store.overview()).toStrictEqual([]);
+      });
+
+      it("lists every prospect once, as its memory describes it", async () => {
+        const store = await save(
+          {
+            profile: MARIO,
+            newMessages: [alex("Ciao Mario!"), prospect("Ciao, dimmi pure")],
+          },
+          { profile: GIULIA, newMessages: [] },
+          {
+            profile: MARIO,
+            newMessages: [alex("Ti mando un esempio?"), alex("Eccolo!")],
+          },
+        );
+
+        const overviews = await listed(store);
+
+        expect([...overviews.keys()].toSorted()).toStrictEqual([
+          "giulia.bakery",
+          "mariofit",
+        ]);
+        expect(overviews.get("mariofit")).toMatchObject({
+          prospect: { id: "00000000-0000-4000-8000-000000000001" },
+          storedMessages: 4,
+          storedUnanswered: 2,
+          contact: {
+            lastProspectMessageAt: at(1),
+            lastAlexMessageAt: at(3),
+            lastMessageAt: at(3),
+            sends: [],
+          },
+        });
+        // Only seen in the profile: no contact yet.
+        expect(overviews.get("giulia.bakery")).toMatchObject({
+          storedMessages: 0,
+          storedUnanswered: 0,
+          contact: {
+            lastProspectMessageAt: null,
+            lastAlexMessageAt: null,
+            lastMessageAt: null,
+            sends: [],
+          },
+        });
+        await expectLikeMemory(store);
+      });
+
+      const fromAlex = (count: number): readonly ConversationMessage[] =>
+        Array.from({ length: count }, (_, index) =>
+          alex(`Messaggio ${String(index)}`),
+        );
+
+      it.each([
+        [
+          "gone with them",
+          [prospect("Dimmi"), ...fromAlex(MAX_STORED_MESSAGES + 4)],
+          MAX_STORED_MESSAGES,
+        ],
+        [
+          "kept",
+          [
+            ...fromAlex(MAX_STORED_MESSAGES + 2),
+            prospect("Dimmi"),
+            ...fromAlex(2),
+          ],
+          2,
+        ],
+      ])(
+        "counts like the memory once the oldest messages are gone, the reply %s",
+        async (_, messages, unanswered) => {
+          const store = await save({ profile: MARIO, newMessages: messages });
+
+          const overview = (await listed(store)).get("mariofit");
+
+          expect(overview?.storedMessages).toBe(MAX_STORED_MESSAGES);
+          expect(overview?.storedUnanswered).toBe(unanswered);
+          await expectLikeMemory(store);
+        },
+      );
+
+      it("lists the latest sends after each prospect's latest message", async () => {
+        const store = await open(dependencies());
+        const mario = await store.save({
+          profile: MARIO,
+          newMessages: [alex("Ciao Mario!")],
+        });
+        const giulia = await store.save({
+          profile: GIULIA,
+          newMessages: [],
+        });
+        const marioIds = Array.from(
+          { length: 13 },
+          (_, index) => 1_100 + index,
+        );
+        await store.linkMessages(mario.prospect.id, CHAT, marioIds);
+        await store.linkMessages(giulia.prospect.id, CHAT, [2_001]);
+        const send = (messageId: number) =>
+          store.recordSend({
+            chatId: CHAT,
+            messageId,
+            kind: "REPLIES",
+            style: "BEST",
+            text: String(messageId),
+          });
+        // One send before Mario's reply, twelve after it; one for Giulia.
+        await send(1_100);
+        await store.save({
+          profile: MARIO,
+          newMessages: [prospect("Tanti! Perché?")],
+        });
+        for (const messageId of marioIds.slice(1)) {
+          await send(messageId);
+        }
+        await send(2_001);
+
+        const overviews = await listed(store);
+
+        expect(
+          overviews.get("mariofit")?.contact.sends.map(({ text }) => text),
+        ).toStrictEqual(marioIds.slice(-10).map(String));
+        expect(
+          overviews.get("giulia.bakery")?.contact.sends.map(({ text }) => text),
+        ).toStrictEqual(["2001"]);
+        await expectLikeMemory(store);
+      });
     });
 
     it("keeps emojis and accents", async () => {

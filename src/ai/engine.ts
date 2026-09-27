@@ -49,7 +49,9 @@ export type SuggestionAction =
   /** The suggestions shown, rewritten to be more direct. */
   | "DIRECT"
   /** Alex sent one of them and got no reply: follow-ups. */
-  | "FOLLOW_UP";
+  | "FOLLOW_UP"
+  /** The follow-up due, asked from the prospect's card. */
+  | "NEXT_FOLLOW_UP";
 
 export type SuggestionsRequest = Readonly<{
   action: SuggestionAction;

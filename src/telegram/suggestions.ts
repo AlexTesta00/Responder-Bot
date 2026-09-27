@@ -13,7 +13,13 @@ import type { MemoryOutcome } from "../copilot/memory.ts";
 import type { Commitment } from "../conversations/domain.ts";
 import { MAX_FOLLOW_UPS, type Pause } from "../conversations/transition.ts";
 import type { InlineKeyboard } from "./client.ts";
-import { actionRows, analyzeButton, copyRows, isCopyable } from "./keyboard.ts";
+import {
+  actionRows,
+  analyzeButton,
+  copyAndSentRows,
+  copyRows,
+  isCopyable,
+} from "./keyboard.ts";
 import { fitsInMessage } from "./message-length.ts";
 
 /** Makes text safe to embed in a Telegram HTML message. */
@@ -295,7 +301,9 @@ const suggestionRows = (
   if (suggestions.length === 0) {
     return linked ? [[analyzeButton(kind)]] : [];
   }
-  return [...copyRows(suggestions), ...(linked ? actionRows(kind) : [])];
+  return linked
+    ? [...copyAndSentRows(suggestions, kind), ...actionRows(kind)]
+    : copyRows(suggestions);
 };
 
 const withRows = (html: string, rows: InlineKeyboard): Presented => ({
@@ -414,13 +422,23 @@ export type NewSuggestionsView = Readonly<{
   upgraded: boolean;
   /** The suggestions to rewrite could not be read back. */
   previousLost: boolean;
+  /** 💬 has just marked the message Alex tapped as sent. */
+  declared: boolean;
+  /** Asked from a prospect's card, where no suggestion was shown before. */
+  fromCard: boolean;
+  /** The follow-up due, with the day Alex last wrote, as the text says it. */
+  followUp: Readonly<{ number: 1 | 2; lastWritten: string }> | null;
 }>;
+
+export const followUpNumber = (number: 1 | 2): string =>
+  number === 1 ? "1° follow-up" : "2° e ultimo follow-up";
 
 const ACTION_ICONS: Readonly<Record<SuggestionAction, string>> = {
   MORE: "🔄",
   NATURAL: "🙂",
   DIRECT: "🎯",
   FOLLOW_UP: "💬",
+  NEXT_FOLLOW_UP: "💬",
 };
 
 const RESULT_TITLES: Readonly<
@@ -446,6 +464,27 @@ const RESULT_TITLES: Readonly<
     REPLIES: "follow-up",
     FOLLOW_UPS: "follow-up",
   },
+  NEXT_FOLLOW_UP: {
+    FIRST_MESSAGES: "follow-up",
+    REPLIES: "follow-up",
+    FOLLOW_UPS: "follow-up",
+  },
+};
+
+const DECLARED = "✅ Ho segnato come inviato il messaggio di prima.";
+
+/** Asked from a card: nothing was shown before, so not "3 more". */
+const CARD_TITLES: Readonly<Record<SuggestionKind, string>> = {
+  FIRST_MESSAGES: "✍️ {user} · 3 primi messaggi",
+  REPLIES: "↩️ {user} · 3 risposte",
+  FOLLOW_UPS: "💬 {user} · follow-up",
+};
+
+const titleOf = (view: NewSuggestionsView): string => {
+  const user = `<b>@${escapeHtml(view.username)}</b>`;
+  return view.fromCard
+    ? CARD_TITLES[view.kind].replace("{user}", user)
+    : `${ACTION_ICONS[view.action]} ${user} · ${RESULT_TITLES[view.action][view.kind]}`;
 };
 
 const UPGRADED =
@@ -463,7 +502,13 @@ export const newSuggestionsAnswer = (
   const nothingSuggested = suggestions.length === 0;
   const compose = (withNote: boolean): string =>
     [
-      `${ACTION_ICONS[view.action]} <b>@${escapeHtml(view.username)}</b> · ${RESULT_TITLES[view.action][view.kind]}`,
+      titleOf(view),
+      ...(view.followUp === null
+        ? []
+        : [
+            `⏰ ${followUpNumber(view.followUp.number)} · il tuo ultimo messaggio: ${view.followUp.lastWritten}.`,
+          ]),
+      ...(view.declared ? [DECLARED] : []),
       ...(view.upgraded ? [UPGRADED] : []),
       ...(view.previousLost ? [PREVIOUS_LOST] : []),
       ...(nothingSuggested

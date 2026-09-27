@@ -1,6 +1,7 @@
-// Manages the bot's webhook registration with Telegram:
+// Manages the bot's registration with Telegram:
 //   npm run telegram:webhook -- set https://<domain>   register the webhook
 //   npm run telegram:webhook -- info                   show its status
+//   npm run telegram:webhook -- commands               register the command menu
 // Credentials come from the environment (.env locally); they are never
 // printed.
 import { z } from "zod";
@@ -12,12 +13,14 @@ import {
   type TelegramClient,
   type TelegramError,
 } from "../src/telegram/client.ts";
+import { MENU_COMMANDS } from "../src/telegram/commands.ts";
 import { ALLOWED_UPDATES } from "../src/telegram/update.ts";
 
 const USAGE = [
   "Usage:",
   "  npm run telegram:webhook -- set https://<domain>   register the webhook",
   "  npm run telegram:webhook -- info                   show its status",
+  "  npm run telegram:webhook -- commands               register the command menu",
 ].join("\n");
 
 const httpsUrlSchema = z.url({ protocol: /^https$/ });
@@ -96,6 +99,24 @@ switch (command) {
   case "info":
     await printWebhookInfo(telegram);
     break;
+  case "commands": {
+    const registered = await telegram.setMyCommands(MENU_COMMANDS);
+    if (!registered.ok) {
+      fail(
+        `Command menu registration failed: ${describeFailure(registered.error)}`,
+      );
+    }
+    process.stdout.write(
+      [
+        "Command menu registered:",
+        ...MENU_COMMANDS.map(
+          ({ command, description }) => `  /${command} – ${description}`,
+        ),
+        "",
+      ].join("\n"),
+    );
+    break;
+  }
   case undefined:
   default:
     fail(USAGE);

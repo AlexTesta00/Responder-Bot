@@ -495,8 +495,9 @@ describe("buttons under an answer", () => {
         }),
       ),
     ).toStrictEqual([
-      ["📋 Copia BEST"],
-      ["📋 CURIOSITY", "📋 NATURAL"],
+      ["📋 Copia BEST", "✅ Inviato"],
+      ["📋 CURIOSITY", "✅ Inviato"],
+      ["📋 NATURAL", "✅ Inviato"],
       ["🔄 Altre 3", "🙂 Più naturale"],
       ["🎯 Più diretto", "💬 Follow-up"],
       ["🔍 Analizza"],
@@ -511,7 +512,7 @@ describe("buttons under an answer", () => {
       footer: null,
     });
 
-    expect(keyboard?.[2]?.[0]).toStrictEqual({
+    expect(keyboard?.[3]?.[0]).toStrictEqual({
       type: "CALLBACK",
       label: "🔄 Altre 3",
       data: "1:more:R",
@@ -572,7 +573,62 @@ describe("newSuggestionsAnswer", () => {
     username: "mariofit",
     upgraded: false,
     previousLost: false,
+    declared: false,
+    fromCard: false,
+    followUp: null,
   } as const;
+
+  it.each([
+    ["FIRST_MESSAGES", "✍️ <b>@mariofit</b> · 3 primi messaggi"],
+    ["REPLIES", "↩️ <b>@mariofit</b> · 3 risposte"],
+    ["FOLLOW_UPS", "💬 <b>@mariofit</b> · follow-up"],
+  ] as const)("names what a card asked for: %s", (kind, title) => {
+    const { html } = newSuggestionsAnswer(
+      NEW,
+      { ...view, kind, fromCard: true },
+      null,
+    );
+
+    expect(html.split("\n")[0]).toBe(title);
+  });
+
+  it.each([
+    [1, "⏰ 1° follow-up · il tuo ultimo messaggio: 4 giorni fa."],
+    [2, "⏰ 2° e ultimo follow-up · il tuo ultimo messaggio: 6 giorni fa."],
+  ] as const)("says which follow-up a card asked for: %i", (number, line) => {
+    const { html } = newSuggestionsAnswer(
+      NEW,
+      {
+        ...view,
+        action: "NEXT_FOLLOW_UP",
+        kind: "FOLLOW_UPS",
+        fromCard: true,
+        followUp: {
+          number,
+          lastWritten: number === 1 ? "4 giorni fa" : "6 giorni fa",
+        },
+      },
+      null,
+    );
+
+    expect(html.split("\n").slice(0, 2)).toStrictEqual([
+      "💬 <b>@mariofit</b> · follow-up",
+      line,
+    ]);
+  });
+
+  it("says that 💬 marked the message Alex tapped as sent", () => {
+    const { html } = newSuggestionsAnswer(
+      NEW,
+      { ...view, action: "FOLLOW_UP", kind: "FOLLOW_UPS", declared: true },
+      null,
+    );
+
+    expect(html.split("\n").slice(0, 2)).toStrictEqual([
+      "💬 <b>@mariofit</b> · follow-up",
+      "✅ Ho segnato come inviato il messaggio di prima.",
+    ]);
+  });
 
   it("presents the new suggestions with the same buttons", () => {
     const { html, keyboard } = newSuggestionsAnswer(NEW, view, "💳 ~0,02 $");
@@ -598,8 +654,9 @@ describe("newSuggestionsAnswer", () => {
     expect(
       keyboard?.map((row) => row.map((button) => button.label)),
     ).toStrictEqual([
-      ["📋 Copia BEST"],
-      ["📋 ALTERNATIVE", "📋 DIRECT"],
+      ["📋 Copia BEST", "✅ Inviato"],
+      ["📋 ALTERNATIVE", "✅ Inviato"],
+      ["📋 DIRECT", "✅ Inviato"],
       ["🔄 Altre 3", "🙂 Più naturale"],
       ["🎯 Più diretto", "💬 Follow-up"],
       ["🔍 Analizza"],
@@ -628,7 +685,7 @@ describe("newSuggestionsAnswer", () => {
     );
 
     expect(
-      keyboard?.slice(2).map((row) => row.map((button) => button.label)),
+      keyboard?.slice(3).map((row) => row.map((button) => button.label)),
     ).toStrictEqual([
       ["🔄 Altre 3", "🙂 Più naturale"],
       ["🎯 Più diretto", "🔍 Analizza"],

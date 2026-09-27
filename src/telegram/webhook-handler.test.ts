@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AiEngine, AiError, Generation } from "../ai/engine.ts";
 import type { GenerationLog } from "../ai/runs.ts";
@@ -9,10 +9,14 @@ import type {
 } from "../ai/outputs.ts";
 import type { PromptMode } from "../ai/prompts/modes.ts";
 import { createInMemorySpending, type SpendingLedger } from "../ai/spending.ts";
-import { createButtonActions } from "../copilot/buttons.ts";
+import { createButtonActions, createCardWriting } from "../copilot/buttons.ts";
+import { createCrm } from "../copilot/crm.ts";
+import { createSendMarking } from "../copilot/sends.ts";
 import { createConversationAnalyst } from "../copilot/conversation.ts";
 import { createScreenshotsAnalyst } from "../copilot/screenshots.ts";
 import type { DownloadedImage, DownloadImage } from "../inputs/images.ts";
+import type { ConversationState } from "../conversations/domain.ts";
+import type { ProspectProfile } from "../prospects/memory.ts";
 import { createInMemoryProspectStore } from "../prospects/store.ts";
 import type { Logger } from "../shared/logger.ts";
 import { err, ok, type Result } from "../shared/result.ts";
@@ -25,7 +29,16 @@ import {
 import type { Schedule } from "./media-group.ts";
 import { createInFlight } from "./in-flight.ts";
 import { createProcessedUpdates } from "./processed-updates.ts";
-import { imageProblemReply, replyTo, type InstantInput } from "./replies.ts";
+import {
+  imageProblemReply,
+  profileHint,
+  PROSPECT_NOT_LINKED_REPLY,
+  PROSPECT_USAGE,
+  PROSPECTS_UNAVAILABLE_REPLY,
+  replyTo,
+  unknownProspectReply,
+  type InstantInput,
+} from "./replies.ts";
 import {
   aiProblemReply,
   conversationAnswer,
@@ -36,7 +49,8 @@ import {
 } from "./suggestions.ts";
 import type { ChatType, IncomingUpdate, MessageContent } from "./update.ts";
 import { decodeButton } from "./button-data.ts";
-import { createUpdateHandler } from "./webhook-handler.ts";
+import { createUpdateHandler, LIST_RETRY_MS } from "./webhook-handler.ts";
+import { OLD_LIST_REPLY } from "./button-replies.ts";
 
 const ALEX = telegramUserIdSchema.parse(42);
 const STRANGER = telegramUserIdSchema.parse(666);
@@ -300,6 +314,13 @@ const setupWith = (
     analyzeScreenshots: createScreenshotsAnalyst(copilot),
     replyToConversation: createConversationAnalyst(copilot),
     pressButton: createButtonActions(copilot),
+    writeFromCard: createCardWriting({ ...copilot, now: () => new Date() }),
+    markSent: createSendMarking({ prospects, now: () => new Date() }),
+    crm: createCrm({ prospects }),
+    // Through the store, so that a test can make it fail.
+    linkItems: (chatId, messageId, prospectIds) =>
+      prospects.linkItems(chatId, messageId, prospectIds),
+    now: () => new Date(),
     answerCallbackQuery,
     inFlight: createInFlight(),
     linkMessages: prospects.linkMessages,
@@ -342,12 +363,8 @@ describe("createUpdateHandler", () => {
   });
 
   it.each<[string, InstantInput]>([
-    ["@mariofit", { type: "INSTAGRAM_PROFILE", username: "mariofit" }],
-    [
-      "https://www.instagram.com/mariofit/",
-      { type: "INSTAGRAM_PROFILE", username: "mariofit" },
-    ],
     ["https://mariofit.it", { type: "LINK", url: "https://mariofit.it" }],
+    ["/prospect mario fit", { type: "INVALID_USERNAME", command: "prospect" }],
     ["/unknown", { type: "UNKNOWN_COMMAND" }],
   ])("answers %j at once", async (text, input) => {
     const { handleUpdate, sendMessage } = setup();
@@ -1087,7 +1104,7 @@ describe("buttons", () => {
     expect(
       options?.keyboard?.map((row) => row.map((button) => button.label)),
     ).toStrictEqual([
-      ["📋 Copia BEST"],
+      ["📋 Copia BEST", "✅ Inviato"],
       ["🔄 Altre 3", "🙂 Più naturale"],
       ["🎯 Più diretto", "💬 Follow-up"],
       ["🔍 Analizza"],
@@ -1239,7 +1256,7 @@ describe("buttons", () => {
         queryId: "query-300",
         senderId: ALEX,
         message: null,
-        press: { action: "MORE", kind: "REPLIES" },
+        press: { type: "ANSWER", action: "MORE", kind: "REPLIES" },
       },
     });
 
@@ -1297,9 +1314,14 @@ describe("buttons", () => {
     );
     expect(suggestAgain).not.toHaveBeenCalled();
     const [, html, options] = sendMessage.mock.calls[1] ?? [];
-    expect(html).toMatch(/^🔍 <b>@mariofit<\/b> · personal trainer\n/);
+    expect(html).toMatch(
+      /^🔍 <b><a href="https:\/\/www\.instagram\.com\/mariofit\/">@mariofit<\/a><\/b> · personal trainer\n/,
+    );
     expect(html).toContain("Solo profilo");
-    expect(options).toStrictEqual({ parseMode: "HTML", replyTo: 1_001 });
+    expect(options).toMatchObject({ parseMode: "HTML", replyTo: 1_001 });
+    expect(
+      options?.keyboard?.map((row) => row.map((button) => button.label)),
+    ).toStrictEqual([["✍️ Proponi primi messaggi", "✅ Già scritto"]]);
   });
 
   it("writes nothing for a prospect who asked not to be contacted", async () => {
@@ -1357,6 +1379,95 @@ describe("buttons", () => {
     );
   });
 
+  it("marks the suggestion sent with ✅, then says so in the notice", async () => {
+    const {
+      handleUpdate,
+      sendMessage,
+      answerCallbackQuery,
+      prospects,
+      suggestAgain,
+    } = await answered();
+    const record = vi.spyOn(prospects, "recordSend");
+
+    const outcome = await handleUpdate(tapOn(1_001, "1:ok:F:0"));
+
+    expect(outcome).toStrictEqual({
+      type: "PRESSED",
+      button: "SENT",
+      kind: "FIRST_MESSAGES",
+    });
+    await vi.waitFor(() => {
+      expect(answerCallbackQuery).toHaveBeenCalledOnce();
+    });
+    // Acknowledged once written, with what comes next.
+    expect(answerCallbackQuery.mock.invocationCallOrder[0]).toBeGreaterThan(
+      record.mock.invocationCallOrder[0] ?? Infinity,
+    );
+    expect(answerCallbackQuery.mock.calls[0]?.[1]).toMatch(
+      /^✅ Segnato come inviato\. Se non risponde, te lo ricordo in \/oggi da /,
+    );
+    expect((await prospects.load("mariofit"))?.contact.sends).toMatchObject([
+      { kind: "FIRST_MESSAGES", style: "BEST", text: SHOWN[0] },
+    ]);
+    // Only the notice: no message in the chat, no generation.
+    expect(sendMessage).toHaveBeenCalledOnce();
+    expect(suggestAgain).not.toHaveBeenCalled();
+  });
+
+  it("does not make ✅ wait for a generation under the same message", async () => {
+    const { handleUpdate, suggestAgain, answerCallbackQuery } =
+      await answered();
+    const slow = Promise.withResolvers<Generation<NewSuggestions>>();
+    suggestAgain.mockReturnValueOnce(slow.promise);
+
+    await handleUpdate(tapOn(1_001, "1:more:F"));
+    const sent = await handleUpdate(
+      tapOn(1_001, "1:ok:F:1", { updateId: 301 }),
+    );
+    await vi.waitFor(() => {
+      expect(answerCallbackQuery).toHaveBeenCalledTimes(2);
+    });
+    slow.resolve(generation("NEW_SUGGESTIONS", ok(NEW_REPLIES)));
+
+    expect(sent).toMatchObject({ type: "PRESSED", button: "SENT" });
+  });
+
+  it("writes from the card what its situation calls for", async () => {
+    const { handleUpdate, sendMessage, suggestAgain, answerCallbackQuery } =
+      await answered();
+    await handleUpdate(tapOn(1_001, "1:an:F"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    // The card arrived as message 1002: Alex taps ✍️ on it.
+    const outcome = await handleUpdate(
+      tapOn(1_002, "1:w:F", { updateId: 301, suggestions: [] }),
+    );
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(3);
+    });
+
+    expect(outcome).toStrictEqual({
+      type: "PRESSED",
+      button: "WRITE",
+      kind: "FIRST_MESSAGES",
+    });
+    expect(answerCallbackQuery).toHaveBeenLastCalledWith(
+      "query-301",
+      "✍️ Scrivo tre primi messaggi…",
+    );
+    expect(suggestAgain.mock.calls[0]?.[0]).toStrictEqual({
+      action: "MORE",
+      kind: "FIRST_MESSAGES",
+      previous: [],
+    });
+    expect(sendMessage.mock.calls[2]?.[1]).toMatch(
+      /^✍️ <b>@mariofit<\/b> · 3 primi messaggi\n/,
+    );
+    expect(sendMessage.mock.calls[2]?.[2]).toMatchObject({ replyTo: 1_002 });
+  });
+
   it("keeps suggestions and usernames out of the logs of taps", async () => {
     const { handleUpdate, sendMessage, log } = await answered();
 
@@ -1385,5 +1496,499 @@ describe("buttons", () => {
     ]) {
       expect(logs).not.toContain(content);
     }
+  });
+});
+
+describe("prospect cards", () => {
+  /** A handler that remembers Mario from his profile, in message 1001. */
+  const remembered = async () => {
+    const context = setup();
+    await context.handleUpdate(screenshotMessage());
+    await vi.waitFor(() => {
+      expect(context.sendMessage).toHaveBeenCalledOnce();
+    });
+    return context;
+  };
+
+  const CARD_TITLE =
+    /^🔍 <b><a href="https:\/\/www\.instagram\.com\/mariofit\/">@mariofit<\/a><\/b> · personal trainer\n/;
+
+  const ask = (text: string, replyTo: number | null = null, updateId = 101) =>
+    messageWith({ type: "TEXT", text, replyTo }, { updateId });
+
+  it.each([
+    ["/prospect @mariofit", null, "PROSPECT"],
+    ["/prospect https://www.instagram.com/MarioFit/", null, "PROSPECT"],
+    ["/prospect", 1_001, "PROSPECT"],
+    ["@mariofit", null, "INSTAGRAM_PROFILE"],
+    ["https://www.instagram.com/mariofit/", null, "INSTAGRAM_PROFILE"],
+  ] as const)(
+    "shows the card of a known prospect for %j replying to %j",
+    async (text, replyTo, input) => {
+      const { handleUpdate, sendMessage, prospects, suggestAgain } =
+        await remembered();
+
+      const outcome = await handleUpdate(ask(text, replyTo));
+
+      expect(outcome).toStrictEqual({ type: "REPLIED", input });
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      const [chat, html, options] = sendMessage.mock.calls[1] ?? [];
+      expect(chat).toBe(CHAT);
+      expect(html).toMatch(CARD_TITLE);
+      expect(html).toContain("Solo profilo");
+      expect(
+        options?.keyboard?.map((row) => row.map((button) => button.label)),
+      ).toStrictEqual([["✍️ Proponi primi messaggi", "✅ Già scritto"]]);
+      expect(suggestAgain).not.toHaveBeenCalled();
+      // The card is message 1002: its buttons continue with Mario.
+      expect(await prospects.prospectOfMessage(CHAT, 1_002)).toBe("mariofit");
+    },
+  );
+
+  it.each([
+    ["/prospect @giulia.bakery", null, unknownProspectReply("giulia.bakery")],
+    ["/prospect", null, PROSPECT_USAGE],
+    ["/prospect", 999, PROSPECT_NOT_LINKED_REPLY],
+    ["@giulia.bakery", null, profileHint("giulia.bakery")],
+  ] as const)(
+    "explains why there is no card for %j replying to %j",
+    async (text, replyTo, reply) => {
+      const { handleUpdate, sendMessage } = await remembered();
+
+      const outcome = await handleUpdate(ask(text, replyTo));
+
+      expect(outcome).toMatchObject({ type: "REPLIED" });
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenLastCalledWith(CHAT, reply);
+    },
+  );
+
+  it.each([
+    ["/prospect @mariofit", PROSPECTS_UNAVAILABLE_REPLY],
+    ["@mariofit", profileHint("mariofit")],
+  ])("answers %j even when the memory cannot be read", async (text, reply) => {
+    const { handleUpdate, sendMessage, prospects, log } = await remembered();
+    vi.spyOn(prospects, "load").mockRejectedValueOnce(
+      new Error("connection lost"),
+    );
+
+    const outcome = await handleUpdate(ask(text));
+
+    expect(outcome).toMatchObject({ type: "REPLIED" });
+    expect(sendMessage).toHaveBeenLastCalledWith(CHAT, reply);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.anything(),
+      "prospect memory unavailable",
+    );
+  });
+
+  it("lets Telegram deliver the command again when the card was not sent", async () => {
+    const { handleUpdate, sendMessage } = await remembered();
+    sendMessage.mockResolvedValueOnce(err(NETWORK_ERROR));
+
+    const failed = await handleUpdate(ask("/prospect @mariofit"));
+    const retried = await handleUpdate(ask("/prospect @mariofit"));
+
+    expect(failed).toStrictEqual({
+      type: "FAILED",
+      retryable: true,
+      error: NETWORK_ERROR,
+    });
+    expect(retried).toStrictEqual({ type: "REPLIED", input: "PROSPECT" });
+    expect(sendMessage.mock.calls[2]?.[1]).toMatch(CARD_TITLE);
+  });
+
+  it("still shows the card when Telegram refuses its buttons", async () => {
+    const { handleUpdate, sendMessage } = await remembered();
+    sendMessage.mockResolvedValueOnce(
+      err({
+        type: "API_ERROR",
+        method: "sendMessage",
+        status: 400,
+        description: "Bad Request: BUTTON_DATA_INVALID",
+      }),
+    );
+
+    const outcome = await handleUpdate(ask("@mariofit"));
+
+    expect(outcome).toStrictEqual({
+      type: "REPLIED",
+      input: "INSTAGRAM_PROFILE",
+    });
+    expect(sendMessage.mock.calls[2]?.[1]).toMatch(CARD_TITLE);
+    expect(sendMessage.mock.calls[2]?.[2]).toStrictEqual({ parseMode: "HTML" });
+  });
+
+  it("logs a card by prospect id, never by username", async () => {
+    const { handleUpdate, prospects, log } = await remembered();
+    const mario = await prospects.load("mariofit");
+
+    await handleUpdate(ask("/prospect @mariofit"));
+    await handleUpdate(ask("@mariofit", null, 102));
+    await handleUpdate(ask("/prospect @giulia.bakery", null, 103));
+
+    for (const source of ["command", "mention"]) {
+      expect(log.info).toHaveBeenCalledWith(
+        { prospect_id: mario?.prospect.id, situation: "TO_CONTACT", source },
+        "prospect card shown",
+      );
+    }
+    const logs = JSON.stringify([
+      log.info.mock.calls,
+      log.warn.mock.calls,
+      log.error.mock.calls,
+    ]);
+    for (const content of ["mariofit", "giulia", "personal trainer"]) {
+      expect(logs).not.toContain(content);
+    }
+  });
+});
+
+describe("lists", () => {
+  const ENGAGED: ConversationState = {
+    stage: "ENGAGED",
+    intent: "PRICE_REQUEST",
+    interest: "MEDIUM",
+    nextGoal: "UNDERSTAND_PROCESS",
+  };
+
+  const profileOf = (
+    username: string,
+    conversation: ConversationState | null,
+  ): ProspectProfile => ({
+    username,
+    displayName: null,
+    businessType: "personal trainer",
+    facts: [],
+    hypotheses: [],
+    conversation,
+    summary: null,
+    objections: [],
+    commitments: [],
+  });
+
+  /** A handler that remembers Mario, who asked the price, and Giulia's profile. */
+  const withProspects = async () => {
+    const context = setup();
+    await context.prospects.save({
+      profile: profileOf("mariofit", ENGAGED),
+      newMessages: [{ author: "PROSPECT", text: "Quanto costa?" }],
+    });
+    await context.prospects.save({
+      profile: profileOf("giulia.bakery", null),
+      newMessages: [],
+    });
+    return context;
+  };
+
+  const tapOn = (
+    messageId: number,
+    data: string,
+    updateId = 300,
+  ): IncomingUpdate => ({
+    type: "CALLBACK",
+    updateId,
+    callback: {
+      queryId: `query-${String(updateId)}`,
+      senderId: ALEX,
+      message: {
+        chatId: CHAT,
+        chatType: "private",
+        messageId,
+        suggestions: [],
+      },
+      press: decodeButton(data),
+    },
+  });
+
+  it("lists whom to answer today, with a button that opens each card", async () => {
+    const { handleUpdate, sendMessage, prospects } = await withProspects();
+
+    const outcome = await handleUpdate(textMessage("/oggi"));
+
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: "TODAY" });
+    const [chat, html, options] = sendMessage.mock.calls[0] ?? [];
+    expect(chat).toBe(CHAT);
+    expect(html).toMatch(/^📋 <b>OGGI<\/b> · /);
+    expect(html).toContain("🔥 <b>DA RISPONDERE</b> (1)");
+    expect(html).toContain("ha chiesto il prezzo · oggi");
+    expect(html).toContain("👤 1 da contattare: /nuovo");
+    expect(options?.keyboard).toStrictEqual([
+      [{ type: "CALLBACK", label: "🔥 @mariofit", data: "1:o:0" }],
+    ]);
+    // The list is message 1001: its first item opens Mario.
+    expect(await prospects.prospectOfItem(CHAT, 1_001, 0)).toBe("mariofit");
+    expect(await prospects.prospectOfMessage(CHAT, 1_001)).toBeNull();
+  });
+
+  it("logs how many prospects each section holds, never who", async () => {
+    const { handleUpdate, log } = await withProspects();
+
+    await handleUpdate(textMessage("/oggi"));
+
+    expect(log.info).toHaveBeenCalledWith(
+      {
+        command: "today",
+        to_reply: 1,
+        follow_up: 0,
+        waiting: 0,
+        to_contact: 1,
+        paused: 0,
+        won: 0,
+        items: 1,
+      },
+      "crm command handled",
+    );
+    const logs = JSON.stringify([
+      log.info.mock.calls,
+      log.warn.mock.calls,
+      log.error.mock.calls,
+    ]);
+    for (const content of ["mariofit", "giulia", "personal trainer"]) {
+      expect(logs).not.toContain(content);
+    }
+  });
+
+  it("answers when the prospects cannot be read", async () => {
+    const { handleUpdate, sendMessage, prospects } = await withProspects();
+    vi.spyOn(prospects, "overview").mockRejectedValueOnce(
+      new Error("connection lost"),
+    );
+
+    const outcome = await handleUpdate(textMessage("/oggi"));
+
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: "TODAY" });
+    expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
+      CHAT,
+      PROSPECTS_UNAVAILABLE_REPLY,
+    );
+  });
+
+  it("lets Telegram deliver /oggi again when the list was not sent", async () => {
+    const { handleUpdate, sendMessage } = await withProspects();
+    sendMessage.mockResolvedValueOnce(err(NETWORK_ERROR));
+
+    const failed = await handleUpdate(textMessage("/oggi"));
+    const retried = await handleUpdate(textMessage("/oggi"));
+
+    expect(failed).toMatchObject({ type: "FAILED", retryable: true });
+    expect(retried).toStrictEqual({ type: "REPLIED", input: "TODAY" });
+  });
+
+  it("sends the list even when its buttons cannot be remembered", async () => {
+    const { handleUpdate, sendMessage, prospects, log } = await withProspects();
+    vi.spyOn(prospects, "linkItems").mockRejectedValueOnce(
+      new Error("connection lost"),
+    );
+
+    const outcome = await handleUpdate(textMessage("/oggi"));
+
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: "TODAY" });
+    expect(sendMessage).toHaveBeenCalledOnce();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.anything(),
+      "list items not linked",
+    );
+  });
+
+  it("lists the profiles still to contact with /nuovo", async () => {
+    const { handleUpdate, sendMessage, prospects } = await withProspects();
+
+    const outcome = await handleUpdate(textMessage("/nuovo"));
+
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: "NEW_PROSPECTS" });
+    const [, html, options] = sendMessage.mock.calls[0] ?? [];
+    expect(html).toMatch(/^➕ <b>NUOVO PROSPECT<\/b>/);
+    expect(options?.keyboard).toStrictEqual([
+      [{ type: "CALLBACK", label: "👤 @giulia.bakery", data: "1:o:0" }],
+    ]);
+    expect(await prospects.prospectOfItem(CHAT, 1_001, 0)).toBe(
+      "giulia.bakery",
+    );
+  });
+
+  it("lists every prospect with /lista, without buttons", async () => {
+    const { handleUpdate, sendMessage, log } = await withProspects();
+
+    const outcome = await handleUpdate(textMessage("/lista"));
+
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: "LIST" });
+    const [, html, options] = sendMessage.mock.calls[0] ?? [];
+    expect(html).toMatch(/^📇 <b>PROSPECT<\/b> · 2 in memoria/);
+    expect(options).toStrictEqual({ parseMode: "HTML" });
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "list", items: 0 }),
+      "crm command handled",
+    );
+  });
+
+  it("opens the card of an item, in reply to the list", async () => {
+    const { handleUpdate, sendMessage, prospects, answerCallbackQuery } =
+      await withProspects();
+    await handleUpdate(textMessage("/oggi"));
+
+    const outcome = await handleUpdate(tapOn(1_001, "1:o:0"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    expect(outcome).toStrictEqual({
+      type: "PRESSED",
+      button: "OPEN",
+      kind: null,
+    });
+    expect(answerCallbackQuery).toHaveBeenCalledExactlyOnceWith(
+      "query-300",
+      undefined,
+    );
+    const [, html, options] = sendMessage.mock.calls[1] ?? [];
+    expect(html).toMatch(
+      /^🔍 <b><a href="https:\/\/www\.instagram\.com\/mariofit\/">/,
+    );
+    expect(options).toMatchObject({ parseMode: "HTML", replyTo: 1_001 });
+    // The card is message 1002: its buttons continue with Mario.
+    expect(await prospects.prospectOfMessage(CHAT, 1_002)).toBe("mariofit");
+  });
+
+  it("tries once more, then says that a list is old", async () => {
+    const { handleUpdate, sendMessage, runPending, prospects } =
+      await withProspects();
+    const lookups = vi.spyOn(prospects, "prospectOfItem");
+
+    await handleUpdate(tapOn(1_001, "1:o:3"));
+    await vi.waitFor(() => {
+      runPending();
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+
+    expect(lookups).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenCalledWith(CHAT, escapeHtml(OLD_LIST_REPLY), {
+      parseMode: "HTML",
+      replyTo: 1_001,
+    });
+    expect(LIST_RETRY_MS).toBe(1_000);
+  });
+});
+
+describe("follow-ups", () => {
+  const ENGAGED: ConversationState = {
+    stage: "ENGAGED",
+    intent: "INTERESTED",
+    interest: "MEDIUM",
+    nextGoal: "UNDERSTAND_PROCESS",
+  };
+
+  /** Mario, whom Alex answered on `writtenAt`, without a reply since. */
+  const waitingForMario = async (writtenAt: Date) => {
+    vi.useFakeTimers({ toFake: ["Date"], now: writtenAt });
+    const context = setup();
+    await context.prospects.save({
+      profile: {
+        username: "mariofit",
+        displayName: null,
+        businessType: "personal trainer",
+        facts: [],
+        hypotheses: [],
+        conversation: ENGAGED,
+        summary: null,
+        objections: [],
+        commitments: [],
+      },
+      newMessages: [
+        { author: "PROSPECT", text: "Ci penso" },
+        { author: "ALEX", text: "Ok, fammi sapere!" },
+      ],
+    });
+    return context;
+  };
+
+  const later = (days: number) =>
+    vi.setSystemTime(new Date(Date.now() + days * 86_400_000));
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("lists the follow-ups with a button for each", async () => {
+    const { handleUpdate, sendMessage, prospects } = await waitingForMario(
+      new Date("2026-09-23T08:00:00Z"),
+    );
+    later(4);
+
+    const outcome = await handleUpdate(textMessage("/followup"));
+
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: "FOLLOW_UPS" });
+    const [, html, options] = sendMessage.mock.calls[0] ?? [];
+    expect(html).toContain("<b>Da fare</b> (1)");
+    expect(options?.keyboard).toStrictEqual([
+      [{ type: "CALLBACK", label: "⏰ @mariofit", data: "1:o:0" }],
+    ]);
+    expect(await prospects.prospectOfItem(CHAT, 1_001, 0)).toBe("mariofit");
+  });
+
+  it("writes the follow-up Alex asks for once it is due", async () => {
+    const { handleUpdate, sendMessage, suggestAgain, prospects, log } =
+      await waitingForMario(new Date("2026-09-23T08:00:00Z"));
+    later(4);
+
+    const outcome = await handleUpdate(textMessage("/followup @mariofit"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+
+    expect(outcome).toStrictEqual({ type: "ACCEPTED", input: "FOLLOW_UP_FOR" });
+    expect(suggestAgain.mock.calls[0]?.[0]).toStrictEqual({
+      action: "NEXT_FOLLOW_UP",
+      kind: "FOLLOW_UPS",
+      previous: [],
+    });
+    const [, html, options] = sendMessage.mock.calls[0] ?? [];
+    expect(html?.split("\n").slice(0, 2)).toStrictEqual([
+      "💬 <b>@mariofit</b> · follow-up",
+      "⏰ 1° follow-up · il tuo ultimo messaggio: 4 giorni fa.",
+    ]);
+    expect(options).not.toHaveProperty("replyTo");
+    // The answer continues with Mario, and the logs never name him.
+    expect(await prospects.prospectOfMessage(CHAT, 1_001)).toBe("mariofit");
+    expect(log.info).toHaveBeenCalledWith(
+      { command: "follow_up_for", response: "SUGGESTED" },
+      "crm command handled",
+    );
+    expect(JSON.stringify(log.info.mock.calls)).not.toContain("mariofit");
+  });
+
+  it("shows the card, without the AI, before the follow-up is due", async () => {
+    const { handleUpdate, sendMessage, suggestAgain } = await waitingForMario(
+      new Date("2026-09-26T08:00:00Z"),
+    );
+    later(1);
+
+    await handleUpdate(textMessage("/followup @mariofit"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+
+    expect(suggestAgain).not.toHaveBeenCalled();
+    const [, html] = sendMessage.mock.calls[0] ?? [];
+    expect(html).toMatch(/^🔍 /);
+    expect(html).toContain("⏳ Aspetti la sua risposta");
+  });
+
+  it("knows no follow-up for a prospect it does not remember", async () => {
+    const { handleUpdate, sendMessage, suggestAgain } = await waitingForMario(
+      new Date("2026-09-23T08:00:00Z"),
+    );
+
+    await handleUpdate(textMessage("/followup @giulia.bakery"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+
+    expect(suggestAgain).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith(
+      CHAT,
+      escapeHtml(unknownProspectReply("giulia.bakery")),
+      { parseMode: "HTML" },
+    );
   });
 });

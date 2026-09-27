@@ -2,8 +2,29 @@
 // and the kind of the suggestions it sits under, such as "1:more:R". It
 // never holds ids, usernames or texts: the prospect comes from the message
 // tapped. Telegram allows 1-64 bytes; these take at most 8.
-import type { SuggestionKind } from "../ai/outputs.ts";
-import type { ButtonAction, ButtonPress } from "../copilot/buttons.ts";
+import type { SuggestionIndex, SuggestionKind } from "../ai/outputs.ts";
+import type { ButtonAction } from "../copilot/buttons.ts";
+
+/** What a tapped button asks for, told apart by what it does. */
+export type ButtonPress =
+  /** Under suggestions: write them again, or show the memory. */
+  | Readonly<{ type: "ANSWER"; action: ButtonAction; kind: SuggestionKind }>
+  /**
+   * ✅: Alex sent the suggestion `index` of the message, or one not said
+   * when `index` is null.
+   */
+  | Readonly<{
+      type: "SENT";
+      kind: SuggestionKind;
+      index: SuggestionIndex | null;
+    }>
+  /** On a prospect's card: write suggestions of `kind` from the memory. */
+  | Readonly<{ type: "WRITE"; kind: SuggestionKind }>
+  /** On a list: open the card of the prospect at `index`, counting from 0. */
+  | Readonly<{ type: "OPEN"; index: number }>;
+
+/** The buttons a list can have: their positions take one or two digits. */
+export const MAX_LIST_BUTTONS = 20;
 
 // Changing what the data means needs a new version: older buttons then
 // decode to nothing and are answered as expired.
@@ -23,8 +44,50 @@ const KIND_CODES = {
   FOLLOW_UPS: "U",
 } as const satisfies Record<SuggestionKind, string>;
 
-export const encodeButton = ({ action, kind }: ButtonPress): string =>
-  `${VERSION}:${ACTION_CODES[action]}:${KIND_CODES[kind]}`;
+// Marks a send, as in "1:ok:R:2" or, without the suggestion, "1:ok:R".
+const SENT_CODE = "ok";
+
+// Writes from a card, as in "1:w:U".
+const WRITE_CODE = "w";
+
+// Opens an item of a list, as in "1:o:12".
+const OPEN_CODE = "o";
+
+export const encodeButton = (press: ButtonPress): string => {
+  switch (press.type) {
+    case "ANSWER":
+      return `${VERSION}:${ACTION_CODES[press.action]}:${KIND_CODES[press.kind]}`;
+    case "SENT":
+      return [
+        VERSION,
+        SENT_CODE,
+        KIND_CODES[press.kind],
+        ...(press.index === null ? [] : [String(press.index)]),
+      ].join(":");
+    case "WRITE":
+      return `${VERSION}:${WRITE_CODE}:${KIND_CODES[press.kind]}`;
+    case "OPEN":
+      return `${VERSION}:${OPEN_CODE}:${String(press.index)}`;
+  }
+};
+
+const listIndexOf = (code: string): number | null =>
+  /^(?:0|[1-9]\d?)$/.test(code) && Number(code) < MAX_LIST_BUTTONS
+    ? Number(code)
+    : null;
+
+const indexOf = (code: string): SuggestionIndex | null => {
+  switch (code) {
+    case "0":
+      return 0;
+    case "1":
+      return 1;
+    case "2":
+      return 2;
+    default:
+      return null;
+  }
+};
 
 const actionOf = (code: string): ButtonAction | null => {
   switch (code) {
@@ -56,15 +119,41 @@ const kindOf = (code: string): SuggestionKind | null => {
   }
 };
 
-/** The press a button's data describes, or null for unknown data. */
+/**
+ * The press a button's data describes, or null for unknown data. The code
+ * of the action tells how to read the rest.
+ */
 export const decodeButton = (data: string | undefined): ButtonPress | null => {
-  const [version, actionCode = "", kindCode = "", ...rest] = (data ?? "").split(
-    ":",
-  );
-  if (version !== VERSION || rest.length > 0) {
+  const [version, code = "", ...args] = (data ?? "").split(":");
+  if (version !== VERSION) {
     return null;
   }
-  const action = actionOf(actionCode);
+  if (code === OPEN_CODE) {
+    const [indexCode = "", ...more] = args;
+    const index = listIndexOf(indexCode);
+    return index === null || more.length > 0 ? null : { type: "OPEN", index };
+  }
+  const [kindCode = "", ...extra] = args;
   const kind = kindOf(kindCode);
-  return action === null || kind === null ? null : { action, kind };
+  if (kind === null) {
+    return null;
+  }
+  if (code === SENT_CODE) {
+    const [indexCode, ...more] = extra;
+    if (indexCode === undefined) {
+      return { type: "SENT", kind, index: null };
+    }
+    const index = indexOf(indexCode);
+    return index === null || more.length > 0
+      ? null
+      : { type: "SENT", kind, index };
+  }
+  if (extra.length > 0) {
+    return null;
+  }
+  if (code === WRITE_CODE) {
+    return { type: "WRITE", kind };
+  }
+  const action = actionOf(code);
+  return action === null ? null : { type: "ANSWER", action, kind };
 };

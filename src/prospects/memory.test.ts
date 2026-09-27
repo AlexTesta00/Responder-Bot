@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { memoryOf } from "./memory.test-support.ts";
 import type { ConversationMessage } from "../conversations/domain.ts";
 import {
   messagesToAppend,
@@ -38,7 +39,7 @@ const OBSERVATION: Observation = {
   messages: CHAT,
 };
 
-const MEMORY: ProspectMemory = {
+const MEMORY: ProspectMemory = memoryOf({
   prospect: {
     id: "prospect-1",
     username: "mariofit",
@@ -59,7 +60,7 @@ const MEMORY: ProspectMemory = {
     updatedAt: new Date("2026-09-20T10:00:00Z"),
   },
   messages: CHAT.slice(0, 2),
-};
+});
 
 describe("messagesToAppend", () => {
   it("adds every message of a new conversation", () => {

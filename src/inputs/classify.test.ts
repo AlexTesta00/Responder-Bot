@@ -32,12 +32,94 @@ describe("classifyText", () => {
     expect(classifyText(text)).toStrictEqual({ type: "CREDIT", request });
   });
 
-  it.each(["/", "/startup", "/unknown", "/ciao come va", "/creditocard"])(
-    "marks %j as an unknown command",
+  it.each(["/oggi", "/oggi@AlexOutreachBot", "/OGGI", "/oggi per favore"])(
+    "asks for the day's agenda with %j",
     (text) => {
-      expect(classifyText(text)).toStrictEqual({ type: "UNKNOWN_COMMAND" });
+      expect(classifyText(text)).toStrictEqual({ type: "TODAY" });
     },
   );
+
+  it.each([
+    ["/prospect @mariofit", "mariofit"],
+    ["/prospect mariofit", "mariofit"],
+    ["/Prospect @MarioFit", "mariofit"],
+    ["/prospect@AlexOutreachBot @mariofit", "mariofit"],
+    ["/prospect\n@mariofit", "mariofit"],
+    ["/prospect https://www.instagram.com/mariofit/?igsh=MXZ0", "mariofit"],
+    ["/prospect instagram.com/giulia.bakery", "giulia.bakery"],
+  ])("reads the prospect named in %j", (text, username) => {
+    expect(classifyText(text)).toStrictEqual({ type: "PROSPECT", username });
+  });
+
+  it.each([
+    ["/nuovo", "NEW_PROSPECTS"],
+    ["/nuovo@AlexOutreachBot", "NEW_PROSPECTS"],
+    ["/lista", "LIST"],
+    ["/Lista tutti", "LIST"],
+  ])("recognizes %j", (text, type) => {
+    expect(classifyText(text)).toStrictEqual({ type });
+  });
+
+  it.each(["/followup", "/followup@AlexOutreachBot", "/FollowUp"])(
+    "lists the follow-ups with %j",
+    (text) => {
+      expect(classifyText(text)).toStrictEqual({ type: "FOLLOW_UPS" });
+    },
+  );
+
+  it.each([
+    ["/followup @mariofit", "mariofit"],
+    ["/followup MarioFit", "mariofit"],
+    ["/followup https://www.instagram.com/mariofit/", "mariofit"],
+  ])("asks for the follow-up of the prospect in %j", (text, username) => {
+    expect(classifyText(text)).toStrictEqual({
+      type: "FOLLOW_UP_FOR",
+      username,
+    });
+  });
+
+  it("refuses a follow-up for something that is not a username", () => {
+    expect(classifyText("/followup mario fit")).toStrictEqual({
+      type: "INVALID_USERNAME",
+      command: "followup",
+    });
+  });
+
+  it.each(["/prospect", "/prospect@AlexOutreachBot", "  /prospect  "])(
+    "leaves the prospect of %j to the message it replies to",
+    (text) => {
+      expect(classifyText(text)).toStrictEqual({
+        type: "PROSPECT",
+        username: null,
+      });
+    },
+  );
+
+  it.each([
+    "/prospect mario fit",
+    "/prospect ciao!",
+    "/prospect https://mariofit.it",
+    "/prospect https://www.instagram.com/p/C8x2kLsNqWz/",
+    "/prospect explore",
+  ])("refuses the username in %j", (text) => {
+    expect(classifyText(text)).toStrictEqual({
+      type: "INVALID_USERNAME",
+      command: "prospect",
+    });
+  });
+
+  it.each([
+    "/",
+    "/startup",
+    "/unknown",
+    "/ciao come va",
+    "/creditocard",
+    "/prospects",
+    "/oggigiorno",
+    "/followups",
+  ])("marks %j as an unknown command", (text) => {
+    expect(classifyText(text)).toStrictEqual({ type: "UNKNOWN_COMMAND" });
+  });
 
   it.each([
     ["@mariofit", "mariofit"],

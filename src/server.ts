@@ -21,8 +21,10 @@ import {
   type Env,
   type NodeEnv,
 } from "./config/env.ts";
-import { createButtonActions } from "./copilot/buttons.ts";
+import { createButtonActions, createCardWriting } from "./copilot/buttons.ts";
 import { createConversationAnalyst } from "./copilot/conversation.ts";
+import { createCrm } from "./copilot/crm.ts";
+import { createSendMarking } from "./copilot/sends.ts";
 import { createScreenshotsAnalyst } from "./copilot/screenshots.ts";
 import { createDatabase } from "./db/connection.ts";
 import { createMysqlGenerationLog } from "./db/generation-log.ts";
@@ -128,12 +130,22 @@ const start = async (env: Env): Promise<void> => {
           generations,
         }),
         pressButton: createButtonActions({ ai, prospects, generations }),
+        writeFromCard: createCardWriting({
+          ai,
+          prospects,
+          generations,
+          now: () => new Date(),
+        }),
         answerCallbackQuery: telegram.answerCallbackQuery,
         inFlight: createInFlight(),
+        markSent: createSendMarking({ prospects, now: () => new Date() }),
+        crm: createCrm({ prospects }),
+        linkItems: prospects.linkItems,
         linkMessages: prospects.linkMessages,
         spending,
         monthlyLimitMicroUsd: monthlyLimitOf(env),
         schedule: scheduleWithTimers,
+        now: () => new Date(),
       }),
     },
   });

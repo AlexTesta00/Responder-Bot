@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { memoryOf } from "../../prospects/memory.test-support.ts";
 import type { ProspectMemory } from "../../prospects/memory.ts";
 import { CONVERSATION_REPLY_TASK } from "./conversation-reply.ts";
 import { FIRST_MESSAGE_TASK } from "./first-message.ts";
@@ -71,16 +72,16 @@ describe("prompt layers", () => {
       NEW_SUGGESTIONS_TASK,
     ]);
     expect(promptSignature(PROMPT_LAYERS.NEW_SUGGESTIONS)).toBe(
-      "system-policy@2+communication-principles@3+memory@1+first-message@2+conversation-reply@3+new-suggestions@1",
+      "system-policy@2+communication-principles@3+memory@2+first-message@2+conversation-reply@3+new-suggestions@2",
     );
   });
 
   it("identifies each combination by its layers and versions", () => {
     expect(promptSignature(PROMPT_LAYERS.CONVERSATION_REPLY)).toBe(
-      "system-policy@2+communication-principles@3+pasted-conversation@1+memory@1+conversation-reply@3",
+      "system-policy@2+communication-principles@3+pasted-conversation@1+memory@2+conversation-reply@3",
     );
     expect(promptSignature(PROMPT_LAYERS.SCREENSHOTS)).toBe(
-      "system-policy@2+communication-principles@3+screenshots@3+memory@1+first-message@2+conversation-reply@3",
+      "system-policy@2+communication-principles@3+screenshots@3+memory@2+first-message@2+conversation-reply@3",
     );
   });
 
@@ -96,7 +97,7 @@ describe("prompt layers", () => {
   });
 });
 
-const MEMORY: ProspectMemory = {
+const MEMORY: ProspectMemory = memoryOf({
   prospect: {
     id: "prospect-1",
     username: "mariofit",
@@ -123,19 +124,68 @@ const MEMORY: ProspectMemory = {
     { author: "PROSPECT", text: "Una trentina a settimana" },
     { author: "ALEX", text: "Ti mando un esempio?" },
   ],
-};
+});
 
 const TODAY = new Date("2026-09-30T08:00:00Z");
 
 describe("memoryContext", () => {
+  it("dates the memory in Italian time", () => {
+    // 01:30 on 30 September in Italy, still the 29th in UTC.
+    const context = memoryContext(
+      {
+        ...MEMORY,
+        prospect: {
+          ...MEMORY.prospect,
+          updatedAt: new Date("2026-09-23T22:30:00Z"),
+        },
+      },
+      new Date("2026-09-29T23:30:00Z"),
+    );
+
+    expect(context).toContain("Today: 2026-09-30 (Europe/Rome)");
+    expect(context).toContain("Last updated: 2026-09-24");
+  });
+
+  it("lists what Alex marked as sent that no analysis has seen", () => {
+    const context = memoryContext(
+      memoryOf(MEMORY, [
+        {
+          kind: "FOLLOW_UPS",
+          style: "BEST",
+          text: "Ti preparo un esempio per i tuoi START?",
+          sentAt: new Date("2026-09-27T09:00:00Z"),
+        },
+        {
+          kind: "REPLIES",
+          style: null,
+          text: null,
+          sentAt: new Date("2026-09-28T09:00:00Z"),
+        },
+      ]),
+      TODAY,
+    );
+
+    expect(context).toContain("Alex's latest message: 2026-09-28 (2 days ago)");
+    expect(context).toContain(
+      [
+        "Messages Alex marked as sent that the messages above do not show yet, oldest first:",
+        "- 2026-09-27, follow-up, BEST: Ti preparo un esempio per i tuoi START?",
+        "- 2026-09-28, reply, style unknown: (text not recorded)",
+        "Alex's messages still without a reply at the end: 3 (the first one and 2 follow-ups; at most 2 follow-ups without a reply)",
+      ].join("\n"),
+    );
+  });
+
   it("describes what the bot remembers about the prospect", () => {
     expect(memoryContext(MEMORY, TODAY)).toBe(
       [
-        "Today: 2026-09-30",
+        "Today: 2026-09-30 (Europe/Rome)",
         "Username: @mariofit",
         "Name: Mario Rossi",
         "Business: personal trainer",
         "Last updated: 2026-09-24",
+        "Prospect's latest message seen: 2026-09-24 (6 days ago)",
+        "Alex's latest message: 2026-09-24 (6 days ago)",
         "Latest reading: stage DISCOVERY, intent INTERESTED, interest MEDIUM, next goal VALIDATE_PROBLEM",
         "Summary: Ha risposto con interesse al primo messaggio.",
         "Open objections:",
@@ -150,7 +200,7 @@ describe("memoryContext", () => {
         "Alex: Ciao Mario, quanti START ricevi?",
         "Prospect: Una trentina a settimana",
         "Alex: Ti mando un esempio?",
-        "Alex's messages still without a reply at the end: 1",
+        "Alex's messages still without a reply at the end: 1 (the first one; at most 2 follow-ups without a reply)",
       ].join("\n"),
     );
   });
@@ -158,7 +208,7 @@ describe("memoryContext", () => {
   it("leaves out what the memory does not hold yet", () => {
     expect(
       memoryContext(
-        {
+        memoryOf({
           prospect: {
             ...MEMORY.prospect,
             displayName: null,
@@ -170,12 +220,12 @@ describe("memoryContext", () => {
             commitments: [],
           },
           messages: [],
-        },
+        }),
         TODAY,
       ),
     ).toBe(
       [
-        "Today: 2026-09-30",
+        "Today: 2026-09-30 (Europe/Rome)",
         "Username: @mariofit",
         "Name: unknown",
         "Business: personal trainer",
@@ -272,13 +322,15 @@ describe("requests", () => {
   });
 
   it.each([
-    ["MORE", "FIRST_MESSAGES", "More: write three new first messages"],
+    ["MORE", "FIRST_MESSAGES", "Write three first messages from the memory."],
     [
       "DIRECT",
       "FOLLOW_UPS",
       "rewrite the previous follow-ups to be more direct",
     ],
-    ["FOLLOW_UP", "FOLLOW_UPS", "Write three follow-ups."],
+    ["FOLLOW_UP", "FOLLOW_UPS", "Alex's latest message has had no reply."],
+    ["MORE", "REPLIES", "Write three replies from the memory."],
+    ["NEXT_FOLLOW_UP", "FOLLOW_UPS", "Next follow-up: the memory shows"],
   ] as const)("asks %s for %s", (action, kind, expected) => {
     const request = newSuggestionsRequest(
       { action, kind, previous: [] },

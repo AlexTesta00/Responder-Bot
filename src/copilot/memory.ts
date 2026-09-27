@@ -3,13 +3,13 @@
 // result and record what the generations cost.
 import type { Generation } from "../ai/engine.ts";
 import type { GenerationLog, GenerationRun } from "../ai/runs.ts";
+import type { ConversationState } from "../conversations/domain.ts";
+import { transition, type Pause } from "../conversations/transition.ts";
 import {
-  activityOf,
-  transition,
-  unansweredMessages,
-  type Pause,
-  type Transition,
-} from "../conversations/transition.ts";
+  contactOfMemory,
+  pauseFor,
+  unansweredAfter,
+} from "../followups/contact.ts";
 import {
   messagesToAppend,
   remember,
@@ -25,7 +25,14 @@ export type ProspectReference =
   /** The @username written on the first line. */
   | Readonly<{ type: "USERNAME"; username: string }>
   /** A reply to, or a button under, a message the bot sent about them. */
-  | Readonly<{ type: "REPLY"; chatId: number; messageId: number }>;
+  | Readonly<{ type: "REPLY"; chatId: number; messageId: number }>
+  /** A button of a list of the bot, by its position in the list. */
+  | Readonly<{
+      type: "ITEM";
+      chatId: number;
+      messageId: number;
+      index: number;
+    }>;
 
 export type Resolved =
   | Readonly<{ type: "FOUND"; username: string }>
@@ -48,15 +55,27 @@ export const resolveReference = async (
     return { type: "FOUND", username: reference.username };
   }
   try {
-    const username = await prospects.prospectOfMessage(
-      reference.chatId,
-      reference.messageId,
-    );
+    const username =
+      reference.type === "REPLY"
+        ? await prospects.prospectOfMessage(
+            reference.chatId,
+            reference.messageId,
+          )
+        : await prospects.prospectOfItem(
+            reference.chatId,
+            reference.messageId,
+            reference.index,
+          );
     return username === null
       ? { type: "UNKNOWN" }
       : { type: "FOUND", username };
   } catch (error) {
-    log.error(errorFields(error), "prospect of the reply unavailable");
+    log.error(
+      errorFields(error),
+      reference.type === "REPLY"
+        ? "prospect of the reply unavailable"
+        : "prospect of the list item unavailable",
+    );
     return { type: "UNAVAILABLE" };
   }
 };
@@ -121,47 +140,54 @@ export const logGeneration = <T>(
  * reading, as with a profile, the stored state stays and so do its pauses;
  * with no state at all there is nothing to move.
  */
+/**
+ * What the transition rules decided: the state to remember, or null when
+ * there is none to store, and why Alex should not write now.
+ */
+export type Move = Readonly<{
+  state: ConversationState | null;
+  pause: Pause | null;
+}>;
+
 export const conversationMove = (
   memory: ProspectMemory | null,
   observation: Observation,
-): Transition | null => {
-  const stored = memory?.messages ?? [];
-  const activity = activityOf(
-    stored,
-    messagesToAppend(stored, observation.messages),
-  );
+): Move | null => {
+  const added = messagesToAppend(memory?.messages ?? [], observation.messages);
+  // Alex's messages the analysis saw, and those Alex marked as sent.
+  const activity = {
+    newProspectMessages: added.filter(({ author }) => author === "PROSPECT")
+      .length,
+    unansweredMessages: unansweredAfter(memory, added),
+  };
   const previous = memory?.prospect.conversation ?? null;
   if (observation.conversation !== null) {
     return transition(previous, observation.conversation, activity);
   }
-  return previous === null ? null : transition(previous, previous, activity);
+  if (previous !== null) {
+    return transition(previous, previous, activity);
+  }
+  // No reading yet: the follow-up limit still holds, and nothing is stored.
+  const pause = pauseFor(null, activity.unansweredMessages);
+  return pause === null ? null : { state: null, pause };
 };
 
 /**
  * Why no message should be suggested now, from the memory alone: the same
- * transition rules as an analysis that observed nothing new. `assumedSent`
- * counts a message Alex says was sent and the memory does not show yet, as
- * when asking for follow-ups: never more permissive than the memory.
+ * transition rules as an analysis that observed nothing new, counting the
+ * messages Alex marked as sent.
  */
-export const pauseOf = (
-  memory: ProspectMemory,
-  assumedSent: 0 | 1,
-): Pause | null => {
-  const previous = memory.prospect.conversation;
-  return previous === null
-    ? null
-    : transition(previous, previous, {
-        newProspectMessages: 0,
-        unansweredMessages: unansweredMessages(memory.messages) + assumedSent,
-      }).pause;
-};
+export const pauseOf = (memory: ProspectMemory): Pause | null =>
+  pauseFor(memory.prospect.conversation, contactOfMemory(memory).unanswered);
 
 /** The observation with the state the transition rules decided. */
 export const moved = (
   observation: Observation,
-  move: Transition | null,
-): Observation =>
-  move === null ? observation : { ...observation, conversation: move.state };
+  move: Move | null,
+): Observation => {
+  const state = move?.state ?? null;
+  return state === null ? observation : { ...observation, conversation: state };
+};
 
 export type MemorySteps = Readonly<{
   load: (username: string, log: Logger) => Promise<Loaded>;

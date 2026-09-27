@@ -584,6 +584,8 @@ Il bot produce suggerimenti.
 
 Alex prende la decisione finale.
 
+Eccezione decisa da Alex dopo la V1: su WhatsApp Business, e solo con chi scrive ad Alex, il bot passa per gradi dalle risposte approvate a un pilota automatico limitato ai casi sicuri (Sprint 11-13). Su Instagram non cambia nulla: il bot non scrive mai da solo.
+
 ## 12. Filosofia ingegneristica
 
 La qualità del codice è una priorità primaria del progetto.
@@ -1359,7 +1361,7 @@ Hostinger
 
 GitHub non deve necessariamente conoscere tutti i secret dell'applicazione.
 
-La strategia definitiva verrà scelta nello Sprint 10 in base al metodo di deployment utilizzato.
+La strategia definitiva verrà scelta nello Sprint 09 in base al metodo di deployment utilizzato.
 
 ## 35. `.env.example`
 
@@ -1594,7 +1596,7 @@ documentazione aggiornata quando necessario
 
 ## 42. Sprint strategy
 
-Lo sviluppo è suddiviso in 10 sprint.
+Lo sviluppo della V1 è suddiviso in 10 sprint. Dopo la V1, su richiesta di Alex, gli sprint 11-13 aggiungono WhatsApp Business.
 
 Ogni sprint introduce un insieme coerente di capacità.
 
@@ -2156,74 +2158,9 @@ Summary:
 
 Il sistema deve identificare conversazioni per cui avrebbe senso un follow-up senza trasformarsi in uno strumento di spam.
 
-### Sprint 09 — Learning & Analytics
+### Sprint 09 — Production & Hardening
 
-#### Obiettivo
-
-Utilizzare i dati reali di outreach per capire quali approcci funzionano meglio.
-
-Non verrà implementato un sistema di machine learning complesso.
-
-Inizialmente verranno raccolti segnali semplici.
-
-#### Dati
-
-```text
-messaggio scelto
-
-stile
-
-settore prospect
-
-risposta ricevuta
-
-tempo alla risposta
-
-conversation stage
-
-eventuale conversione
-```
-
-#### Esempio
-
-```text
-Personal Trainer
-
-Curiosity approach:
-48% response rate
-
-Natural approach:
-41%
-
-Direct approach:
-26%
-```
-
-Questi numeri saranno basati esclusivamente sui dati reali raccolti.
-
-#### Possibili comandi
-
-```text
-/stats
-
-/performance
-```
-
-#### Obiettivo futuro
-
-Consentire all'agente di utilizzare i risultati storici come segnale aggiuntivo:
-
-```text
-generic best practice
-        +
-prospect context
-        +
-Alex historical performance
-```
-
-senza sacrificare la personalizzazione del singolo caso.
-
-### Sprint 10 — Production & Hardening
+Anticipato prima di Learning & Analytics su richiesta di Alex: intanto i ✅ raccolgono i dati su cui si basano le statistiche, e backup e avvisi sono pronti prima di WhatsApp.
 
 #### Obiettivo
 
@@ -2313,6 +2250,194 @@ GET /health/ready
 `/health` indica che il processo è vivo.
 
 `/health/ready` indica che le dipendenze critiche necessarie per servire richieste sono disponibili.
+
+### Sprint 10 — Learning & Analytics
+
+#### Obiettivo
+
+Utilizzare i dati reali di outreach per capire quali approcci funzionano meglio.
+
+Non verrà implementato un sistema di machine learning complesso.
+
+Inizialmente verranno raccolti segnali semplici.
+
+#### Dati
+
+```text
+messaggio scelto
+
+stile
+
+settore prospect
+
+risposta ricevuta
+
+tempo alla risposta
+
+conversation stage
+
+eventuale conversione
+```
+
+#### Da sistemare
+
+Oggi l'ora del tap su ✅ vale come ora dell'invio. Un ✅ toccato dopo che uno screenshot ha già mostrato quel messaggio lo conta due volte; se lo screenshot mostrava anche la risposta del prospect, il prospect esce da "da rispondere". Collegando ogni invio alle risposte, lo sprint lo ricollega anche ai messaggi di Alex visti negli screenshot, confrontando il testo.
+
+#### Esempio
+
+```text
+Personal Trainer
+
+Curiosity approach:
+48% response rate
+
+Natural approach:
+41%
+
+Direct approach:
+26%
+```
+
+Questi numeri saranno basati esclusivamente sui dati reali raccolti.
+
+#### Possibili comandi
+
+```text
+/stats
+
+/performance
+```
+
+#### Obiettivo futuro
+
+Consentire all'agente di utilizzare i risultati storici come segnale aggiuntivo:
+
+```text
+generic best practice
+        +
+prospect context
+        +
+Alex historical performance
+```
+
+senza sacrificare la personalizzazione del singolo caso.
+
+### Sprint 11 — WhatsApp Channel
+
+#### Obiettivo
+
+Collegare WhatsApp Business: i messaggi di chi scrive ad Alex su WhatsApp arrivano al bot, e le risposte partono solo con l'approvazione di Alex. Prima con approvazione, poi pilota automatico: scelta di Alex.
+
+#### Prerequisiti
+
+```text
+account Meta Business
+
+numero collegato alla WhatsApp Business Platform (Cloud API)
+
+webhook su https://aboutly.site, lo stesso server del bot
+```
+
+Numero: Alex ha un numero business dedicato. All'inizio dello sprint si verifica se resta usabile anche nell'app WhatsApp Business o se passa solo all'API.
+
+#### Funzionalità
+
+```text
+webhook WhatsApp con verifica della firma di Meta
+
+ogni cliente diventa un prospect con canale whatsapp (colonna platform)
+
+messaggio del cliente → Telegram: analisi e tre risposte proposte
+
+✅ Invia su WhatsApp: la risposta scelta parte solo dopo il tap di Alex
+
+stessa memoria per prospect e stesse regole di transizione
+```
+
+#### Vincoli
+
+- Entro 24 ore dall'ultimo messaggio del cliente si può rispondere liberamente; dopo, solo con modelli di messaggio approvati da Meta, a pagamento. Fuori finestra il bot lo dice e non invia.
+- Il bot parla solo dei servizi di Alex: le regole di Meta escludono dall'API gli assistenti AI generici. Da ricontrollare all'inizio dello sprint.
+- Ogni messaggio in arrivo costa una generazione: si usa il modello più economico che risponde bene, e la riga dei costi resta.
+- I log non contengono numeri di telefono né testi, solo `prospect_id`.
+
+#### Risultato atteso
+
+Alex riceve su Telegram ogni messaggio WhatsApp con tre risposte, ne sceglie una e il bot la manda al cliente.
+
+### Sprint 12 — Lead Qualification
+
+#### Obiettivo
+
+Fare al cliente le domande giuste per preparare un preventivo, sempre con l'approvazione di Alex.
+
+#### Domande
+
+```text
+che attività ha
+
+cosa serve: sito, landing, e-commerce, prenotazioni, automazioni, software o app, assistenza
+
+cosa usa oggi
+
+tempi
+
+budget indicativo
+
+come preferisce essere ricontattato
+```
+
+#### Funzionalità
+
+```text
+una domanda alla volta, adattata a quello che il cliente ha già detto
+
+scheda del lead su Telegram quando le risposte bastano
+
+prezzi, preventivi, reclami e richieste fuori tema passano sempre ad Alex
+```
+
+#### Risultato atteso
+
+Alex riceve una scheda con quello che serve per il preventivo, senza chiederlo una domanda alla volta.
+
+### Sprint 13 — WhatsApp Autopilot
+
+#### Obiettivo
+
+Lasciare che il bot risponda da solo nei casi sicuri, dopo che le risposte approvate hanno dimostrato di funzionare. Scelta di Alex.
+
+#### Casi automatici
+
+```text
+saluti
+
+domande di qualificazione
+
+informazioni sui servizi di Alex
+
+fissare una call
+```
+
+#### Limiti
+
+```text
+mai prezzi, sconti o scadenze promesse
+
+solo negli orari scelti da Alex
+
+stop immediato da Telegram, per tutti o per un cliente
+
+Alex può prendere in mano qualsiasi conversazione
+
+nel dubbio il bot passa ad Alex invece di rispondere
+
+il cliente sa che sta scrivendo con un assistente
+```
+
+#### Risultato atteso
+
+I clienti ricevono risposta anche quando Alex non è disponibile; Alex interviene solo quando serve.
 
 ## 43. Sprint completion policy
 
@@ -2562,7 +2687,7 @@ Il risultato finale deve essere una conversazione che sembra naturale perché na
 Current development phase:
 
 ```text
-Sprint 07 — Telegram UX
+Sprint 08 — Personal CRM
 (implemented; pull request to main, end-to-end test on the
 deployment that follows the merge)
 ```
@@ -2627,8 +2752,8 @@ message of the bot or by @username on the first line, as Alex chose.
 The spec's objections/promises/transitions are covered; follow-up
 scheduling and the prospect list are left to the Personal CRM sprint.)
 
-Sprint 07 — Telegram UX: implemented
-(one message per answer, as Alex chose: suggestions on top with a
+Sprint 07 — Telegram UX ✅
+(deployed on https://aboutly.site; one message per answer, as Alex chose: suggestions on top with a
 copy button each, the analysis in an expandable block, a cost line at
 the bottom; suggestions within 250 characters so each one fits a copy
 button. For a known prospect: 🔄 three more, 🙂 more natural, 🎯 more
@@ -2641,12 +2766,33 @@ holds only version, action and kind. Added at Alex's request: the
 estimated cost of each answer, the month's spending, what is left of
 the monthly limit and of the credit Alex sets with /credito, since no
 API exposes the Console's credit.)
+
+Sprint 08 — Personal CRM: implemented
+(Telegram as the panel of the outreach, read from the memory without
+AI: /oggi lists whom to answer, hottest first, and the follow-ups due;
+/followup lists those due and coming, and /followup @name writes one
+only once it is due; /prospect @name, or @name alone, opens the card
+with the last contact, what to do next and the buttons to do it;
+/nuovo lists the profiles still to contact and /lista every prospect
+by stage. ✅ Inviato beside each copy button records the suggestion
+sent, with its kind, style and text, in prospect_sends, as Alex chose:
+the unanswered count adds the sends to what the screenshots show,
+without counting a message twice. Follow-ups are due 3 days after
+Alex's last message and 5 after the first, 7 for a busy prospect, as
+Alex chose, counting calendar days in Italy; from the card and
+/followup @name they are written only once due, while 💬 under the
+suggestions stays free within the 2 allowed. The list buttons hold
+only their position, mapped to the prospect in telegram_list_items.
+The command menu is registered with npm run telegram:webhook --
+commands.)
 ```
 
 Next milestone:
 
 ```text
-Sprint 08 — Personal CRM
+Sprint 09 — Production & Hardening
+(moved before Learning & Analytics, as Alex chose: the statistics
+of Sprint 10 then start from real data)
 ```
 
 ## 51. Final project philosophy

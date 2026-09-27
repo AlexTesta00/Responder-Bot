@@ -1,5 +1,7 @@
-import { unansweredMessages } from "../../conversations/transition.ts";
+import { MAX_FOLLOW_UPS } from "../../conversations/transition.ts";
 import type { ProspectMemory } from "../../prospects/memory.ts";
+import { contactOfMemory } from "../../followups/contact.ts";
+import { daysBetween, romeDate } from "../../shared/time.ts";
 import type { SuggestionAction, SuggestionsRequest } from "../engine.ts";
 import type { SuggestionKind } from "../outputs.ts";
 import { CONVERSATION_REPLY_TASK } from "./conversation-reply.ts";
@@ -69,27 +71,61 @@ export const PROSPECT_IDENTITY_REQUEST =
 const listed = (title: string, items: readonly string[]): string[] =>
   items.length === 0 ? [] : [title, ...items.map((item) => `- ${item}`)];
 
-const day = (date: Date): string => date.toISOString().slice(0, 10);
-
 const speaker = (author: "ALEX" | "PROSPECT"): string =>
   author === "ALEX" ? "Alex" : "Prospect";
 
+const dated = (instant: Date, today: Date): string => {
+  const days = daysBetween(instant, today);
+  const ago =
+    days === 0
+      ? "today"
+      : days === 1
+        ? "1 day ago"
+        : `${String(days)} days ago`;
+  return `${romeDate(instant)} (${ago})`;
+};
+
+const KIND_WORDS: Readonly<Record<SuggestionKind, string>> = {
+  FIRST_MESSAGES: "first message",
+  REPLIES: "reply",
+  FOLLOW_UPS: "follow-up",
+};
+
+/** "the first one and 1 follow-up; at most 2 follow-ups without a reply". */
+const unansweredDetail = (followUpsSent: number): string =>
+  [
+    "the first one",
+    followUpsSent === 0
+      ? ""
+      : ` and ${String(followUpsSent)} follow-up${followUpsSent === 1 ? "" : "s"}`,
+    `; at most ${String(MAX_FOLLOW_UPS)} follow-ups without a reply`,
+  ].join("");
+
 /**
- * What the memory holds about a prospect, as the model reads it. `today`
- * tells how long ago the last analysis was.
+ * What the memory holds about a prospect, as the model reads it, with the
+ * days since each side last wrote and what Alex marked as sent.
  */
-export const memoryContext = (
-  { prospect, messages }: ProspectMemory,
-  today: Date,
-): string => {
-  const unanswered = unansweredMessages(messages);
+export const memoryContext = (memory: ProspectMemory, today: Date): string => {
+  const { prospect, messages } = memory;
+  const contact = contactOfMemory(memory);
+  const { lastProspectMessageAt, lastAlexMessageAt } = memory.contact;
+  const alexLast =
+    contact.unanswered > 0 ? contact.lastOutboundAt : lastAlexMessageAt;
   const reading = prospect.conversation;
   return [
-    `Today: ${day(today)}`,
+    `Today: ${romeDate(today)} (Europe/Rome)`,
     `Username: @${prospect.username}`,
     `Name: ${prospect.displayName ?? "unknown"}`,
     `Business: ${prospect.businessType ?? "unknown"}`,
-    `Last updated: ${day(prospect.updatedAt)}`,
+    `Last updated: ${romeDate(prospect.updatedAt)}`,
+    ...(lastProspectMessageAt === null
+      ? []
+      : [
+          `Prospect's latest message seen: ${dated(lastProspectMessageAt, today)}`,
+        ]),
+    ...(alexLast === null
+      ? []
+      : [`Alex's latest message: ${dated(alexLast, today)}`]),
     ...(reading === null
       ? []
       : [
@@ -113,10 +149,17 @@ export const memoryContext = (
             (message) => `${speaker(message.author)}: ${message.text}`,
           ),
         ]),
-    ...(unanswered === 0
+    ...listed(
+      "Messages Alex marked as sent that the messages above do not show yet, oldest first:",
+      contact.pending.map(
+        ({ kind, style, text, sentAt }) =>
+          `${romeDate(sentAt)}, ${KIND_WORDS[kind]}, ${style ?? "style unknown"}: ${text ?? "(text not recorded)"}`,
+      ),
+    ),
+    ...(contact.unanswered === 0
       ? []
       : [
-          `Alex's messages still without a reply at the end: ${String(unanswered)}`,
+          `Alex's messages still without a reply at the end: ${String(contact.unanswered)} (${unansweredDetail(contact.followUpsSent)})`,
         ]),
   ].join("\n");
 };
@@ -152,17 +195,24 @@ const KIND_NAMES: Readonly<Record<SuggestionKind, string>> = {
   FOLLOW_UPS: "follow-ups",
 };
 
+/** What each action asks, with or without the suggestions Alex saw. */
 const ACTION_REQUESTS: Readonly<
-  Record<SuggestionAction, (kind: string) => string>
+  Record<SuggestionAction, (kind: string, shown: boolean) => string>
 > = {
-  MORE: (kind) =>
-    `More: write three new ${kind}, different from the previous ones.`,
+  MORE: (kind, shown) =>
+    shown
+      ? `More: write three new ${kind}, different from the previous ones.`
+      : `Write three ${kind} from the memory.`,
   NATURAL: (kind) =>
     `More natural: rewrite the previous ${kind} to sound more natural.`,
   DIRECT: (kind) =>
     `More direct: rewrite the previous ${kind} to be more direct.`,
-  FOLLOW_UP: () =>
-    "Follow-ups: Alex sent one of the previous messages and the prospect has not replied. Write three follow-ups.",
+  FOLLOW_UP: (_kind, shown) =>
+    shown
+      ? "Follow-ups: Alex sent one of the previous messages and the prospect has not replied. Write three follow-ups."
+      : "Follow-ups: Alex's latest message has had no reply. Write three follow-ups.",
+  NEXT_FOLLOW_UP: () =>
+    "Next follow-up: the memory shows or counts Alex's messages without a reply and when the last one was sent. Write three follow-ups.",
 };
 
 /** What a button asks, with the suggestions Alex saw and the memory. */
@@ -172,7 +222,7 @@ export const newSuggestionsRequest = (
   today: Date,
 ): string =>
   [
-    ACTION_REQUESTS[action](KIND_NAMES[kind]),
+    ACTION_REQUESTS[action](KIND_NAMES[kind], previous.length > 0),
     ...(previous.length === 0
       ? []
       : [

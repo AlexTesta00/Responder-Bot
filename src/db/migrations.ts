@@ -164,6 +164,49 @@ export const MIGRATIONS: Readonly<Record<string, Migration>> = {
       `.execute(db);
     },
   },
+  // What Alex marked as sent, one per message of the bot: the kind, the
+  // style and the text of the suggestion, when known.
+  "0006_prospect_sends": {
+    up: async (db) => {
+      await sql`
+        CREATE TABLE prospect_sends (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          prospect_id CHAR(36) CHARACTER SET ascii NOT NULL,
+          chat_id BIGINT NOT NULL,
+          message_id BIGINT NOT NULL,
+          kind VARCHAR(20) CHARACTER SET ascii NOT NULL,
+          style VARCHAR(20) CHARACTER SET ascii NULL,
+          body TEXT NULL,
+          sent_at DATETIME(3) NOT NULL,
+          PRIMARY KEY (id),
+          UNIQUE KEY prospect_sends_bot_message (chat_id, message_id),
+          KEY prospect_sends_prospect (prospect_id, sent_at),
+          CONSTRAINT prospect_sends_prospect_fk FOREIGN KEY (prospect_id)
+            REFERENCES prospects (id) ON DELETE CASCADE
+        ) ${TABLE_OPTIONS}
+      `.execute(db);
+    },
+  },
+  // Which prospect each button of a list of the bot opens, by its position
+  // in the list: never worked out again from lists that changed since.
+  "0007_telegram_list_items": {
+    up: async (db) => {
+      await sql`
+        CREATE TABLE telegram_list_items (
+          chat_id BIGINT NOT NULL,
+          message_id BIGINT NOT NULL,
+          item_index TINYINT UNSIGNED NOT NULL,
+          prospect_id CHAR(36) CHARACTER SET ascii NOT NULL,
+          created_at DATETIME(3) NOT NULL,
+          PRIMARY KEY (chat_id, message_id, item_index),
+          KEY telegram_list_items_prospect_id (prospect_id),
+          KEY telegram_list_items_created_at (created_at),
+          CONSTRAINT telegram_list_items_prospect_fk FOREIGN KEY (prospect_id)
+            REFERENCES prospects (id) ON DELETE CASCADE
+        ) ${TABLE_OPTIONS}
+      `.execute(db);
+    },
+  },
 };
 
 export type MigrationFailure = Readonly<{

@@ -1,10 +1,13 @@
 // What the bot remembers about each prospect, and how a new analysis updates
 // it. Pure functions: storing the result is the job of a ProspectStore.
+import type { SuggestionKind, SuggestionStyle } from "../ai/outputs.ts";
 import type {
   Commitment,
   ConversationMessage,
   ConversationState,
+  MessageAuthor,
 } from "../conversations/domain.ts";
+import { unansweredMessages } from "../conversations/transition.ts";
 
 /** Everything remembered about a prospect, except the messages. */
 export type ProspectProfile = Readonly<{
@@ -29,11 +32,95 @@ export type Prospect = ProspectProfile &
     updatedAt: Date;
   }>;
 
+/** A message Alex marked as sent, among the suggestions the bot showed. */
+export type Send = Readonly<{
+  kind: SuggestionKind;
+  /** Null when Alex did not say which suggestion it was. */
+  style: SuggestionStyle | null;
+  /** What was sent, when the bot could read it back. */
+  text: string | null;
+  sentAt: Date;
+}>;
+
+/**
+ * When the bot saw each side write, and what Alex marked as sent. The times
+ * are those at which the bot stored the messages: the real messages were
+ * sent then or earlier.
+ */
+export type ContactFacts = Readonly<{
+  lastProspectMessageAt: Date | null;
+  lastAlexMessageAt: Date | null;
+  /** When an analysis last added messages. */
+  lastMessageAt: Date | null;
+  /** What Alex marked as sent after the prospect's latest message, oldest first. */
+  sends: readonly Send[];
+}>;
+
 /** A prospect with the latest messages of the conversation, oldest first. */
 export type ProspectMemory = Readonly<{
   prospect: Prospect;
   messages: readonly ConversationMessage[];
+  contact: ContactFacts;
 }>;
+
+/**
+ * A prospect as the lists see it: the facts of the contact, as the memory
+ * gives them, without the messages themselves.
+ */
+export type ProspectOverview = Readonly<{
+  prospect: Prospect;
+  /** How many messages the memory holds: the latest ones only. */
+  storedMessages: number;
+  /** Alex's messages at the end of the stored conversation. */
+  storedUnanswered: number;
+  contact: ContactFacts;
+}>;
+
+export const overviewOf = ({
+  prospect,
+  messages,
+  contact,
+}: ProspectMemory): ProspectOverview => ({
+  prospect,
+  storedMessages: messages.length,
+  storedUnanswered: unansweredMessages(messages),
+  contact,
+});
+
+/**
+ * Sends kept for each prospect; only those after the prospect's latest
+ * message matter, and a few of them already stop the follow-ups.
+ */
+export const MAX_STORED_SENDS = 50;
+
+/** Sends loaded with the memory: more than 3 would already be a pause. */
+export const MAX_LOADED_SENDS = 10;
+
+/** Who wrote a stored message, and when the bot stored it. */
+export type StoredAt = Readonly<{ author: MessageAuthor; at: Date }>;
+
+const latest = (times: readonly Date[]): Date | null =>
+  times.reduce<Date | null>(
+    (last, time) =>
+      last === null || time.getTime() > last.getTime() ? time : last,
+    null,
+  );
+
+export const contactFactsOf = (
+  stored: readonly StoredAt[],
+  sends: readonly Send[],
+): ContactFacts => {
+  const by = (author: MessageAuthor): Date | null =>
+    latest(
+      stored.filter((message) => message.author === author).map(({ at }) => at),
+    );
+  return {
+    lastProspectMessageAt: by("PROSPECT"),
+    lastAlexMessageAt: by("ALEX"),
+    lastMessageAt: latest(stored.map(({ at }) => at)),
+    sends,
+  };
+};
 
 /** What one analysis learned about a prospect. */
 export type Observation = Readonly<{
@@ -84,6 +171,10 @@ const optionalText = (text: string | null, max: number): string | null => {
   const truncated = text === null ? "" : truncate(text, max);
   return truncated === "" ? null : truncated;
 };
+
+/** The text of a send as it is stored, like the text of a message. */
+export const storedSendText = (text: string | null): string | null =>
+  optionalText(text, MAX_TEXT_LENGTH);
 
 /** Screenshots of the same text can differ in spacing, case or accents. */
 const comparable = (text: string): string =>

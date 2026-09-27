@@ -13,6 +13,7 @@ export type TelegramMethod =
   | "answerCallbackQuery"
   | "setWebhook"
   | "getWebhookInfo"
+  | "setMyCommands"
   | "getFile"
   | "downloadFile";
 
@@ -125,6 +126,10 @@ export type TelegramClient = Readonly<{
     options: SetWebhookOptions,
   ) => Promise<Result<void, TelegramError>>;
   getWebhookInfo: () => Promise<Result<WebhookInfo, TelegramError>>;
+  /** The menu of commands, for every private chat. */
+  setMyCommands: (
+    commands: readonly Readonly<{ command: string; description: string }>[],
+  ) => Promise<Result<void, TelegramError>>;
   getFile: (fileId: string) => Promise<Result<TelegramFile, TelegramError>>;
   /** Downloads a file into memory, refusing anything above `maxBytes`. */
   downloadFile: (
@@ -184,6 +189,8 @@ const buttonParams = (button: InlineButton): Record<string, unknown> => {
 /**
  * The body of sendMessage: options appear only when they are given. Texts
  * are made well-formed, since Telegram refuses a lone half of an emoji.
+ * Link previews are off: lists link to Instagram profiles, which should
+ * neither fill the chat nor be fetched by Telegram.
  */
 const messageParams = (
   chatId: TelegramChatId,
@@ -192,6 +199,7 @@ const messageParams = (
 ): Record<string, unknown> => ({
   chat_id: chatId,
   text: text.toWellFormed(),
+  link_preview_options: { is_disabled: true },
   ...(parseMode === undefined ? {} : { parse_mode: parseMode }),
   ...(keyboard === undefined
     ? {}
@@ -405,6 +413,19 @@ export const createTelegramClient = ({
         ),
       ),
     getWebhookInfo: () => call("getWebhookInfo", {}, webhookInfoSchema),
+    setMyCommands: async (commands) =>
+      withoutValue(
+        await call(
+          "setMyCommands",
+          {
+            commands: commands.map(({ command, description }) => ({
+              command,
+              description,
+            })),
+          },
+          z.literal(true),
+        ),
+      ),
     getFile: (fileId) => call("getFile", { file_id: fileId }, fileSchema),
     downloadFile,
   };

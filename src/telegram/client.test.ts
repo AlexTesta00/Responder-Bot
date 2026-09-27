@@ -60,7 +60,11 @@ describe("createTelegramClient", () => {
       {
         url: `https://api.telegram.org/bot${TOKEN}/sendMessage`,
         method: "POST",
-        body: { chat_id: 42, text: "Ciao!" },
+        body: {
+          chat_id: 42,
+          text: "Ciao!",
+          link_preview_options: { is_disabled: true },
+        },
       },
     ]);
   });
@@ -76,6 +80,7 @@ describe("createTelegramClient", () => {
     expect(requests[0]?.body).toStrictEqual({
       chat_id: 42,
       text: "<b>Ciao</b>",
+      link_preview_options: { is_disabled: true },
       parse_mode: "HTML",
     });
   });
@@ -129,6 +134,7 @@ describe("createTelegramClient", () => {
     expect(requests[0]?.body).toStrictEqual({
       chat_id: 42,
       text: "Proposte",
+      link_preview_options: { is_disabled: true },
       parse_mode: "HTML",
       reply_markup: {
         inline_keyboard: [
@@ -230,6 +236,25 @@ describe("createTelegramClient", () => {
       secret_token: "s".repeat(32),
       allowed_updates: ["message"],
       drop_pending_updates: true,
+    });
+  });
+
+  it("registers the menu of commands", async () => {
+    const { fetchFn, requests } = fakeFetch(() =>
+      jsonResponse(200, { ok: true, result: true }),
+    );
+    const client = createTelegramClient({ token: TOKEN, fetch: fetchFn });
+
+    const result = await client.setMyCommands([
+      { command: "oggi", description: "A chi rispondere oggi" },
+    ]);
+
+    expect(result).toStrictEqual({ ok: true, value: undefined });
+    expect(requests[0]?.url).toBe(
+      `https://api.telegram.org/bot${TOKEN}/setMyCommands`,
+    );
+    expect(requests[0]?.body).toStrictEqual({
+      commands: [{ command: "oggi", description: "A chi rispondere oggi" }],
     });
   });
 
