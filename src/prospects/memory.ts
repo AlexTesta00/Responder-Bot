@@ -62,6 +62,15 @@ export type ProspectMemory = Readonly<{
   contact: ContactFacts;
 }>;
 
+/**
+ * Sends kept for each prospect; only those after the prospect's latest
+ * message matter, and a few of them already stop the follow-ups.
+ */
+export const MAX_STORED_SENDS = 50;
+
+/** Sends loaded with the memory: more than 3 would already be a pause. */
+export const MAX_LOADED_SENDS = 10;
+
 /** Who wrote a stored message, and when the bot stored it. */
 export type StoredAt = Readonly<{ author: MessageAuthor; at: Date }>;
 
@@ -137,6 +146,10 @@ const optionalText = (text: string | null, max: number): string | null => {
   const truncated = text === null ? "" : truncate(text, max);
   return truncated === "" ? null : truncated;
 };
+
+/** The text of a send as it is stored, like the text of a message. */
+export const storedSendText = (text: string | null): string | null =>
+  optionalText(text, MAX_TEXT_LENGTH);
 
 /** Screenshots of the same text can differ in spacing, case or accents. */
 const comparable = (text: string): string =>

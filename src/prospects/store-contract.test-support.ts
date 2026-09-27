@@ -255,6 +255,147 @@ export const describeProspectStore = (name: string, open: OpenStore): void => {
       });
     });
 
+    describe("sends", () => {
+      const CHAT = 42;
+
+      /** A store with Mario, and message 1001 of the bot about Mario. */
+      const withMario = async () => {
+        const store = await open(dependencies());
+        const memory = await store.save({
+          profile: MARIO,
+          newMessages: [alex("Ciao Mario!")],
+        });
+        await store.linkMessages(memory.prospect.id, CHAT, [1_001]);
+        return { store, id: memory.prospect.id };
+      };
+
+      const best = {
+        chatId: CHAT,
+        messageId: 1_001,
+        kind: "FIRST_MESSAGES",
+        style: "BEST",
+        text: "Ciao Mario 💪 quanti START ricevi?",
+      } as const;
+
+      it("marks the suggestion Alex sent from a message about the prospect", async () => {
+        const { store, id } = await withMario();
+
+        expect(await store.recordSend(best)).toStrictEqual({
+          type: "RECORDED",
+          prospectId: id,
+          username: "mariofit",
+          sentAt: at(3),
+        });
+        expect((await store.load("mariofit"))?.contact.sends).toStrictEqual([
+          {
+            kind: "FIRST_MESSAGES",
+            style: "BEST",
+            text: "Ciao Mario 💪 quanti START ricevi?",
+            sentAt: at(3),
+          },
+        ]);
+      });
+
+      it("keeps one send per message, corrected when it names another suggestion", async () => {
+        const { store, id } = await withMario();
+        await store.recordSend(best);
+
+        const again = await store.recordSend(best);
+        const unnamed = await store.recordSend({
+          ...best,
+          style: null,
+          text: null,
+        });
+        const other = await store.recordSend({
+          ...best,
+          style: "NATURAL",
+          text: "Bello il format START!",
+        });
+
+        const kept = { prospectId: id, username: "mariofit", sentAt: at(3) };
+        expect([again, unnamed, other]).toStrictEqual([
+          { type: "UNCHANGED", ...kept },
+          { type: "UNCHANGED", ...kept },
+          { type: "CORRECTED", ...kept },
+        ]);
+        expect((await store.load("mariofit"))?.contact.sends).toStrictEqual([
+          {
+            kind: "FIRST_MESSAGES",
+            style: "NATURAL",
+            text: "Bello il format START!",
+            sentAt: at(3),
+          },
+        ]);
+      });
+
+      it("marks nothing for a message about no prospect", async () => {
+        const { store } = await withMario();
+
+        expect(
+          await store.recordSend({ ...best, messageId: 9_999 }),
+        ).toStrictEqual({ type: "NOT_LINKED" });
+        expect((await store.load("mariofit"))?.contact.sends).toStrictEqual([]);
+      });
+
+      it("loads only what Alex sent after the prospect's latest message", async () => {
+        const { store, id } = await withMario();
+        await store.recordSend(best);
+        await store.save({
+          profile: MARIO,
+          newMessages: [prospect("Tanti! Perché?")],
+        });
+        await store.linkMessages(id, CHAT, [1_002]);
+        await store.recordSend({
+          chatId: CHAT,
+          messageId: 1_002,
+          kind: "REPLIES",
+          style: null,
+          text: null,
+        });
+
+        expect((await store.load("mariofit"))?.contact.sends).toStrictEqual([
+          { kind: "REPLIES", style: null, text: null, sentAt: at(6) },
+        ]);
+      });
+
+      it("never mixes the sends of two prospects", async () => {
+        const { store } = await withMario();
+        const giulia = await store.save({
+          profile: GIULIA,
+          newMessages: [],
+        });
+        await store.linkMessages(giulia.prospect.id, CHAT, [2_001]);
+
+        await store.recordSend({ ...best, messageId: 2_001 });
+
+        expect((await store.load("mariofit"))?.contact.sends).toStrictEqual([]);
+        expect((await store.load("giulia.bakery"))?.contact.sends).toHaveLength(
+          1,
+        );
+      });
+
+      it("loads the latest sends only", async () => {
+        const { store, id } = await withMario();
+        const messageIds = Array.from(
+          { length: 12 },
+          (_, index) => 1_100 + index,
+        );
+        await store.linkMessages(id, CHAT, messageIds);
+        for (const messageId of messageIds) {
+          await store.recordSend({
+            ...best,
+            messageId,
+            text: String(messageId),
+          });
+        }
+
+        const sends = (await store.load("mariofit"))?.contact.sends ?? [];
+        expect(sends.map(({ text }) => text)).toStrictEqual(
+          messageIds.slice(-10).map(String),
+        );
+      });
+    });
+
     it("keeps emojis and accents", async () => {
       const store = await save({
         profile: { ...GIULIA, displayName: "Giulia 🎂 Pasticcerìa" },

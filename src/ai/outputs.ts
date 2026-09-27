@@ -108,8 +108,15 @@ export type NewSuggestionsOutput = z.infer<typeof newSuggestionsOutputSchema>;
 
 // The same content in the bot's own types.
 
-export type SuggestionStyle =
-  "BEST" | "CURIOSITY" | "NATURAL" | "ALTERNATIVE" | "DIRECT";
+export const SUGGESTION_STYLES = [
+  "BEST",
+  "CURIOSITY",
+  "NATURAL",
+  "ALTERNATIVE",
+  "DIRECT",
+] as const;
+
+export type SuggestionStyle = (typeof SUGGESTION_STYLES)[number];
 
 export type Suggestion = Readonly<{ style: SuggestionStyle; text: string }>;
 
@@ -118,7 +125,13 @@ export type Suggestion = Readonly<{ style: SuggestionStyle; text: string }>;
  * CURIOSITY, NATURAL), replying in one (BEST, ALTERNATIVE, DIRECT), or
  * following up a message without a reply, shaped like the replies.
  */
-export type SuggestionKind = "FIRST_MESSAGES" | "REPLIES" | "FOLLOW_UPS";
+export const SUGGESTION_KINDS = [
+  "FIRST_MESSAGES",
+  "REPLIES",
+  "FOLLOW_UPS",
+] as const;
+
+export type SuggestionKind = (typeof SUGGESTION_KINDS)[number];
 
 /** New suggestions written from the memory, with a note when there are none. */
 export type NewSuggestions = Readonly<{

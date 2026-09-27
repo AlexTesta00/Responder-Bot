@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Kysely } from "kysely";
 import { z } from "zod";
 
+import { SUGGESTION_KINDS, SUGGESTION_STYLES } from "../ai/outputs.ts";
 import {
   CONVERSATION_INTENTS,
   CONVERSATION_STAGES,
@@ -14,9 +15,13 @@ import {
 } from "../conversations/domain.ts";
 import {
   contactFactsOf,
+  MAX_LOADED_SENDS,
   MAX_STORED_MESSAGES,
+  MAX_STORED_SENDS,
+  storedSendText,
   type Prospect,
   type ProspectMemory,
+  type Send,
   type StoredAt,
 } from "../prospects/memory.ts";
 import type { ProspectStore, StoreDependencies } from "../prospects/store.ts";
@@ -103,6 +108,41 @@ const messagesSchema = z.array(
     ),
 );
 
+const sendsSchema = z.array(
+  z
+    .object({
+      kind: z.enum(SUGGESTION_KINDS),
+      style: z.enum(SUGGESTION_STYLES).nullable(),
+      body: z.string().nullable(),
+      sent_at: z.date(),
+    })
+    .transform((row): Send => ({
+      kind: row.kind,
+      style: row.style,
+      text: row.body,
+      sentAt: row.sent_at,
+    })),
+);
+
+const linkedSchema = z.object({ id: z.string(), username: z.string() });
+
+const existingSendSchema = z.object({
+  style: z.enum(SUGGESTION_STYLES).nullable(),
+  sent_at: z.date(),
+});
+
+// MySQL may return BIGINT columns as strings.
+const idSchema = z.object({
+  id: z
+    .union([z.number(), z.string().regex(/^\d+$/)])
+    .transform(Number)
+    .pipe(z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)),
+});
+
+/** A second send for the same message of the bot: ER_DUP_ENTRY. */
+const isDuplicate = (error: unknown): boolean =>
+  z.object({ errno: z.literal(1062) }).safeParse(error).success;
+
 const stageChangesSchema = z.array(
   z
     .object({
@@ -140,13 +180,24 @@ const loadMemory = async (
     .limit(MAX_STORED_MESSAGES)
     .execute();
   const rows = messagesSchema.parse(latest).toReversed();
+  const times = rows.map(({ stored }) => stored);
+  const { lastProspectMessageAt } = contactFactsOf(times, []);
+  // The sends after the prospect's latest message, or all of them.
+  const sends = await db
+    .selectFrom("prospect_sends")
+    .select(["kind", "style", "body", "sent_at"])
+    .where("prospect_id", "=", prospect.id)
+    .$if(lastProspectMessageAt !== null, (query) =>
+      query.where("sent_at", ">", lastProspectMessageAt ?? new Date(0)),
+    )
+    .orderBy("sent_at", "desc")
+    .orderBy("id", "desc")
+    .limit(MAX_LOADED_SENDS)
+    .execute();
   return {
     prospect,
     messages: rows.map(({ message }) => message),
-    contact: contactFactsOf(
-      rows.map(({ stored }) => stored),
-      [],
-    ),
+    contact: contactFactsOf(times, sendsSchema.parse(sends).toReversed()),
   };
 };
 
@@ -301,5 +352,81 @@ export const createMysqlProspectStore = (
       .string()
       .nullable()
       .parse(row?.username ?? null);
+  },
+  // No transaction and no lock: the unique key on the message of the bot
+  // settles concurrent taps, without deadlocks.
+  recordSend: async ({ chatId, messageId, kind, style, text }) => {
+    const linked = await db
+      .selectFrom("telegram_messages")
+      .innerJoin("prospects", "prospects.id", "telegram_messages.prospect_id")
+      .select(["prospects.id", "prospects.username"])
+      .where("telegram_messages.chat_id", "=", chatId)
+      .where("telegram_messages.message_id", "=", messageId)
+      .executeTakeFirst();
+    if (linked === undefined) {
+      return { type: "NOT_LINKED" };
+    }
+    const { id: prospectId, username } = linkedSchema.parse(linked);
+    const body = storedSendText(text);
+    const sentAt = now();
+    try {
+      await db
+        .insertInto("prospect_sends")
+        .values({
+          prospect_id: prospectId,
+          chat_id: chatId,
+          message_id: messageId,
+          kind,
+          style,
+          body,
+          sent_at: sentAt,
+        })
+        .execute();
+    } catch (error) {
+      if (!isDuplicate(error)) {
+        throw error;
+      }
+      const existing = existingSendSchema.parse(
+        await db
+          .selectFrom("prospect_sends")
+          .select(["style", "sent_at"])
+          .where("chat_id", "=", chatId)
+          .where("message_id", "=", messageId)
+          .executeTakeFirstOrThrow(),
+      );
+      const corrected = style !== null && style !== existing.style;
+      if (corrected) {
+        await db
+          .updateTable("prospect_sends")
+          .set({ style, body })
+          .where("chat_id", "=", chatId)
+          .where("message_id", "=", messageId)
+          .execute();
+      }
+      return {
+        type: corrected ? "CORRECTED" : "UNCHANGED",
+        prospectId,
+        username,
+        sentAt: existing.sent_at,
+      };
+    }
+
+    // The oldest send beyond those kept, if any: it and older ones go.
+    const beyond = await db
+      .selectFrom("prospect_sends")
+      .select("id")
+      .where("prospect_id", "=", prospectId)
+      .orderBy("id", "desc")
+      .limit(1)
+      .offset(MAX_STORED_SENDS)
+      .executeTakeFirst();
+    if (beyond !== undefined) {
+      await db
+        .deleteFrom("prospect_sends")
+        .where("prospect_id", "=", prospectId)
+        .where("id", "<=", idSchema.parse(beyond).id)
+        .execute();
+    }
+    return { type: "RECORDED", prospectId, username, sentAt };
   },
 });
