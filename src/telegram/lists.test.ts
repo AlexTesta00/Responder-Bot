@@ -382,6 +382,31 @@ describe("followUpsList", () => {
     expect(items).toHaveLength(20);
   });
 
+  it("leaves out what the prospects do when the list would not fit", () => {
+    // The longest the memory keeps: 30-character usernames, 100-character
+    // business types, second follow-ups and dates older than a month.
+    const longest = (index: number, days: number) =>
+      memory(`${String(index).padStart(2, "0")}${"x".repeat(28)}`, {
+        businessType: "b".repeat(100),
+        ...waited(days, 2),
+      });
+    const { html, items } = followUpsList(
+      agenda(
+        ...Array.from({ length: 12 }, (_, index) => longest(index, 40 + index)),
+        ...Array.from({ length: 12 }, (_, index) =>
+          longest(20 + index, index % 3),
+        ),
+        memory("fermo.limite", waited(2, 3)),
+      ),
+      NOW,
+    );
+
+    expect(fitsInMessage(html)).toBe(true);
+    expect(html).not.toContain("b".repeat(100));
+    expect(html).toContain("🤐 1 fermi");
+    expect(items).toHaveLength(20);
+  });
+
   it("says when no follow-up is due or coming", () => {
     const list = followUpsList(agenda(memory("da.rispondere")), NOW);
 

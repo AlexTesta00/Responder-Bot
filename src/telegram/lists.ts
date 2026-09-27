@@ -74,8 +74,11 @@ const cut = (text: string, length: number): string => {
 };
 
 /** The prospect's @username, opening Instagram, and what they do. */
-const nameLine = ({ username, businessType }: Prospect): string =>
-  businessType === null
+const nameLine = (
+  { username, businessType }: Prospect,
+  withBusiness = true,
+): string =>
+  businessType === null || !withBusiness
     ? profileLink(username)
     : `${profileLink(username)} · ${escapeHtml(businessType)}`;
 
@@ -109,16 +112,18 @@ const replyEntry = (
 const waitingEntry = (
   { prospect, situation }: AgendaEntry<"WAITING">,
   now: Date,
+  withBusiness: boolean,
 ): readonly string[] => [
-  nameLine(prospect),
+  nameLine(prospect, withBusiness),
   `ultimo contatto: ${relativeDay(situation.lastOutboundAt, now)} · ${followUpNumber(situation.number)} ${fromDay(situation.dueDay, now)}`,
 ];
 
 const followUpEntry = (
   { prospect, situation }: AgendaEntry<"FOLLOW_UP_DUE">,
   now: Date,
+  withBusiness = true,
 ): readonly string[] => [
-  nameLine(prospect),
+  nameLine(prospect, withBusiness),
   `ultimo contatto: ${relativeDay(situation.lastOutboundAt, now)} · ${followUpNumber(situation.number)}`,
 ];
 
@@ -236,6 +241,7 @@ const FOLLOW_UPS_HINT =
 /**
  * /followup: the follow-ups due and those coming, with the day each one
  * will be due, and how many prospects stopped after two unanswered ones.
+ * What the prospects do is left out when the list would not fit.
  */
 export const followUpsList = (agenda: Agenda, now: Date): PresentedList => {
   const title = "⏰ <b>FOLLOW-UP</b>";
@@ -248,33 +254,37 @@ export const followUpsList = (agenda: Agenda, now: Date): PresentedList => {
     ...due.shown.map(button("⏰")),
     ...waiting.shown.map(button("⏳")),
   ];
-  const html = [
-    title,
-    ...(buttons.length === 0
-      ? ["", NO_FOLLOW_UPS]
-      : [
-          ...section(
-            "<b>Da fare</b>",
-            agenda.followUp.length,
-            due.shown.map((entry) => followUpEntry(entry, now)),
-            leftOut(due.more, "/lista"),
-          ),
-          ...section(
-            "<b>In attesa</b>",
-            agenda.waiting.length,
-            waiting.shown.map((entry) => waitingEntry(entry, now)),
-            leftOut(waiting.more, "/lista"),
-          ),
-        ]),
-    ...(stopped === 0
-      ? []
-      : [
-          "",
-          `🤐 ${String(stopped)} fermi dopo 2 follow-up senza risposta: non li ripropongo.`,
-        ]),
-    ...(buttons.length === 0 ? [] : ["", FOLLOW_UPS_HINT]),
-  ].join("\n");
-  return withButtons(html, buttons);
+  const html = (withBusiness: boolean): string =>
+    [
+      title,
+      ...(buttons.length === 0
+        ? ["", NO_FOLLOW_UPS]
+        : [
+            ...section(
+              "<b>Da fare</b>",
+              agenda.followUp.length,
+              due.shown.map((entry) => followUpEntry(entry, now, withBusiness)),
+              leftOut(due.more, "/lista"),
+            ),
+            ...section(
+              "<b>In attesa</b>",
+              agenda.waiting.length,
+              waiting.shown.map((entry) =>
+                waitingEntry(entry, now, withBusiness),
+              ),
+              leftOut(waiting.more, "/lista"),
+            ),
+          ]),
+      ...(stopped === 0
+        ? []
+        : [
+            "",
+            `🤐 ${String(stopped)} fermi dopo 2 follow-up senza risposta: non li ripropongo.`,
+          ]),
+      ...(buttons.length === 0 ? [] : ["", FOLLOW_UPS_HINT]),
+    ].join("\n");
+  const full = html(true);
+  return withButtons(fitsInMessage(full) ? full : html(false), buttons);
 };
 
 const NEW_PROSPECT_HELP =
