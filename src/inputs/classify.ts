@@ -18,6 +18,8 @@ export type CreditRequest =
 export type TextInput =
   | Readonly<{ type: "COMMAND"; command: Command }>
   | Readonly<{ type: "CREDIT"; request: CreditRequest }>
+  /** /oggi: whom to answer and to follow up today. */
+  | Readonly<{ type: "TODAY" }>
   /** A prospect's card; without a username, of the message Alex replied to. */
   | Readonly<{ type: "PROSPECT"; username: string | null }>
   /** A command that needs a username, followed by something else. */
@@ -79,6 +81,9 @@ export const classifyText = (text: string): TextInput => {
     const argument = trimmed.replace(/^\/\S+/, "").trim();
     if (name === "credito") {
       return { type: "CREDIT", request: creditRequestOf(argument) };
+    }
+    if (name === "oggi") {
+      return { type: "TODAY" };
     }
     if (name === "prospect") {
       if (argument === "") {

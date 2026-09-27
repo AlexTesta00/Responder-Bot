@@ -19,7 +19,12 @@ export type ButtonPress =
       index: SuggestionIndex | null;
     }>
   /** On a prospect's card: write suggestions of `kind` from the memory. */
-  | Readonly<{ type: "WRITE"; kind: SuggestionKind }>;
+  | Readonly<{ type: "WRITE"; kind: SuggestionKind }>
+  /** On a list: open the card of the prospect at `index`, counting from 0. */
+  | Readonly<{ type: "OPEN"; index: number }>;
+
+/** The buttons a list can have: their positions take one or two digits. */
+export const MAX_LIST_BUTTONS = 20;
 
 // Changing what the data means needs a new version: older buttons then
 // decode to nothing and are answered as expired.
@@ -45,6 +50,9 @@ const SENT_CODE = "ok";
 // Writes from a card, as in "1:w:U".
 const WRITE_CODE = "w";
 
+// Opens an item of a list, as in "1:o:12".
+const OPEN_CODE = "o";
+
 export const encodeButton = (press: ButtonPress): string => {
   switch (press.type) {
     case "ANSWER":
@@ -58,8 +66,15 @@ export const encodeButton = (press: ButtonPress): string => {
       ].join(":");
     case "WRITE":
       return `${VERSION}:${WRITE_CODE}:${KIND_CODES[press.kind]}`;
+    case "OPEN":
+      return `${VERSION}:${OPEN_CODE}:${String(press.index)}`;
   }
 };
+
+const listIndexOf = (code: string): number | null =>
+  /^(?:0|[1-9]\d?)$/.test(code) && Number(code) < MAX_LIST_BUTTONS
+    ? Number(code)
+    : null;
 
 const indexOf = (code: string): SuggestionIndex | null => {
   switch (code) {
@@ -112,6 +127,11 @@ export const decodeButton = (data: string | undefined): ButtonPress | null => {
   const [version, code = "", ...args] = (data ?? "").split(":");
   if (version !== VERSION) {
     return null;
+  }
+  if (code === OPEN_CODE) {
+    const [indexCode = "", ...more] = args;
+    const index = listIndexOf(indexCode);
+    return index === null || more.length > 0 ? null : { type: "OPEN", index };
   }
   const [kindCode = "", ...extra] = args;
   const kind = kindOf(kindCode);

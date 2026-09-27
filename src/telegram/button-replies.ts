@@ -77,5 +77,8 @@ export const BUSY_NOTICE = "⏳ Ci sto già lavorando: arriva tra poco.";
 export const NOT_LINKED_REPLY =
   "🤷 Non so più di quale prospect parla questo messaggio: mandami di nuovo gli screenshot, o scrivi @username nella prima riga del testo.";
 
+export const OLD_LIST_REPLY =
+  "⌛ Questo elenco è vecchio: aprine uno nuovo con /oggi, /followup o /nuovo.";
+
 export const MEMORY_UNAVAILABLE_REPLY =
   "⚠️ Memoria non disponibile: ora non posso preparare nuovi messaggi. Riprova tra qualche minuto.";

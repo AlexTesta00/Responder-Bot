@@ -162,3 +162,72 @@ describe("createCrm", () => {
     );
   });
 });
+
+describe("createCrm lists", () => {
+  // Sunday 27 September, 10:00 in Italy.
+  const NOW = new Date("2026-09-27T08:00:00Z");
+
+  it("sorts every prospect into the day's agenda", async () => {
+    const { crm, log } = await setup();
+
+    const found = await crm.agenda(NOW, log);
+
+    expect(found.type).toBe("FOUND");
+    if (found.type === "FOUND") {
+      expect(
+        found.agenda.reply.map(({ prospect }) => prospect.username).toSorted(),
+      ).toStrictEqual(["giulia.bakery", "mariofit"]);
+      expect(found.agenda.followUp).toStrictEqual([]);
+    }
+  });
+
+  it("reports prospects it cannot read", async () => {
+    const { prospects, crm, log } = await setup();
+    vi.spyOn(prospects, "overview").mockRejectedValueOnce(FAILURE);
+
+    expect(await crm.agenda(NOW, log)).toStrictEqual({ type: "UNAVAILABLE" });
+    expect(log.error).toHaveBeenCalledWith(
+      errorFields(FAILURE),
+      "prospects unavailable",
+    );
+  });
+
+  it("finds the card of the item of a list, never of another", async () => {
+    const { prospects, crm, log } = await setup();
+    const mario = await prospects.load("mariofit");
+    const giulia = await prospects.load("giulia.bakery");
+    await prospects.linkItems(CHAT, 3_001, [
+      giulia?.prospect.id ?? "",
+      mario?.prospect.id ?? "",
+    ]);
+
+    const item = (index: number) =>
+      crm.card({ type: "ITEM", chatId: CHAT, messageId: 3_001, index }, log);
+
+    expect(await item(0)).toMatchObject({
+      type: "FOUND",
+      memory: { prospect: { username: "giulia.bakery" } },
+    });
+    expect(await item(1)).toMatchObject({
+      type: "FOUND",
+      memory: { prospect: { username: "mariofit" } },
+    });
+    expect(await item(2)).toStrictEqual({ type: "UNKNOWN" });
+  });
+
+  it("reports a list whose items it cannot read", async () => {
+    const { prospects, crm, log } = await setup();
+    vi.spyOn(prospects, "prospectOfItem").mockRejectedValueOnce(FAILURE);
+
+    const card = await crm.card(
+      { type: "ITEM", chatId: CHAT, messageId: 3_001, index: 0 },
+      log,
+    );
+
+    expect(card).toStrictEqual({ type: "UNAVAILABLE" });
+    expect(log.error).toHaveBeenCalledWith(
+      errorFields(FAILURE),
+      "prospect of the list item unavailable",
+    );
+  });
+});

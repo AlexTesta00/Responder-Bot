@@ -2,6 +2,7 @@
 // lists of whom to answer and follow up. Built from the memory alone: no
 // generation is paid for.
 import type { StageChange } from "../conversations/domain.ts";
+import { agendaOf, type Agenda } from "../followups/agenda.ts";
 import type { ProspectMemory } from "../prospects/memory.ts";
 import type { ProspectStore } from "../prospects/store.ts";
 import { errorFields } from "../shared/errors.ts";
@@ -18,9 +19,18 @@ export type CardLookup =
   | Readonly<{ type: "UNKNOWN" }>
   | Readonly<{ type: "UNAVAILABLE" }>;
 
+export type AgendaLookup =
+  | Readonly<{ type: "FOUND"; agenda: Agenda }>
+  | Readonly<{ type: "UNAVAILABLE" }>;
+
 export type Crm = Readonly<{
-  /** The card of the prospect Alex named, or of the message Alex replied to. */
+  /**
+   * The card of the prospect Alex named, of the message Alex replied to or
+   * of the item of a list Alex tapped.
+   */
   card: (reference: ProspectReference, log: Logger) => Promise<CardLookup>;
+  /** Every prospect in the day's agenda, as things stand at `now`. */
+  agenda: (now: Date, log: Logger) => Promise<AgendaLookup>;
 }>;
 
 export const createCrm = ({
@@ -45,6 +55,17 @@ export const createCrm = ({
       return { type: "FOUND", memory, history };
     } catch (error) {
       log.error(errorFields(error), "prospect memory unavailable");
+      return { type: "UNAVAILABLE" };
+    }
+  },
+  agenda: async (now, log) => {
+    try {
+      return {
+        type: "FOUND",
+        agenda: agendaOf(await prospects.overview(), now),
+      };
+    } catch (error) {
+      log.error(errorFields(error), "prospects unavailable");
       return { type: "UNAVAILABLE" };
     }
   },

@@ -11,6 +11,7 @@ import type {
 import type { ReplyToConversation } from "../copilot/conversation.ts";
 import type { ProspectReference } from "../copilot/memory.ts";
 import type { Crm } from "../copilot/crm.ts";
+import type { Agenda } from "../followups/agenda.ts";
 import type { AnalyzeScreenshots } from "../copilot/screenshots.ts";
 import { situationOfMemory } from "../followups/situation.ts";
 import type { StageChange } from "../conversations/domain.ts";
@@ -35,6 +36,7 @@ import {
   EXPIRED_BUTTON_NOTICE,
   MEMORY_UNAVAILABLE_REPLY,
   NOT_LINKED_REPLY,
+  OLD_LIST_REPLY,
   pressNotice,
   sentNotice,
   writeNotice,
@@ -54,10 +56,12 @@ import {
   SPENDING_UNAVAILABLE_REPLY,
   spendingReport,
 } from "./costs.ts";
+import type { ButtonPress } from "./button-data.ts";
 import type { TelegramChatId, TelegramUserId } from "./ids.ts";
 import type { InFlight } from "./in-flight.ts";
 import { createMediaGroupCollector, type Schedule } from "./media-group.ts";
 import type { ProcessedUpdates } from "./processed-updates.ts";
+import { todayList } from "./lists.ts";
 import { prospectCard } from "./prospect-card.ts";
 import {
   imageProblemReply,
@@ -92,6 +96,12 @@ export const ALBUM_QUIET_MS = 2_000;
 /** Telegram albums hold at most ten items. */
 const ALBUM_MAX_ITEMS = 10;
 
+/**
+ * A list's buttons are remembered just after it is sent: a tap that comes
+ * first is tried again once, this much later.
+ */
+export const LIST_RETRY_MS = 1_000;
+
 /** Telegram shows "typing…" for five seconds at most: renewed before then. */
 export const TYPING_REFRESH_MS = 4_000;
 
@@ -117,10 +127,10 @@ export type IgnoredReason =
   | "BUSY";
 
 /** What opened a prospect's card, as the logs name it. */
-type CardSource = "command" | "mention" | "button";
+type CardSource = "command" | "mention" | "item" | "button";
 
 /** The button a tap pressed, as the logs name it. */
-export type PressName = ButtonAction | "SENT" | "WRITE";
+export type PressName = ButtonAction | "SENT" | "WRITE" | "OPEN";
 
 export type UpdateOutcome =
   | Readonly<{ type: "REPLIED"; input: RepliedInput["type"] }>
@@ -129,7 +139,12 @@ export type UpdateOutcome =
   /** An album photo, answered together with the rest of its album. */
   | Readonly<{ type: "COLLECTED" }>
   /** A button tap: the answer follows in the background. */
-  | Readonly<{ type: "PRESSED"; button: PressName; kind: SuggestionKind }>
+  | Readonly<{
+      type: "PRESSED";
+      button: PressName;
+      /** Null for the buttons of a list. */
+      kind: SuggestionKind | null;
+    }>
   | Readonly<{ type: "IGNORED"; reason: IgnoredReason }>
   | Readonly<{ type: "FAILED"; retryable: boolean; error: TelegramError }>;
 
@@ -157,6 +172,8 @@ export type UpdateHandlerDependencies = Readonly<{
   markSent: MarkSent;
   /** The cards and lists of the outreach, from the memory. */
   crm: Crm;
+  /** Remembers which prospect each button of a list opens. */
+  linkItems: ProspectStore["linkItems"];
   /** The buttons being answered, to answer a double tap once. */
   inFlight: InFlight;
   /** Remembers which prospect the messages of the bot are about. */
@@ -184,6 +201,31 @@ export const isAuthorizedUser = (
 const ignored = (reason: IgnoredReason): UpdateOutcome => ({
   type: "IGNORED",
   reason,
+});
+
+/** Taps that may run together: each has its own key while it runs. */
+const pressKey = (messageKey: string, press: ButtonPress): string => {
+  switch (press.type) {
+    // ✅ does not wait for a generation under the same message.
+    case "SENT":
+      return `${messageKey}:ok`;
+    // Each item of a list opens on its own.
+    case "OPEN":
+      return `${messageKey}:o:${String(press.index)}`;
+    case "ANSWER":
+    case "WRITE":
+      return messageKey;
+  }
+};
+
+/** How many prospects each section of the agenda holds, for the logs. */
+const agendaCounts = (agenda: Agenda) => ({
+  to_reply: agenda.reply.length,
+  follow_up: agenda.followUp.length,
+  waiting: agenda.waiting.length,
+  to_contact: agenda.toContact.length,
+  paused: agenda.paused.length,
+  won: agenda.won.length,
 });
 
 const notDelivered = (error: TelegramError, log: Logger): void => {
@@ -240,6 +282,7 @@ export const createUpdateHandler = ({
   inFlight,
   markSent,
   crm,
+  linkItems,
   linkMessages,
   spending,
   monthlyLimitMicroUsd,
@@ -700,6 +743,50 @@ export const createUpdateHandler = ({
     }
   };
 
+  /** Remembers which prospect each button of a list opens. */
+  const linkListItems = async (
+    chatId: TelegramChatId,
+    messageId: number,
+    items: readonly string[],
+    log: Logger,
+  ): Promise<void> => {
+    if (items.length === 0) {
+      return;
+    }
+    try {
+      await linkItems(chatId, messageId, items);
+    } catch (error) {
+      // The list arrived: its buttons will say it is old.
+      log.warn(errorFields(error), "list items not linked");
+    }
+  };
+
+  /** /oggi: whom to answer and follow up, each with a button to the card. */
+  const replyToday = async (
+    chatId: TelegramChatId,
+    log: Logger,
+  ): Promise<Result<SentMessage, TelegramError>> => {
+    const time = now();
+    const found = await crm.agenda(time, log);
+    if (found.type === "UNAVAILABLE") {
+      return sendMessage(chatId, PROSPECTS_UNAVAILABLE_REPLY);
+    }
+    const list = todayList(found.agenda, time);
+    const sent = await sendPresented(chatId, list, log);
+    if (sent.ok) {
+      log.info(
+        {
+          command: "today",
+          ...agendaCounts(found.agenda),
+          items: list.items.length,
+        },
+        "crm command handled",
+      );
+      await linkListItems(chatId, sent.value.messageId, list.items, log);
+    }
+    return sent;
+  };
+
   /** The card of a prospect, or plain text when there is none to show. */
   const cardReply = async (
     chatId: TelegramChatId,
@@ -731,6 +818,8 @@ export const createUpdateHandler = ({
         return sendMessage(chatId, await creditReply(input.request, log), {
           parseMode: "HTML",
         });
+      case "TODAY":
+        return replyToday(chatId, log);
       case "PROSPECT": {
         if (input.username !== null) {
           return cardReply(
@@ -779,6 +868,54 @@ export const createUpdateHandler = ({
     }
   };
 
+  const waitFor = (delayMs: number): Promise<void> =>
+    new Promise((resolve) => {
+      schedule(resolve, delayMs);
+    });
+
+  /** A button of a list: the card of its prospect, in reply to the list. */
+  const answerOpen = async (
+    queryId: string,
+    tapped: TappedBotMessage,
+    index: number,
+    key: string,
+    log: Logger,
+  ): Promise<void> => {
+    try {
+      await acknowledge(queryId, undefined, log);
+      const { chatId, messageId } = tapped;
+      const reference = { type: "ITEM", chatId, messageId, index } as const;
+      const first = await crm.card(reference, log);
+      const found =
+        first.type === "UNKNOWN"
+          ? await waitFor(LIST_RETRY_MS).then(() => crm.card(reference, log))
+          : first;
+      log.info({ button: "OPEN", response: found.type }, "button handled");
+      switch (found.type) {
+        case "FOUND": {
+          const sent = await sendCard(chatId, found, "item", log, messageId);
+          if (!sent.ok) {
+            notDelivered(sent.error, log);
+          }
+          return;
+        }
+        case "UNKNOWN":
+          await deliver(chatId, plainMessage(OLD_LIST_REPLY), log, messageId);
+          return;
+        case "UNAVAILABLE":
+          await deliver(
+            chatId,
+            plainMessage(PROSPECTS_UNAVAILABLE_REPLY),
+            log,
+            messageId,
+          );
+          return;
+      }
+    } finally {
+      inFlight.finish(key);
+    }
+  };
+
   /** What can be decided about a tap without waiting for anything. */
   const handleCallback = (
     updateId: number,
@@ -802,9 +939,10 @@ export const createUpdateHandler = ({
       runInBackground(acknowledge(queryId, EXPIRED_BUTTON_NOTICE, log), log);
       return ignored("INVALID_BUTTON");
     }
-    const messageKey = `${String(message.chatId)}:${String(message.messageId)}`;
-    // ✅ does not wait for a generation under the same message.
-    const key = press.type === "SENT" ? `${messageKey}:ok` : messageKey;
+    const key = pressKey(
+      `${String(message.chatId)}:${String(message.messageId)}`,
+      press,
+    );
     if (!inFlight.start(key)) {
       runInBackground(acknowledge(queryId, BUSY_NOTICE, log), log);
       return ignored("BUSY");
@@ -822,6 +960,12 @@ export const createUpdateHandler = ({
           log,
         );
         return { type: "PRESSED", button: "WRITE", kind: press.kind };
+      case "OPEN":
+        runInBackground(
+          answerOpen(queryId, message, press.index, key, log),
+          log,
+        );
+        return { type: "PRESSED", button: "OPEN", kind: null };
     }
   };
 

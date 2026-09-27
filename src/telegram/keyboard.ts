@@ -127,6 +127,30 @@ export const cardRows = (situation: Situation): InlineKeyboard => {
   }
 };
 
+/** Labels longer than this get a row of their own. */
+const MAX_PAIRED_LABEL = 18;
+
+const isShort = ({ label }: InlineButton): boolean =>
+  Array.from(label).length <= MAX_PAIRED_LABEL;
+
+/**
+ * The buttons of a list, each opening the card of its item: two a row, and
+ * a row of its own for a long label.
+ */
+export const openRows = (labels: readonly string[]): InlineKeyboard =>
+  labels
+    .map((label, index) => callback(label, { type: "OPEN", index }))
+    .reduce<readonly (readonly InlineButton[])[]>((rows, button) => {
+      const last = rows.at(-1);
+      const [alone] = last ?? [];
+      return last?.length === 1 &&
+        alone !== undefined &&
+        isShort(alone) &&
+        isShort(button)
+        ? [...rows.slice(0, -1), [alone, button]]
+        : [...rows, [button]];
+    }, []);
+
 /** Copy buttons for the suggestions short enough to be copied. */
 export const copyRows = (
   suggestions: readonly Suggestion[],

@@ -111,3 +111,21 @@ describe("card button data", () => {
     expect(decodeButton("1:w:U:0")).toBeNull();
   });
 });
+
+describe("list button data", () => {
+  it.each([0, 7, 19])("reads back the item %i of a list", (index) => {
+    const press = { type: "OPEN", index } as const;
+    expect(decodeButton(encodeButton(press))).toStrictEqual(press);
+  });
+
+  it("is short", () => {
+    expect(encodeButton({ type: "OPEN", index: 12 })).toBe("1:o:12");
+  });
+
+  it.each(["1:o", "1:o:", "1:o:20", "1:o:01", "1:o:-1", "1:o:x", "1:o:1:2"])(
+    "does not read %j",
+    (data) => {
+      expect(decodeButton(data)).toBeNull();
+    },
+  );
+});

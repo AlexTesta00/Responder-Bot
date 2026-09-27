@@ -9,7 +9,13 @@ import type { ImageDownloadError } from "../inputs/images.ts";
 export type InstantInput = Exclude<
   Input,
   Readonly<{
-    type: "SCREENSHOTS" | "TEXT" | "CREDIT" | "PROSPECT" | "INSTAGRAM_PROFILE";
+    type:
+      | "SCREENSHOTS"
+      | "TEXT"
+      | "CREDIT"
+      | "TODAY"
+      | "PROSPECT"
+      | "INSTAGRAM_PROFILE";
   }>
 >;
 
@@ -44,6 +50,7 @@ const START = [
   "• screenshot di una conversazione, o il testo dei suoi messaggi, e ti dico a che punto è e ti propongo tre risposte.",
   "",
   "Tu scegli, correggi se vuoi e invii: io non scrivo mai a nessuno. Quando hai inviato, tocca ✅ accanto al messaggio che hai mandato.",
+  "Ogni giorno apri /oggi: ti dico chi ti ha risposto e a chi mandare un follow-up.",
   "",
   BUTTONS,
   "",
@@ -52,6 +59,7 @@ const START = [
 
 const HELP = [
   "Comandi disponibili:",
+  "/oggi – a chi rispondere e i follow-up da fare oggi",
   "/start – presentazione del bot",
   "/help – questo elenco",
   "/prospect @username – la scheda di un prospect, con i bottoni (basta anche mandarmi @username)",

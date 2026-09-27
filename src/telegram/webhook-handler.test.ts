@@ -15,6 +15,8 @@ import { createSendMarking } from "../copilot/sends.ts";
 import { createConversationAnalyst } from "../copilot/conversation.ts";
 import { createScreenshotsAnalyst } from "../copilot/screenshots.ts";
 import type { DownloadedImage, DownloadImage } from "../inputs/images.ts";
+import type { ConversationState } from "../conversations/domain.ts";
+import type { ProspectProfile } from "../prospects/memory.ts";
 import { createInMemoryProspectStore } from "../prospects/store.ts";
 import type { Logger } from "../shared/logger.ts";
 import { err, ok, type Result } from "../shared/result.ts";
@@ -47,7 +49,8 @@ import {
 } from "./suggestions.ts";
 import type { ChatType, IncomingUpdate, MessageContent } from "./update.ts";
 import { decodeButton } from "./button-data.ts";
-import { createUpdateHandler } from "./webhook-handler.ts";
+import { createUpdateHandler, LIST_RETRY_MS } from "./webhook-handler.ts";
+import { OLD_LIST_REPLY } from "./button-replies.ts";
 
 const ALEX = telegramUserIdSchema.parse(42);
 const STRANGER = telegramUserIdSchema.parse(666);
@@ -314,6 +317,9 @@ const setupWith = (
     writeFromCard: createCardWriting({ ...copilot, now: () => new Date() }),
     markSent: createSendMarking({ prospects, now: () => new Date() }),
     crm: createCrm({ prospects }),
+    // Through the store, so that a test can make it fail.
+    linkItems: (chatId, messageId, prospectIds) =>
+      prospects.linkItems(chatId, messageId, prospectIds),
     now: () => new Date(),
     answerCallbackQuery,
     inFlight: createInFlight(),
@@ -1635,5 +1641,200 @@ describe("prospect cards", () => {
     for (const content of ["mariofit", "giulia", "personal trainer"]) {
       expect(logs).not.toContain(content);
     }
+  });
+});
+
+describe("lists", () => {
+  const ENGAGED: ConversationState = {
+    stage: "ENGAGED",
+    intent: "PRICE_REQUEST",
+    interest: "MEDIUM",
+    nextGoal: "UNDERSTAND_PROCESS",
+  };
+
+  const profileOf = (
+    username: string,
+    conversation: ConversationState | null,
+  ): ProspectProfile => ({
+    username,
+    displayName: null,
+    businessType: "personal trainer",
+    facts: [],
+    hypotheses: [],
+    conversation,
+    summary: null,
+    objections: [],
+    commitments: [],
+  });
+
+  /** A handler that remembers Mario, who asked the price, and Giulia's profile. */
+  const withProspects = async () => {
+    const context = setup();
+    await context.prospects.save({
+      profile: profileOf("mariofit", ENGAGED),
+      newMessages: [{ author: "PROSPECT", text: "Quanto costa?" }],
+    });
+    await context.prospects.save({
+      profile: profileOf("giulia.bakery", null),
+      newMessages: [],
+    });
+    return context;
+  };
+
+  const tapOn = (
+    messageId: number,
+    data: string,
+    updateId = 300,
+  ): IncomingUpdate => ({
+    type: "CALLBACK",
+    updateId,
+    callback: {
+      queryId: `query-${String(updateId)}`,
+      senderId: ALEX,
+      message: {
+        chatId: CHAT,
+        chatType: "private",
+        messageId,
+        suggestions: [],
+      },
+      press: decodeButton(data),
+    },
+  });
+
+  it("lists whom to answer today, with a button that opens each card", async () => {
+    const { handleUpdate, sendMessage, prospects } = await withProspects();
+
+    const outcome = await handleUpdate(textMessage("/oggi"));
+
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: "TODAY" });
+    const [chat, html, options] = sendMessage.mock.calls[0] ?? [];
+    expect(chat).toBe(CHAT);
+    expect(html).toMatch(/^📋 <b>OGGI<\/b> · /);
+    expect(html).toContain("🔥 <b>DA RISPONDERE</b> (1)");
+    expect(html).toContain("ha chiesto il prezzo · oggi");
+    expect(html).toContain("👤 1 da contattare: /nuovo");
+    expect(options?.keyboard).toStrictEqual([
+      [{ type: "CALLBACK", label: "🔥 @mariofit", data: "1:o:0" }],
+    ]);
+    // The list is message 1001: its first item opens Mario.
+    expect(await prospects.prospectOfItem(CHAT, 1_001, 0)).toBe("mariofit");
+    expect(await prospects.prospectOfMessage(CHAT, 1_001)).toBeNull();
+  });
+
+  it("logs how many prospects each section holds, never who", async () => {
+    const { handleUpdate, log } = await withProspects();
+
+    await handleUpdate(textMessage("/oggi"));
+
+    expect(log.info).toHaveBeenCalledWith(
+      {
+        command: "today",
+        to_reply: 1,
+        follow_up: 0,
+        waiting: 0,
+        to_contact: 1,
+        paused: 0,
+        won: 0,
+        items: 1,
+      },
+      "crm command handled",
+    );
+    const logs = JSON.stringify([
+      log.info.mock.calls,
+      log.warn.mock.calls,
+      log.error.mock.calls,
+    ]);
+    for (const content of ["mariofit", "giulia", "personal trainer"]) {
+      expect(logs).not.toContain(content);
+    }
+  });
+
+  it("answers when the prospects cannot be read", async () => {
+    const { handleUpdate, sendMessage, prospects } = await withProspects();
+    vi.spyOn(prospects, "overview").mockRejectedValueOnce(
+      new Error("connection lost"),
+    );
+
+    const outcome = await handleUpdate(textMessage("/oggi"));
+
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: "TODAY" });
+    expect(sendMessage).toHaveBeenCalledExactlyOnceWith(
+      CHAT,
+      PROSPECTS_UNAVAILABLE_REPLY,
+    );
+  });
+
+  it("lets Telegram deliver /oggi again when the list was not sent", async () => {
+    const { handleUpdate, sendMessage } = await withProspects();
+    sendMessage.mockResolvedValueOnce(err(NETWORK_ERROR));
+
+    const failed = await handleUpdate(textMessage("/oggi"));
+    const retried = await handleUpdate(textMessage("/oggi"));
+
+    expect(failed).toMatchObject({ type: "FAILED", retryable: true });
+    expect(retried).toStrictEqual({ type: "REPLIED", input: "TODAY" });
+  });
+
+  it("sends the list even when its buttons cannot be remembered", async () => {
+    const { handleUpdate, sendMessage, prospects, log } = await withProspects();
+    vi.spyOn(prospects, "linkItems").mockRejectedValueOnce(
+      new Error("connection lost"),
+    );
+
+    const outcome = await handleUpdate(textMessage("/oggi"));
+
+    expect(outcome).toStrictEqual({ type: "REPLIED", input: "TODAY" });
+    expect(sendMessage).toHaveBeenCalledOnce();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.anything(),
+      "list items not linked",
+    );
+  });
+
+  it("opens the card of an item, in reply to the list", async () => {
+    const { handleUpdate, sendMessage, prospects, answerCallbackQuery } =
+      await withProspects();
+    await handleUpdate(textMessage("/oggi"));
+
+    const outcome = await handleUpdate(tapOn(1_001, "1:o:0"));
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+    });
+
+    expect(outcome).toStrictEqual({
+      type: "PRESSED",
+      button: "OPEN",
+      kind: null,
+    });
+    expect(answerCallbackQuery).toHaveBeenCalledExactlyOnceWith(
+      "query-300",
+      undefined,
+    );
+    const [, html, options] = sendMessage.mock.calls[1] ?? [];
+    expect(html).toMatch(
+      /^🔍 <b><a href="https:\/\/www\.instagram\.com\/mariofit\/">/,
+    );
+    expect(options).toMatchObject({ parseMode: "HTML", replyTo: 1_001 });
+    // The card is message 1002: its buttons continue with Mario.
+    expect(await prospects.prospectOfMessage(CHAT, 1_002)).toBe("mariofit");
+  });
+
+  it("tries once more, then says that a list is old", async () => {
+    const { handleUpdate, sendMessage, runPending, prospects } =
+      await withProspects();
+    const lookups = vi.spyOn(prospects, "prospectOfItem");
+
+    await handleUpdate(tapOn(1_001, "1:o:3"));
+    await vi.waitFor(() => {
+      runPending();
+      expect(sendMessage).toHaveBeenCalledOnce();
+    });
+
+    expect(lookups).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenCalledWith(CHAT, escapeHtml(OLD_LIST_REPLY), {
+      parseMode: "HTML",
+      replyTo: 1_001,
+    });
+    expect(LIST_RETRY_MS).toBe(1_000);
   });
 });

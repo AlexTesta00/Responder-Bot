@@ -16,6 +16,7 @@ const replyToText = (text: string): string => {
   switch (input.type) {
     case "TEXT":
     case "CREDIT":
+    case "TODAY":
     case "PROSPECT":
     case "INSTAGRAM_PROFILE":
       return expect.unreachable(`${text} is not answered from the input alone`);
@@ -43,6 +44,11 @@ describe("replyTo", () => {
     expect(reply).toContain("/help");
     expect(reply).toContain("/credito 25,40");
     expect(reply).toContain("/prospect @username");
+    expect(reply).toContain("/oggi");
+  });
+
+  it("points to /oggi on /start", () => {
+    expect(replyToText("/start")).toContain("Ogni giorno apri /oggi");
   });
 
   it.each(["/start", "/help"])("explains the buttons on %s", (command) => {

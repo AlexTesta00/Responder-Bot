@@ -140,6 +140,7 @@ const start = async (env: Env): Promise<void> => {
         inFlight: createInFlight(),
         markSent: createSendMarking({ prospects, now: () => new Date() }),
         crm: createCrm({ prospects }),
+        linkItems: prospects.linkItems,
         linkMessages: prospects.linkMessages,
         spending,
         monthlyLimitMicroUsd: monthlyLimitOf(env),

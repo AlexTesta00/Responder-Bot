@@ -32,6 +32,13 @@ describe("classifyText", () => {
     expect(classifyText(text)).toStrictEqual({ type: "CREDIT", request });
   });
 
+  it.each(["/oggi", "/oggi@AlexOutreachBot", "/OGGI", "/oggi per favore"])(
+    "asks for the day's agenda with %j",
+    (text) => {
+      expect(classifyText(text)).toStrictEqual({ type: "TODAY" });
+    },
+  );
+
   it.each([
     ["/prospect @mariofit", "mariofit"],
     ["/prospect mariofit", "mariofit"],
@@ -74,6 +81,7 @@ describe("classifyText", () => {
     "/ciao come va",
     "/creditocard",
     "/prospects",
+    "/oggigiorno",
   ])("marks %j as an unknown command", (text) => {
     expect(classifyText(text)).toStrictEqual({ type: "UNKNOWN_COMMAND" });
   });

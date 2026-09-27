@@ -25,7 +25,14 @@ export type ProspectReference =
   /** The @username written on the first line. */
   | Readonly<{ type: "USERNAME"; username: string }>
   /** A reply to, or a button under, a message the bot sent about them. */
-  | Readonly<{ type: "REPLY"; chatId: number; messageId: number }>;
+  | Readonly<{ type: "REPLY"; chatId: number; messageId: number }>
+  /** A button of a list of the bot, by its position in the list. */
+  | Readonly<{
+      type: "ITEM";
+      chatId: number;
+      messageId: number;
+      index: number;
+    }>;
 
 export type Resolved =
   | Readonly<{ type: "FOUND"; username: string }>
@@ -48,15 +55,27 @@ export const resolveReference = async (
     return { type: "FOUND", username: reference.username };
   }
   try {
-    const username = await prospects.prospectOfMessage(
-      reference.chatId,
-      reference.messageId,
-    );
+    const username =
+      reference.type === "REPLY"
+        ? await prospects.prospectOfMessage(
+            reference.chatId,
+            reference.messageId,
+          )
+        : await prospects.prospectOfItem(
+            reference.chatId,
+            reference.messageId,
+            reference.index,
+          );
     return username === null
       ? { type: "UNKNOWN" }
       : { type: "FOUND", username };
   } catch (error) {
-    log.error(errorFields(error), "prospect of the reply unavailable");
+    log.error(
+      errorFields(error),
+      reference.type === "REPLY"
+        ? "prospect of the reply unavailable"
+        : "prospect of the list item unavailable",
+    );
     return { type: "UNAVAILABLE" };
   }
 };
