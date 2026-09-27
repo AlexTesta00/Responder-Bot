@@ -64,6 +64,7 @@ describe("situationOf", () => {
       type: "FOLLOW_UP_DUE",
       number: 1,
       lastOutboundAt: SENT,
+      dueDay: romeDay(SENT) + 3,
     });
     expect(situation(ENGAGED, 2, 4)).toMatchObject({
       type: "WAITING",

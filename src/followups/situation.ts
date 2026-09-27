@@ -4,9 +4,13 @@
 // and never for a paused conversation or a client.
 import type { ConversationState } from "../conversations/domain.ts";
 import type { Pause } from "../conversations/transition.ts";
-import type { ProspectMemory } from "../prospects/memory.ts";
+import {
+  overviewOf,
+  type ProspectMemory,
+  type ProspectOverview,
+} from "../prospects/memory.ts";
 import { romeDay, type RomeDay } from "../shared/time.ts";
-import { contactOfMemory, pauseFor, type Contact } from "./contact.ts";
+import { contactOf, pauseFor, type Contact } from "./contact.ts";
 
 /**
  * Calendar days to wait before each follow-up, from Alex's latest message:
@@ -30,8 +34,13 @@ export type Situation =
   | Readonly<{ type: "TO_CONTACT" }>
   /** A client waiting to reply: no sales follow-ups. */
   | Readonly<{ type: "WON" }>
-  /** The wait is over: the follow-up `number` of 2 can be sent. */
-  | Readonly<{ type: "FOLLOW_UP_DUE"; number: 1 | 2; lastOutboundAt: Date }>
+  /** The wait is over since `dueDay`: the follow-up `number` of 2 can be sent. */
+  | Readonly<{
+      type: "FOLLOW_UP_DUE";
+      number: 1 | 2;
+      lastOutboundAt: Date;
+      dueDay: RomeDay;
+    }>
   /** A reply is awaited; the follow-up `number` is due from `dueDay`. */
   | Readonly<{
       type: "WAITING";
@@ -75,19 +84,33 @@ export const situationOf = (
   const lastOutboundAt = contact.lastOutboundAt ?? now;
   const dueDay = romeDay(lastOutboundAt) + wait;
   return romeDay(now) >= dueDay
-    ? { type: "FOLLOW_UP_DUE", number, lastOutboundAt }
+    ? { type: "FOLLOW_UP_DUE", number, lastOutboundAt, dueDay }
     : { type: "WAITING", number, lastOutboundAt, dueDay };
+};
+
+/** Where a prospect stands: the contact, and what Alex should do next. */
+export type Standing = Readonly<{ contact: Contact; situation: Situation }>;
+
+/** The same for the lists and for the card, which starts from the memory. */
+export const standingOf = (
+  { prospect, storedUnanswered, contact: facts }: ProspectOverview,
+  now: Date,
+): Standing => {
+  const contact = contactOf(storedUnanswered, facts);
+  return {
+    contact,
+    situation: situationOf(
+      {
+        conversation: prospect.conversation,
+        contact,
+        lastProspectMessageAt: facts.lastProspectMessageAt,
+      },
+      now,
+    ),
+  };
 };
 
 export const situationOfMemory = (
   memory: ProspectMemory,
   now: Date,
-): Situation =>
-  situationOf(
-    {
-      conversation: memory.prospect.conversation,
-      contact: contactOfMemory(memory),
-      lastProspectMessageAt: memory.contact.lastProspectMessageAt,
-    },
-    now,
-  );
+): Situation => standingOf(overviewOf(memory), now).situation;

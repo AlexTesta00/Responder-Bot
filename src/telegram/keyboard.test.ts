@@ -140,7 +140,12 @@ describe("cardRows", () => {
       [["↩️ Proponi risposte", "✅ Già risposto"]],
     ],
     [
-      { type: "FOLLOW_UP_DUE", number: 1, lastOutboundAt: SENT },
+      {
+        type: "FOLLOW_UP_DUE",
+        number: 1,
+        lastOutboundAt: SENT,
+        dueDay: 20_000,
+      },
       [["💬 Proponi follow-up", "✅ Già scritto"]],
     ],
     [
