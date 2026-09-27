@@ -10,6 +10,7 @@ import type {
 import type { PromptMode } from "../ai/prompts/modes.ts";
 import { createInMemorySpending, type SpendingLedger } from "../ai/spending.ts";
 import { createButtonActions, createCardWriting } from "../copilot/buttons.ts";
+import { createCrm } from "../copilot/crm.ts";
 import { createSendMarking } from "../copilot/sends.ts";
 import { createConversationAnalyst } from "../copilot/conversation.ts";
 import { createScreenshotsAnalyst } from "../copilot/screenshots.ts";
@@ -26,7 +27,16 @@ import {
 import type { Schedule } from "./media-group.ts";
 import { createInFlight } from "./in-flight.ts";
 import { createProcessedUpdates } from "./processed-updates.ts";
-import { imageProblemReply, replyTo, type InstantInput } from "./replies.ts";
+import {
+  imageProblemReply,
+  profileHint,
+  PROSPECT_NOT_LINKED_REPLY,
+  PROSPECT_USAGE,
+  PROSPECTS_UNAVAILABLE_REPLY,
+  replyTo,
+  unknownProspectReply,
+  type InstantInput,
+} from "./replies.ts";
 import {
   aiProblemReply,
   conversationAnswer,
@@ -303,6 +313,7 @@ const setupWith = (
     pressButton: createButtonActions(copilot),
     writeFromCard: createCardWriting({ ...copilot, now: () => new Date() }),
     markSent: createSendMarking({ prospects, now: () => new Date() }),
+    crm: createCrm({ prospects }),
     now: () => new Date(),
     answerCallbackQuery,
     inFlight: createInFlight(),
@@ -346,12 +357,8 @@ describe("createUpdateHandler", () => {
   });
 
   it.each<[string, InstantInput]>([
-    ["@mariofit", { type: "INSTAGRAM_PROFILE", username: "mariofit" }],
-    [
-      "https://www.instagram.com/mariofit/",
-      { type: "INSTAGRAM_PROFILE", username: "mariofit" },
-    ],
     ["https://mariofit.it", { type: "LINK", url: "https://mariofit.it" }],
+    ["/prospect mario fit", { type: "INVALID_USERNAME", command: "prospect" }],
     ["/unknown", { type: "UNKNOWN_COMMAND" }],
   ])("answers %j at once", async (text, input) => {
     const { handleUpdate, sendMessage } = setup();
@@ -1481,6 +1488,151 @@ describe("buttons", () => {
       "1:nat",
       "1:an",
     ]) {
+      expect(logs).not.toContain(content);
+    }
+  });
+});
+
+describe("prospect cards", () => {
+  /** A handler that remembers Mario from his profile, in message 1001. */
+  const remembered = async () => {
+    const context = setup();
+    await context.handleUpdate(screenshotMessage());
+    await vi.waitFor(() => {
+      expect(context.sendMessage).toHaveBeenCalledOnce();
+    });
+    return context;
+  };
+
+  const CARD_TITLE =
+    /^🔍 <b><a href="https:\/\/www\.instagram\.com\/mariofit\/">@mariofit<\/a><\/b> · personal trainer\n/;
+
+  const ask = (text: string, replyTo: number | null = null, updateId = 101) =>
+    messageWith({ type: "TEXT", text, replyTo }, { updateId });
+
+  it.each([
+    ["/prospect @mariofit", null, "PROSPECT"],
+    ["/prospect https://www.instagram.com/MarioFit/", null, "PROSPECT"],
+    ["/prospect", 1_001, "PROSPECT"],
+    ["@mariofit", null, "INSTAGRAM_PROFILE"],
+    ["https://www.instagram.com/mariofit/", null, "INSTAGRAM_PROFILE"],
+  ] as const)(
+    "shows the card of a known prospect for %j replying to %j",
+    async (text, replyTo, input) => {
+      const { handleUpdate, sendMessage, prospects, suggestAgain } =
+        await remembered();
+
+      const outcome = await handleUpdate(ask(text, replyTo));
+
+      expect(outcome).toStrictEqual({ type: "REPLIED", input });
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      const [chat, html, options] = sendMessage.mock.calls[1] ?? [];
+      expect(chat).toBe(CHAT);
+      expect(html).toMatch(CARD_TITLE);
+      expect(html).toContain("Solo profilo");
+      expect(
+        options?.keyboard?.map((row) => row.map((button) => button.label)),
+      ).toStrictEqual([["✍️ Proponi primi messaggi", "✅ Già scritto"]]);
+      expect(suggestAgain).not.toHaveBeenCalled();
+      // The card is message 1002: its buttons continue with Mario.
+      expect(await prospects.prospectOfMessage(CHAT, 1_002)).toBe("mariofit");
+    },
+  );
+
+  it.each([
+    ["/prospect @giulia.bakery", null, unknownProspectReply("giulia.bakery")],
+    ["/prospect", null, PROSPECT_USAGE],
+    ["/prospect", 999, PROSPECT_NOT_LINKED_REPLY],
+    ["@giulia.bakery", null, profileHint("giulia.bakery")],
+  ] as const)(
+    "explains why there is no card for %j replying to %j",
+    async (text, replyTo, reply) => {
+      const { handleUpdate, sendMessage } = await remembered();
+
+      const outcome = await handleUpdate(ask(text, replyTo));
+
+      expect(outcome).toMatchObject({ type: "REPLIED" });
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(sendMessage).toHaveBeenLastCalledWith(CHAT, reply);
+    },
+  );
+
+  it.each([
+    ["/prospect @mariofit", PROSPECTS_UNAVAILABLE_REPLY],
+    ["@mariofit", profileHint("mariofit")],
+  ])("answers %j even when the memory cannot be read", async (text, reply) => {
+    const { handleUpdate, sendMessage, prospects, log } = await remembered();
+    vi.spyOn(prospects, "load").mockRejectedValueOnce(
+      new Error("connection lost"),
+    );
+
+    const outcome = await handleUpdate(ask(text));
+
+    expect(outcome).toMatchObject({ type: "REPLIED" });
+    expect(sendMessage).toHaveBeenLastCalledWith(CHAT, reply);
+    expect(log.error).toHaveBeenCalledWith(
+      expect.anything(),
+      "prospect memory unavailable",
+    );
+  });
+
+  it("lets Telegram deliver the command again when the card was not sent", async () => {
+    const { handleUpdate, sendMessage } = await remembered();
+    sendMessage.mockResolvedValueOnce(err(NETWORK_ERROR));
+
+    const failed = await handleUpdate(ask("/prospect @mariofit"));
+    const retried = await handleUpdate(ask("/prospect @mariofit"));
+
+    expect(failed).toStrictEqual({
+      type: "FAILED",
+      retryable: true,
+      error: NETWORK_ERROR,
+    });
+    expect(retried).toStrictEqual({ type: "REPLIED", input: "PROSPECT" });
+    expect(sendMessage.mock.calls[2]?.[1]).toMatch(CARD_TITLE);
+  });
+
+  it("still shows the card when Telegram refuses its buttons", async () => {
+    const { handleUpdate, sendMessage } = await remembered();
+    sendMessage.mockResolvedValueOnce(
+      err({
+        type: "API_ERROR",
+        method: "sendMessage",
+        status: 400,
+        description: "Bad Request: BUTTON_DATA_INVALID",
+      }),
+    );
+
+    const outcome = await handleUpdate(ask("@mariofit"));
+
+    expect(outcome).toStrictEqual({
+      type: "REPLIED",
+      input: "INSTAGRAM_PROFILE",
+    });
+    expect(sendMessage.mock.calls[2]?.[1]).toMatch(CARD_TITLE);
+    expect(sendMessage.mock.calls[2]?.[2]).toStrictEqual({ parseMode: "HTML" });
+  });
+
+  it("logs a card by prospect id, never by username", async () => {
+    const { handleUpdate, prospects, log } = await remembered();
+    const mario = await prospects.load("mariofit");
+
+    await handleUpdate(ask("/prospect @mariofit"));
+    await handleUpdate(ask("@mariofit", null, 102));
+    await handleUpdate(ask("/prospect @giulia.bakery", null, 103));
+
+    for (const source of ["command", "mention"]) {
+      expect(log.info).toHaveBeenCalledWith(
+        { prospect_id: mario?.prospect.id, situation: "TO_CONTACT", source },
+        "prospect card shown",
+      );
+    }
+    const logs = JSON.stringify([
+      log.info.mock.calls,
+      log.warn.mock.calls,
+      log.error.mock.calls,
+    ]);
+    for (const content of ["mariofit", "giulia", "personal trainer"]) {
       expect(logs).not.toContain(content);
     }
   });

@@ -10,7 +10,11 @@ import type {
 } from "../copilot/buttons.ts";
 import type { ReplyToConversation } from "../copilot/conversation.ts";
 import type { ProspectReference } from "../copilot/memory.ts";
+import type { Crm } from "../copilot/crm.ts";
 import type { AnalyzeScreenshots } from "../copilot/screenshots.ts";
+import { situationOfMemory } from "../followups/situation.ts";
+import type { StageChange } from "../conversations/domain.ts";
+import type { ProspectMemory } from "../prospects/memory.ts";
 import type { ProspectStore } from "../prospects/store.ts";
 import { errorFields } from "../shared/errors.ts";
 import {
@@ -39,6 +43,7 @@ import {
   isKeyboardRejection,
   isRetryable,
   type SendOptions,
+  type SentMessage,
   type TelegramClient,
   type TelegramError,
 } from "./client.ts";
@@ -54,7 +59,15 @@ import type { InFlight } from "./in-flight.ts";
 import { createMediaGroupCollector, type Schedule } from "./media-group.ts";
 import type { ProcessedUpdates } from "./processed-updates.ts";
 import { prospectCard } from "./prospect-card.ts";
-import { imageProblemReply, replyTo } from "./replies.ts";
+import {
+  imageProblemReply,
+  profileHint,
+  PROSPECT_NOT_LINKED_REPLY,
+  PROSPECT_USAGE,
+  PROSPECTS_UNAVAILABLE_REPLY,
+  replyTo,
+  unknownProspectReply,
+} from "./replies.ts";
 import {
   aiProblemReply,
   conversationAnswer,
@@ -103,6 +116,9 @@ export type IgnoredReason =
   /** A second tap while the first one is still being answered. */
   | "BUSY";
 
+/** What opened a prospect's card, as the logs name it. */
+type CardSource = "command" | "mention" | "button";
+
 /** The button a tap pressed, as the logs name it. */
 export type PressName = ButtonAction | "SENT" | "WRITE";
 
@@ -139,6 +155,8 @@ export type UpdateHandlerDependencies = Readonly<{
   answerCallbackQuery: TelegramClient["answerCallbackQuery"];
   /** ✅: marks the suggestion Alex sent from a message of the bot. */
   markSent: MarkSent;
+  /** The cards and lists of the outreach, from the memory. */
+  crm: Crm;
   /** The buttons being answered, to answer a double tap once. */
   inFlight: InFlight;
   /** Remembers which prospect the messages of the bot are about. */
@@ -167,6 +185,13 @@ const ignored = (reason: IgnoredReason): UpdateOutcome => ({
   type: "IGNORED",
   reason,
 });
+
+const notDelivered = (error: TelegramError, log: Logger): void => {
+  log.error(
+    { error_type: error.type, telegram_error: error },
+    "reply not delivered",
+  );
+};
 
 const inputOf = (content: MessageContent): Input => {
   switch (content.type) {
@@ -214,6 +239,7 @@ export const createUpdateHandler = ({
   answerCallbackQuery,
   inFlight,
   markSent,
+  crm,
   linkMessages,
   spending,
   monthlyLimitMicroUsd,
@@ -295,16 +321,15 @@ export const createUpdateHandler = ({
   };
 
   /**
-   * Sends an HTML message, in reply to `replyTo` if given, and returns its
-   * id. When Telegram refuses its buttons, the text still arrives, without
-   * them.
+   * Sends an HTML message, in reply to `replyTo` if given. When Telegram
+   * refuses its buttons, the text still arrives, without them.
    */
-  const deliver = async (
+  const sendPresented = async (
     chatId: TelegramChatId,
     { html, keyboard }: Presented,
     log: Logger,
     replyTo?: number,
-  ): Promise<number | null> => {
+  ): Promise<Result<SentMessage, TelegramError>> => {
     const options: SendOptions =
       replyTo === undefined
         ? { parseMode: "HTML" }
@@ -314,29 +339,50 @@ export const createUpdateHandler = ({
       html,
       keyboard === null ? options : { ...options, keyboard },
     );
-    const refused =
-      !first.ok && keyboard !== null && isKeyboardRejection(first.error);
-    if (refused) {
-      log.warn(
-        { telegram_error: first.error },
-        "keyboard rejected, answer resent without buttons",
-      );
+    if (first.ok || keyboard === null || !isKeyboardRejection(first.error)) {
+      return first;
     }
-    const delivery = refused ? await sendMessage(chatId, html, options) : first;
+    log.warn(
+      { telegram_error: first.error },
+      "keyboard rejected, answer resent without buttons",
+    );
+    return sendMessage(chatId, html, options);
+  };
+
+  /** Sends an answer nobody waits for, and returns its id. */
+  const deliver = async (
+    chatId: TelegramChatId,
+    presented: Presented,
+    log: Logger,
+    replyTo?: number,
+  ): Promise<number | null> => {
+    const delivery = await sendPresented(chatId, presented, log, replyTo);
     if (!delivery.ok) {
-      log.error(
-        { error_type: delivery.error.type, telegram_error: delivery.error },
-        "reply not delivered",
-      );
+      notDelivered(delivery.error, log);
       return null;
     }
     return delivery.value.messageId;
   };
 
   /**
-   * Delivers a message about a prospect, then links it to them: replying to
-   * it, or tapping its buttons, continues with that prospect.
+   * Links a message of the bot to a prospect: replying to it, or tapping its
+   * buttons, continues with that prospect.
    */
+  const link = async (
+    prospectId: string,
+    chatId: TelegramChatId,
+    messageId: number,
+    log: Logger,
+  ): Promise<void> => {
+    try {
+      await linkMessages(prospectId, chatId, [messageId]);
+    } catch (error) {
+      // The message arrived: only replying to it loses the prospect.
+      log.warn(errorFields(error), "bot messages not linked to the prospect");
+    }
+  };
+
+  /** Delivers a message about a prospect, then links it to them. */
   const deliverLinked = async (
     chatId: TelegramChatId,
     presented: Presented,
@@ -345,15 +391,39 @@ export const createUpdateHandler = ({
     replyTo?: number,
   ): Promise<void> => {
     const sent = await deliver(chatId, presented, log, replyTo);
-    if (prospectId === null || sent === null) {
-      return;
+    if (prospectId !== null && sent !== null) {
+      await link(prospectId, chatId, sent, log);
     }
-    try {
-      await linkMessages(prospectId, chatId, [sent]);
-    } catch (error) {
-      // The message arrived: only replying to it loses the prospect.
-      log.warn(errorFields(error), "bot messages not linked to the prospect");
+  };
+
+  /** Sends a prospect's card, linked to them like every answer about them. */
+  const sendCard = async (
+    chatId: TelegramChatId,
+    card: Readonly<{ memory: ProspectMemory; history: readonly StageChange[] }>,
+    source: CardSource,
+    log: Logger,
+    replyTo?: number,
+  ): Promise<Result<SentMessage, TelegramError>> => {
+    const time = now();
+    const { memory } = card;
+    const sent = await sendPresented(
+      chatId,
+      prospectCard(memory, card.history, time),
+      log,
+      replyTo,
+    );
+    if (sent.ok) {
+      log.info(
+        {
+          prospect_id: memory.prospect.id,
+          situation: situationOfMemory(memory, time).type,
+          source,
+        },
+        "prospect card shown",
+      );
+      await link(memory.prospect.id, chatId, sent.value.messageId, log);
     }
+    return sent;
   };
 
   /** Delivers the answer of an analysis, linked to its prospect. */
@@ -483,15 +553,13 @@ export const createUpdateHandler = ({
           messageId,
         );
         return;
-      case "CARD":
-        await deliverLinked(
-          chatId,
-          prospectCard(answer.memory, answer.history, now()),
-          answer.memory.prospect.id,
-          log,
-          messageId,
-        );
+      case "CARD": {
+        const sent = await sendCard(chatId, answer, "button", log, messageId);
+        if (!sent.ok) {
+          notDelivered(sent.error, log);
+        }
         return;
+      }
       case "NOT_LINKED":
         await deliver(chatId, plainMessage(NOT_LINKED_REPLY), log, messageId);
         return;
@@ -632,6 +700,85 @@ export const createUpdateHandler = ({
     }
   };
 
+  /** The card of a prospect, or plain text when there is none to show. */
+  const cardReply = async (
+    chatId: TelegramChatId,
+    reference: ProspectReference,
+    texts: Readonly<{ unknown: string; unavailable: string }>,
+    source: CardSource,
+    log: Logger,
+  ): Promise<Result<SentMessage, TelegramError>> => {
+    const found = await crm.card(reference, log);
+    switch (found.type) {
+      case "FOUND":
+        return sendCard(chatId, found, source, log);
+      case "UNKNOWN":
+        return sendMessage(chatId, texts.unknown);
+      case "UNAVAILABLE":
+        return sendMessage(chatId, texts.unavailable);
+    }
+  };
+
+  /** Answers the inputs Telegram waits for: commands, cards, profiles. */
+  const replyNow = async (
+    input: RepliedInput,
+    content: MessageContent,
+    chatId: TelegramChatId,
+    log: Logger,
+  ): Promise<Result<SentMessage, TelegramError>> => {
+    switch (input.type) {
+      case "CREDIT":
+        return sendMessage(chatId, await creditReply(input.request, log), {
+          parseMode: "HTML",
+        });
+      case "PROSPECT": {
+        if (input.username !== null) {
+          return cardReply(
+            chatId,
+            { type: "USERNAME", username: input.username },
+            {
+              unknown: unknownProspectReply(input.username),
+              unavailable: PROSPECTS_UNAVAILABLE_REPLY,
+            },
+            "command",
+            log,
+          );
+        }
+        // Without a username, only the message Alex replied to says who.
+        return content.type === "TEXT" && content.replyTo !== null
+          ? cardReply(
+              chatId,
+              { type: "REPLY", chatId, messageId: content.replyTo },
+              {
+                unknown: PROSPECT_NOT_LINKED_REPLY,
+                unavailable: PROSPECTS_UNAVAILABLE_REPLY,
+              },
+              "command",
+              log,
+            )
+          : sendMessage(chatId, PROSPECT_USAGE);
+      }
+      case "INSTAGRAM_PROFILE":
+        // A profile the bot remembers opens its card; any other gets the hint.
+        return cardReply(
+          chatId,
+          { type: "USERNAME", username: input.username },
+          {
+            unknown: profileHint(input.username),
+            unavailable: profileHint(input.username),
+          },
+          "mention",
+          log,
+        );
+      case "COMMAND":
+      case "INVALID_USERNAME":
+      case "UNKNOWN_COMMAND":
+      case "LINK":
+      case "UNSUPPORTED":
+        return sendMessage(chatId, replyTo(input));
+    }
+  };
+
   /** What can be decided about a tap without waiting for anything. */
   const handleCallback = (
     updateId: number,
@@ -761,12 +908,7 @@ export const createUpdateHandler = ({
       return { type: "ACCEPTED", input: input.type };
     }
 
-    const sent =
-      input.type === "CREDIT"
-        ? await sendMessage(chatId, await creditReply(input.request, log), {
-            parseMode: "HTML",
-          })
-        : await sendMessage(chatId, replyTo(input));
+    const sent = await replyNow(input, content, chatId, log);
     if (sent.ok) {
       return { type: "REPLIED", input: input.type };
     }

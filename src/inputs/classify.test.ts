@@ -32,12 +32,51 @@ describe("classifyText", () => {
     expect(classifyText(text)).toStrictEqual({ type: "CREDIT", request });
   });
 
-  it.each(["/", "/startup", "/unknown", "/ciao come va", "/creditocard"])(
-    "marks %j as an unknown command",
+  it.each([
+    ["/prospect @mariofit", "mariofit"],
+    ["/prospect mariofit", "mariofit"],
+    ["/Prospect @MarioFit", "mariofit"],
+    ["/prospect@AlexOutreachBot @mariofit", "mariofit"],
+    ["/prospect\n@mariofit", "mariofit"],
+    ["/prospect https://www.instagram.com/mariofit/?igsh=MXZ0", "mariofit"],
+    ["/prospect instagram.com/giulia.bakery", "giulia.bakery"],
+  ])("reads the prospect named in %j", (text, username) => {
+    expect(classifyText(text)).toStrictEqual({ type: "PROSPECT", username });
+  });
+
+  it.each(["/prospect", "/prospect@AlexOutreachBot", "  /prospect  "])(
+    "leaves the prospect of %j to the message it replies to",
     (text) => {
-      expect(classifyText(text)).toStrictEqual({ type: "UNKNOWN_COMMAND" });
+      expect(classifyText(text)).toStrictEqual({
+        type: "PROSPECT",
+        username: null,
+      });
     },
   );
+
+  it.each([
+    "/prospect mario fit",
+    "/prospect ciao!",
+    "/prospect https://mariofit.it",
+    "/prospect https://www.instagram.com/p/C8x2kLsNqWz/",
+    "/prospect explore",
+  ])("refuses the username in %j", (text) => {
+    expect(classifyText(text)).toStrictEqual({
+      type: "INVALID_USERNAME",
+      command: "prospect",
+    });
+  });
+
+  it.each([
+    "/",
+    "/startup",
+    "/unknown",
+    "/ciao come va",
+    "/creditocard",
+    "/prospects",
+  ])("marks %j as an unknown command", (text) => {
+    expect(classifyText(text)).toStrictEqual({ type: "UNKNOWN_COMMAND" });
+  });
 
   it.each([
     ["@mariofit", "mariofit"],

@@ -23,6 +23,7 @@ import {
 } from "./config/env.ts";
 import { createButtonActions, createCardWriting } from "./copilot/buttons.ts";
 import { createConversationAnalyst } from "./copilot/conversation.ts";
+import { createCrm } from "./copilot/crm.ts";
 import { createSendMarking } from "./copilot/sends.ts";
 import { createScreenshotsAnalyst } from "./copilot/screenshots.ts";
 import { createDatabase } from "./db/connection.ts";
@@ -138,6 +139,7 @@ const start = async (env: Env): Promise<void> => {
         answerCallbackQuery: telegram.answerCallbackQuery,
         inFlight: createInFlight(),
         markSent: createSendMarking({ prospects, now: () => new Date() }),
+        crm: createCrm({ prospects }),
         linkMessages: prospects.linkMessages,
         spending,
         monthlyLimitMicroUsd: monthlyLimitOf(env),

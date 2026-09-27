@@ -1,5 +1,9 @@
 import type { ImageRef } from "./images.ts";
-import { usernameFromLinks, usernameFromMention } from "./instagram.ts";
+import {
+  canonicalUsername,
+  usernameFromLinks,
+  usernameFromMention,
+} from "./instagram.ts";
 
 export type Command = "start" | "help";
 
@@ -14,6 +18,10 @@ export type CreditRequest =
 export type TextInput =
   | Readonly<{ type: "COMMAND"; command: Command }>
   | Readonly<{ type: "CREDIT"; request: CreditRequest }>
+  /** A prospect's card; without a username, of the message Alex replied to. */
+  | Readonly<{ type: "PROSPECT"; username: string | null }>
+  /** A command that needs a username, followed by something else. */
+  | Readonly<{ type: "INVALID_USERNAME"; command: "prospect" }>
   | Readonly<{ type: "UNKNOWN_COMMAND" }>
   | Readonly<{ type: "INSTAGRAM_PROFILE"; username: string }>
   | Readonly<{ type: "LINK"; url: string }>
@@ -68,9 +76,19 @@ export const classifyText = (text: string): TextInput => {
 
   if (trimmed.startsWith("/")) {
     const name = commandName(trimmed);
+    const argument = trimmed.replace(/^\/\S+/, "").trim();
     if (name === "credito") {
-      const argument = trimmed.replace(/^\/\S+/, "").trim();
       return { type: "CREDIT", request: creditRequestOf(argument) };
+    }
+    if (name === "prospect") {
+      if (argument === "") {
+        return { type: "PROSPECT", username: null };
+      }
+      const username =
+        usernameFromLinks(argument) ?? canonicalUsername(argument);
+      return username === null
+        ? { type: "INVALID_USERNAME", command: "prospect" }
+        : { type: "PROSPECT", username };
     }
     return isCommand(name)
       ? { type: "COMMAND", command: name }
